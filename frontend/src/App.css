@@ -219,6 +219,31 @@ body {
   color: #fff;
 }
 
+.btn-link {
+  background: transparent;
+  border-color: transparent;
+  color: #9ca3af;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.btn-link:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e5e7eb;
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
 .btn-primary:hover:not(:disabled) {
   background: #1d4ed8;
 }
@@ -724,6 +749,21 @@ body {
   gap: 12px;
 }
 
+.wizard-models-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizard-models-search {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  min-width: 220px;
+}
+
 .wizard-models-table {
   width: 100%;
   border-collapse: collapse;
@@ -732,7 +772,7 @@ body {
 
 .wizard-models-table th,
 .wizard-models-table td {
-  padding: 8px;
+  padding: 12px 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -741,9 +781,21 @@ body {
   color: var(--text-muted);
 }
 
+.wizard-models-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .wizard-models-actions {
   display: flex;
   gap: 8px;
+}
+
+.wizard-model-name {
+  display: inline-block;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wizard-json {

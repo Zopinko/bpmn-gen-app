@@ -13,6 +13,18 @@ import {
 } from "../api/wizard";
 import { useRef } from "react";
 
+function formatDateTime(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  return d.toLocaleString("sk-SK", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const DEFAULTS = {
   processName: "Spracovanie žiadosti o úver",
   roles: ["Klient", "Call centrum", "Back office"],
@@ -59,6 +71,7 @@ export default function LinearWizardPage() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
   const [modelsActionLoading, setModelsActionLoading] = useState(false);
+  const [modelsSearch, setModelsSearch] = useState("");
 
   const handleGenerate = async () => {
     setError(null);
@@ -202,7 +215,7 @@ export default function LinearWizardPage() {
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const resp = await listWizardModels({ limit: 50, offset: 0 });
+      const resp = await listWizardModels({ limit: 50, offset: 0, search: modelsSearch });
       setModels(resp?.items || []);
     } catch (e) {
       const message = e?.message || "Nepodarilo sa načítať modely.";
@@ -217,8 +230,11 @@ export default function LinearWizardPage() {
     await fetchModels();
   };
 
-  const handleDeleteModel = async (id) => {
-    if (!window.confirm("Naozaj chcete zmazat tento model?")) return;
+  const handleDeleteModel = async (id, name) => {
+    const confirmed = window.confirm(
+      `Naozaj chcete zmazat tento model?\n\nModel: ${name || id}`,
+    );
+    if (!confirmed) return;
     setModelsError(null);
     setInfo(null);
     setModelsActionLoading(true);
@@ -483,18 +499,35 @@ export default function LinearWizardPage() {
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <h3 style={{ margin: 0 }}>Uložené modely</h3>
-                <button className="btn btn--small" type="button" onClick={fetchModels} disabled={modelsLoading}>
-                  {modelsLoading ? "Načítavam..." : "Obnoviť"}
-                </button>
+                <div className="wizard-models-tools">
+                  <input
+                    type="text"
+                    className="wizard-models-search"
+                    placeholder="Hľadať podľa názvu…"
+                    value={modelsSearch}
+                    onChange={(e) => setModelsSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        fetchModels();
+                      }
+                    }}
+                  />
+                  <button className="btn btn--small" type="button" onClick={fetchModels} disabled={modelsLoading}>
+                    {modelsLoading ? "Načítavam..." : "Hľadať"}
+                  </button>
+                  <button className="btn btn--small" type="button" onClick={fetchModels} disabled={modelsLoading}>
+                    {modelsLoading ? "Načítavam..." : "Obnoviť"}
+                  </button>
+                </div>
               </div>
               {modelsError ? <div className="wizard-error">{modelsError}</div> : null}
               <div style={{ overflow: "auto" }}>
                 <table className="wizard-models-table">
                   <thead>
                     <tr>
-                      <th>Názov</th>
-                      <th>Vytvorené</th>
-                      <th>Upravené</th>
+                      <th>Názov modelu</th>
+                      <th>Vytvorený</th>
+                      <th>Naposledy upravený</th>
                       <th>Akcie</th>
                     </tr>
                   </thead>
@@ -504,15 +537,21 @@ export default function LinearWizardPage() {
                         <td colSpan={4}>Načítavam...</td>
                       </tr>
                     ) : models.length ? (
-                      models.map((m) => (
+                      [...models]
+                        .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+                        .map((m) => (
                         <tr key={m.id}>
-                          <td>{m.name || m.id}</td>
-                          <td>{m.created_at}</td>
-                          <td>{m.updated_at}</td>
+                          <td>
+                            <span className="wizard-model-name" title={m.name || m.id}>
+                              {m.name || m.id}
+                            </span>
+                          </td>
+                          <td>{formatDateTime(m.created_at)}</td>
+                          <td>{formatDateTime(m.updated_at)}</td>
                           <td>
                             <div className="wizard-models-actions">
                               <button
-                                className="btn btn--small"
+                                className="btn btn--small btn-primary"
                                 type="button"
                                 onClick={() => loadModelFromList(m.id)}
                                 disabled={loadLoading || modelsActionLoading}
@@ -520,7 +559,7 @@ export default function LinearWizardPage() {
                                 Otvoriť
                               </button>
                               <button
-                                className="btn btn--small"
+                                className="btn btn--small btn-link"
                                 type="button"
                                 onClick={() => handleRenameModel(m.id, m.name || m.id)}
                                 disabled={modelsLoading || modelsActionLoading}
@@ -528,9 +567,9 @@ export default function LinearWizardPage() {
                                 Premenovať
                               </button>
                               <button
-                                className="btn btn--small"
+                                className="btn btn--small btn-danger"
                                 type="button"
-                                onClick={() => handleDeleteModel(m.id)}
+                                onClick={() => handleDeleteModel(m.id, m.name || m.id)}
                                 disabled={modelsLoading || modelsActionLoading}
                               >
                                 Zmazať
