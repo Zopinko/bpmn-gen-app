@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-
-_base_dir = Path(os.getenv("BPMN_MODELS_DIR", "data/models"))
+# Storage root: defaults to repo-local data/models; override via BPMN_MODELS_DIR for persistent disk (Render).
+raw_dir = os.getenv("BPMN_MODELS_DIR")
+_base_dir = Path(raw_dir) if raw_dir else Path("data/models")
 
 
 def set_base_dir(path: str | Path) -> None:
