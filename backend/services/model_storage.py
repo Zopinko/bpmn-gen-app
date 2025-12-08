@@ -17,7 +17,7 @@ def set_base_dir(path: str | Path) -> None:
 
 
 def _models_dir() -> Path:
-    _base_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(_base_dir, exist_ok=True)
     return _base_dir
 
 

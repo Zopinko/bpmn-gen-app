@@ -1,0 +1,7 @@
+# Changelog
+
+## 2025-12-08
+- Inicializacia changelogu (pridany korenovy CHANGELOG.md).
+- Wizard modely: pridaný PATCH /wizard/models/{id} na premenovanie, test scenár pre rename, UI modal doplnený o Otvoriť/Premenovať/Zmazať a API helpery pre delete/rename.
+- Úložisko modelov: ignorovanie `backend/data/models/` v Gite, `model_storage` vytvorí priečinok cez os.makedirs.
+- Map editor: zvýraznené inline editovanie textu (červená, vyšší kontrast).
