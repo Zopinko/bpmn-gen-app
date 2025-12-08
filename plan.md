@@ -1,0 +1,1 @@
+Plan:\n1. Extend sentence handling / detection to recognise parallel pattern across two role-labeled sentences followed by 'Potom ...'.\n2. Update KB/FrajerKB template handling to emit parallel split/join with tasks in lanes.\n3. Adjust architect/postprocess if needed to ensure join naming/cleanup.\n4. Re-run sample text to confirm layout and labels, inspect JSON/XML.

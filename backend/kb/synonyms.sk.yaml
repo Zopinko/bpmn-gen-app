@@ -1,0 +1,16 @@
+gateways:
+  exclusive: ["ak", "ak je", "pokiaľ", "v prípade že", "inak", "else", "rozhodnutie"]
+  parallel: ["súbežne", "paralelne", "zároveň", "naraz", "popri tom"]
+  inclusive: ["voliteľne", "môže sa stať", "ak sa vyžaduje", "niekedy aj", "aspoň jedno"]
+
+loops:
+  while: ["opakuj kým", "kým", "pokým", "až do"]
+  for_each: ["pre každú", "pre všetky", "iteruj po", "zoznam položiek"]
+
+message:
+  send: ["pošle", "odošle", "notifikuj", "informuj", "emailom", "sms", "api požiadavka"]
+  receive: ["príde", "prijme", "dostane"]
+
+flow_connectors:
+  then: ["potom", "následne", "ďalej", "po tom", "nato", "a potom"]
+  also: ["tiež", "zároveň", "popritom", "súčasne"]

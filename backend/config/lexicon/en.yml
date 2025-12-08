@@ -1,0 +1,82 @@
+control_tokens:
+  XOR: ["[XOR]"]
+  AND: ["[AND]"]
+  EVENT: ["[EVENT]"]
+  TIMER: ["[TIMER:", "[TIMER]"]
+  ERROR: ["[ERROR]"]
+  SUB: ["[SUB]"]
+
+exclusive_gateway:
+  - "if"
+  - "else"
+  - "otherwise"
+  - "exclusive gateway"
+  - "exclusive decision"
+  - "exclusive split"
+  - "xor gateway"
+  - "xor decision"
+
+parallel_gateway:
+  - "in parallel"
+  - "concurrently"
+  - "at the same time"
+  - "both"
+  - "parallel"
+  - "parallel gateway"
+  - "parallel decision"
+  - "and gateway"
+  - "and split"
+
+inclusive_gateway:
+  - "one or more"
+  - "at least one"
+  - "inclusive gateway"
+  - "inclusive decision"
+  - "inclusive split"
+  - "or gateway"
+  - "or decision"
+
+manual_task:
+  - "manual task"
+  - "manual step"
+  - "manual activity"
+  - "manual process"
+  - "hand task"
+  - "hand operation"
+  - "do by hand"
+  - "perform manually"
+
+event_based_gateway:
+  - "wait for"
+  - "upon receiving"
+  - "signal"
+  - "notification"
+
+timer_event:
+  - "timeout"
+  - "after"
+  - "wait"
+  - "deadline"
+  - "delay"
+
+error_event:
+  - "on error"
+  - "if fails"
+  - "failure"
+  - "exception"
+
+message_event_send:
+  - "send message"
+  - "send request"
+  - "notify"
+
+message_event_receive:
+  - "receive message"
+  - "upon receiving"
+  - "request"
+  - "response"
+
+subprocess:
+  - "subprocess"
+  - "block"
+  - "group of steps"

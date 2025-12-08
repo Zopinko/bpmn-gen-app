@@ -1,0 +1,73 @@
+label_rules:
+- id: proposal_a11c0b575fe547a48b7782aca1322dbc
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0
+- id: proposal_0f29eb9ca7c649669d2ae2b90b25c7b7
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0
+- id: proposal_990606a8549e411da4894b6213933195
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0
+- id: proposal_9a34a8bfb36541538bde70bdeeb09e80
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0
+- id: proposal_87d58f4c31824818bf88400044ff6b55
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0
+- id: proposal_397fcfc43e9b47338ee3c926edaf4c2e
+  locale: sk
+  patterns:
+  - value: ak
+    mode: plain
+  - value: inak
+    mode: plain
+  gateway: exclusive
+  labels:
+    positive: Áno
+    negative: Nie
+  source: mentor_v1.0

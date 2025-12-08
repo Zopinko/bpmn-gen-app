@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="sk">
+  <head>
+    <meta charset="utf-8" />
+    <title>Frajer Playground</title>
+    <style>
+      :root { --gap: 16px; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display: flex; gap: var(--gap); padding: var(--gap); height: 100vh; }
+      .left { width: 36%; min-width: 420px; display: flex; flex-direction: column; gap: 8px; }
+      .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      textarea#procInput { width: 100%; height: 180px; padding: 8px; resize: vertical; }
+      button { padding: 8px 12px; cursor: pointer; }
+      .viewer { width: 64%; height: calc(100vh - 2*var(--gap)); border: 1px solid #ddd; border-radius: 8px; }
+      .error { color: #b00020; white-space: pre-wrap; min-height: 1.2em; }
+      textarea#jsonBox { width: 100%; height: 300px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre; padding: 8px; background: #0b1020; color: #e6f3ff; border-radius: 6px; border: 1px solid #223; }
+      small.hint { opacity: .7 }
+      label.toggle { user-select: none; display: inline-flex; align-items: center; gap: 6px; }
+      select { padding: 6px 8px; }
+    </style>
+    <!-- bpmn-js viewer z CDN -->
+    <script src="https://unpkg.com/bpmn-js@11/dist/bpmn-navigated-viewer.production.min.js"></script>
+  </head>
+  <body>
+    <div class="left">
+      <label><b>Process text</b></label>
+      <textarea id="procInput">Sales: prijme dopyt. Ak je suma &gt; 1000, schváľ ponuku, inak eskaluj manažérovi. Backoffice: vystav faktúru.</textarea>
+      <div class="row">
+        <button id="genBtn">Generovať BPMN</button>
+        <button id="downloadBtn" disabled>Stiahnuť BPMN</button>
+        <label class="toggle" title="Jazyk pre menovky">
+          <span>Jazyk:</span>
+          <select id="localeSel">
+            <option value="sk" selected>sk</option>
+            <option value="en">en</option>
+          </select>
+        </label>
+      </div>
+      <div id="msg" class="error"></div>
+      <small class="hint">Tip: začni jednou vetou a potom pridávaj podmienky.</small>
+      <!-- JSON DEBUG PANEL -->
+      <h3 style="margin: 10px 0 4px;">Engine JSON (debug)</h3>
+      <textarea id="jsonBox" readonly placeholder="Klikni „Generovať BPMN“ – tu sa zobrazí JSON (draft &amp; after_tidy)."></textarea>
+    </div>
+    <div id="canvas" class="viewer"></div>
+    <script>
+      // === KONFIG ===
+      const API_BPMN = "http://localhost:8000/frajer/preview-bpmn";
+      const API_JSON = "http://localhost:8000/frajer/preview-json";
+      // === VIEWER ===
+      const viewer = new BpmnJS({ container: "#canvas" });
+      // === UI prvky ===
+      const btn         = document.getElementById("genBtn");
+      const ta          = document.getElementById("procInput");
+      const msg         = document.getElementById("msg");
+      const jsonBox     = document.getElementById("jsonBox");
+      const locEl       = document.getElementById("localeSel");
+      const downloadBtn = document.getElementById("downloadBtn");
+      let lastBpmnXml = "";
+      function getLocale() { return (locEl?.value || "sk"); }
+      async function fetchBpmnXml(text, locale) {
+        const url = new URL(API_BPMN);
+        url.searchParams.set("text", text);
+        url.searchParams.set("locale", locale || "sk");
+        const resp = await fetch(url.toString(), { method: "GET" });
+        const xml = await resp.text();
+        if (!resp.ok) throw new Error("HTTP " + resp.status + (xml ? " – " + xml.slice(0, 200) : ""));
+        if (!xml) throw new Error("Backend nevrátil XML.");
+        return xml;
+      }
+      async function fetchPreviewJson(text, locale) {
+        const url = new URL(API_JSON);
+        url.searchParams.set("text", text);
+        url.searchParams.set("locale", locale || "sk");
+        const resp = await fetch(url.toString(), { method: "GET" });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return await resp.json();
+      }
+      async function generate() {
+        msg.textContent = "";
+        const text = (ta.value || "").trim();
+        const locale = getLocale();
+        if (!text) {
+          msg.textContent = "Zadaj prosím text procesu.";
+          return;
+        }
+        lastBpmnXml = "";
+        if (downloadBtn) {
+          downloadBtn.disabled = true;
+        }
+        // JSON panel – status
+        jsonBox.value = "Načítavam JSON…";
+        try {
+          // 1) BPMN XML do viewer-a
+          const xml = await fetchBpmnXml(text, locale);
+          await viewer.importXML(xml);
+          viewer.get("canvas").zoom("fit-viewport", "auto");
+          lastBpmnXml = xml;
+          if (downloadBtn) {
+            downloadBtn.disabled = false;
+          }
+          // 2) JSON debug (draft + after_tidy)
+          const data = await fetchPreviewJson(text, locale);
+          jsonBox.value = JSON.stringify(data, null, 2);
+        } catch (e) {
+          msg.textContent = String(e?.message || e);
+          // nechaj aspoň to, čo sa podarilo – ak JSON padol, panel prepíšeme chybou
+          if (jsonBox.value.startsWith("Načítavam")) {
+            jsonBox.value = "Chyba pri načítaní JSON: " + String(e?.message || e);
+          }
+          lastBpmnXml = "";
+          if (downloadBtn) {
+            downloadBtn.disabled = true;
+          }
+        }
+      }
+      function downloadBpmn() {
+        if (!lastBpmnXml) {
+          msg.textContent = "Najprv vygeneruj BPMN.";
+          return;
+        }
+        const blob = new Blob([lastBpmnXml], { type: "application/xml" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "frajer-process.bpmn";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+      if (btn) {
+        btn.addEventListener("click", generate);
+      }
+      if (downloadBtn) {
+        downloadBtn.addEventListener("click", downloadBpmn);
+      }
+      // Voliteľné: Enter + Ctrl/Cmd+Enter
+      ta.addEventListener("keydown", (ev) => {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+          generate();
+        }
+      });
+    </script>
+  </body>
+</html>

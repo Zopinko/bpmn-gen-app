@@ -1,0 +1,15 @@
+﻿locale: sk
+source: mentor
+aliases:
+  Manažér:
+    - manazer
+    - manažér
+    - manager
+    - vedúci
+    - veduci
+    - šéf
+    - sef
+  HR:
+    - oddelenie hr
+    - people ops
+    - human resources

@@ -1,0 +1,242 @@
+from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile
+from services.bpmn_svc import (
+    append_tasks_to_lane_from_description,
+    build_linear_engine_from_wizard,
+    generate_bpmn_from_json,
+)
+from services.bpmn_import import bpmn_xml_to_engine
+from services.model_storage import (
+    delete_model,
+    list_models as storage_list_models,
+    load_model as storage_load_model,
+    save_model as storage_save_model,
+)
+from schemas.nl import NLProcess
+from routers.nl_router import simple_to_engine
+from schemas.engine import validate_payload, validate_xml
+from services.architect.normalize import normalize_engine_payload
+from services.engine_normalizer import find_gateway_warnings
+from schemas.wizard import (
+    LaneAppendRequest,
+    LaneAppendResponse,
+    LinearWizardRequest,
+    LinearWizardResponse,
+)
+import logging
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.get("/")
+def root():
+    return {"message": "BPMN Generator bezi!"}
+
+
+def _as_bpmn_download(xml_string: str, filename: str):
+    return Response(
+        content=xml_string,
+        media_type="application/bpmn+xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/wizard/linear", response_model=LinearWizardResponse)
+def generate_linear_wizard_diagram(
+    payload: LinearWizardRequest,
+) -> LinearWizardResponse:
+    """
+    Build a simple linear BPMN diagram from a wizard payload without any AI calls.
+    """
+    built = build_linear_engine_from_wizard(payload)
+    engine_json = built["engine_json"]
+    issues = built.get("issues") or []
+    validate_payload(engine_json)
+    return LinearWizardResponse(engine_json=engine_json, issues=issues)
+
+
+@router.post("/wizard/lane/append", response_model=LaneAppendResponse)
+def wizard_append_lane(payload: LaneAppendRequest) -> LaneAppendResponse:
+    built = append_tasks_to_lane_from_description(payload)
+    engine_json = built["engine_json"]
+    issues = built.get("issues") or []
+    validate_payload(engine_json)
+    return LaneAppendResponse(engine_json=engine_json, issues=issues)
+
+
+@router.post("/wizard/export-bpmn")
+def wizard_export_bpmn(payload: dict = Body(...)):
+    """
+    Export engine_json (wizard) ako BPMN 2.0 XML na stiahnutie.
+
+    Ak klient pošle obálku {"engine_json": {...}}, zoberieme vnútro;
+    inak očakávame priamo engine_json.
+    """
+    engine = payload.get("engine_json") if isinstance(payload, dict) else None
+    if not isinstance(engine, dict):
+        engine = payload
+
+    validate_payload(engine)
+    try:
+        xml = generate_bpmn_from_json(engine)
+        validate_xml(xml)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    filename = f"{engine.get('processId','process')}.bpmn"
+    return _as_bpmn_download(xml, filename)
+
+
+@router.post("/wizard/import-bpmn")
+async def wizard_import_bpmn(file: UploadFile = File(...)):
+    """
+    Načíta BPMN XML (.bpmn) a skonvertuje ho na engine_json použiteľné vo wizarde.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Súbor je prázdny.")
+
+    try:
+        xml_text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        xml_text = content.decode("utf-8", errors="replace")
+
+    try:
+        engine = bpmn_xml_to_engine(xml_text)
+        validate_payload(engine)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"engine_json": engine}
+
+
+@router.post("/wizard/models")
+def create_wizard_model(payload: dict = Body(...)):
+    """
+    Uloží model s engine_json a aktuálnym BPMN XML (DI) do perzistentného úložiska.
+    """
+    name = payload.get("name") or "Process"
+    engine = payload.get("engine_json")
+    xml = payload.get("diagram_xml")
+
+    if not isinstance(engine, dict):
+        raise HTTPException(status_code=400, detail="engine_json je povinné a musí byť objekt.")
+    if not isinstance(xml, str) or not xml.strip():
+        raise HTTPException(status_code=400, detail="diagram_xml je povinné a musí byť string.")
+
+    validate_payload(engine)
+    model = storage_save_model(name=name, engine_json=engine, diagram_xml=xml, model_id=payload.get("id"))
+    return {
+        "id": model["id"],
+        "name": model["name"],
+        "created_at": model["created_at"],
+        "updated_at": model["updated_at"],
+    }
+
+
+@router.get("/wizard/models/{model_id}")
+def get_wizard_model(model_id: str):
+    try:
+        model = storage_load_model(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Model nenájdený.")
+    return model
+
+
+@router.get("/wizard/models")
+def list_wizard_models(limit: int = 20, offset: int = 0, search: str | None = None):
+    """
+    Jednoduché listovanie uložených modelov (perzistentné úložisko).
+    """
+    items = storage_list_models(search=search)
+    total = len(items)
+    sliced = items[offset : offset + limit]
+    return {"items": sliced, "total": total, "limit": limit, "offset": offset}
+
+
+@router.delete("/wizard/models/{model_id}")
+def delete_wizard_model(model_id: str):
+    try:
+        storage_load_model(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Model nenájdený.")
+    delete_model(model_id)
+    return {"ok": True}
+
+
+@router.post("/generate")
+async def generate(payload: dict = Body(...)):
+    if not payload:
+        raise HTTPException(status_code=400, detail="Payload je povinný.")
+
+    # Normalize engine-like payloads (auto processId + node type aliases)
+    engine = normalize_engine_payload(payload)
+
+    # Optional: warn if gateways are malformed (no incoming/outgoing flows)
+    for w in find_gateway_warnings(engine.get("nodes", []), engine.get("flows", [])):
+        try:
+            logger.warning(w)  # if you have a logger
+        except NameError:
+            print(f"[GW-WARN] {w}")
+
+    # 3) Ak nemáme nič, error
+    if not engine:
+        raise HTTPException(400, "Payload musí obsahovať engine_json alebo simple_json")
+
+    # 4) Validácia + BPMN generovanie
+    validate_payload(engine)
+    try:
+        xml = generate_bpmn_from_json(engine)
+        validate_xml(xml)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return _as_bpmn_download(xml, filename=f"{engine.get('processId','process')}.bpmn")
+
+
+@router.post("/autogenerate")
+async def autogenerate(payload: dict = Body(...)):
+    """
+    Komfortný endpoint:
+    - prijme celé NLResponse (ako ho vráti /nl/message)
+    - automaticky si vyberie engine_json alebo simple_json
+    - vygeneruje BPMN XML a vráti ho ako download
+    """
+
+    engine = None
+
+    # 1) Ak je v payload engine_json, použijeme ho priamo
+    if isinstance(payload.get("engine_json"), dict):
+        engine = payload["engine_json"]
+
+    # 2) Ak je len simple_json, prekonvertujeme
+    elif isinstance(payload.get("simple_json"), dict):
+        simple_obj = NLProcess.model_validate(payload["simple_json"])
+        engine = simple_to_engine(simple_obj)
+
+    # 3) Ak nemáme nič, error
+    if not isinstance(engine, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Payload musí obsahovať engine_json alebo simple_json (object).",
+        )
+
+    # 4) Normalizácia (auto processId + aliasy node typov)
+    engine = normalize_engine_payload(engine)
+
+    # Optional: warn ak gateway nemá prítok/odtok
+    for w in find_gateway_warnings(engine.get("nodes", []), engine.get("flows", [])):
+        try:
+            logger.warning(w)
+        except NameError:
+            print(f"[GW-WARN] {w}")
+
+    # 5) Validácia + BPMN generovanie
+    validate_payload(engine)
+    try:
+        xml = generate_bpmn_from_json(engine)
+        validate_xml(xml)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return _as_bpmn_download(xml, filename=f"{engine.get('processId','process')}.bpmn")

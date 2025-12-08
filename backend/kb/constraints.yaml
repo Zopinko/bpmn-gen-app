@@ -1,0 +1,8 @@
+hard:
+  - "process_must_have_single_start_end"
+  - "gateway_split_must_have_join_of_same_type"
+  - "task_must_have_in_and_out_except_boundaries"
+soft:
+  - "label_should_be_under_40_chars"
+  - "no_empty_lanes"
+  - "avoid_parallel_then_immediate_exclusive_without_join"

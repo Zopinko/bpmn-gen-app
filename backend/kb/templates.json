@@ -1,0 +1,238 @@
+{
+  "exclusive_if_else": {
+    "nodes": [
+      {
+        "type": "exclusive_gateway",
+        "label": "{cond_short}?",
+        "lane": "{lane_true}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_true}",
+        "label": "{then_action}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_false}",
+        "label": "{else_action}"
+      },
+      {
+        "type": "exclusive_gateway",
+        "label": "join",
+        "lane": "{lane_true}"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "exclusive_gateway#0"
+      ],
+      [
+        "exclusive_gateway#0",
+        "task#0",
+        "cond:true"
+      ],
+      [
+        "exclusive_gateway#0",
+        "task#1",
+        "cond:false"
+      ],
+      [
+        "task#0",
+        "exclusive_gateway#1"
+      ],
+      [
+        "task#1",
+        "exclusive_gateway#1"
+      ]
+    ]
+  },
+  "exclusive_if_then": {
+    "nodes": [
+      {
+        "type": "exclusive_gateway",
+        "label": "{cond_short}?",
+        "lane": "{lane_true}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_true}",
+        "label": "{then_action}"
+      },
+      {
+        "type": "exclusive_gateway",
+        "label": "join",
+        "lane": "{lane_join}"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "exclusive_gateway#0"
+      ],
+      [
+        "exclusive_gateway#0",
+        "task#0",
+        "cond:true"
+      ],
+      [
+        "task#0",
+        "exclusive_gateway#1"
+      ],
+      [
+        "exclusive_gateway#0",
+        "exclusive_gateway#1",
+        "cond:false"
+      ]
+    ]
+  },
+  "parallel_split_join": {
+    "nodes": [
+      {
+        "type": "parallel_gateway",
+        "label": "split",
+        "lane": "{lane_a}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_a}",
+        "label": "{action_a}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_b}",
+        "label": "{action_b}"
+      },
+      {
+        "type": "parallel_gateway",
+        "label": "join",
+        "lane": "{lane_a}"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "parallel_gateway#0"
+      ],
+      [
+        "parallel_gateway#0",
+        "task#0"
+      ],
+      [
+        "parallel_gateway#0",
+        "task#1"
+      ],
+      [
+        "task#0",
+        "parallel_gateway#1"
+      ],
+      [
+        "task#1",
+        "parallel_gateway#1"
+      ]
+    ]
+  },
+  "inclusive_split_join": {
+    "nodes": [
+      {
+        "type": "inclusive_gateway",
+        "label": "split",
+        "lane": "{lane_a}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_a}",
+        "label": "{inc_a}"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_b}",
+        "label": "{inc_b}"
+      },
+      {
+        "type": "inclusive_gateway",
+        "label": "join",
+        "lane": "{lane_a}"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "inclusive_gateway#0"
+      ],
+      [
+        "inclusive_gateway#0",
+        "task#0"
+      ],
+      [
+        "inclusive_gateway#0",
+        "task#1"
+      ],
+      [
+        "task#0",
+        "inclusive_gateway#1"
+      ],
+      [
+        "task#1",
+        "inclusive_gateway#1"
+      ]
+    ]
+  },
+  "while_loop": {
+    "nodes": [
+      {
+        "type": "exclusive_gateway",
+        "label": "{loop_cond}?"
+      },
+      {
+        "type": "task",
+        "lane": "{lane_true}",
+        "label": "{loop_action}"
+      },
+      {
+        "type": "exclusive_gateway",
+        "label": "join"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "exclusive_gateway#0"
+      ],
+      [
+        "exclusive_gateway#0",
+        "task#0",
+        "cond:true"
+      ],
+      [
+        "task#0",
+        "exclusive_gateway#1"
+      ],
+      [
+        "exclusive_gateway#1",
+        "exclusive_gateway#0",
+        "loop"
+      ],
+      [
+        "exclusive_gateway#0",
+        "exclusive_gateway#1",
+        "cond:false"
+      ]
+    ]
+  },
+  "message_task": {
+    "nodes": [
+      {
+        "type": "task",
+        "lane": "{lane_target}",
+        "label": "{message_action}"
+      }
+    ],
+    "flows": [
+      [
+        "prev",
+        "task#0"
+      ]
+    ]
+  }
+}

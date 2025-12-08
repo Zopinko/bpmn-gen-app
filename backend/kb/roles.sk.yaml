@@ -1,0 +1,13 @@
+aliases:
+  "Oddelenie nákupu": ["oddelenie nákupu", "nákup", "nákupné oddelenie", "nákupca", "purchasing", "purchasing team"]
+  "Dodávateľ": ["dodávateľ", "dodavatel", "supplier", "dodávateľovi"]
+  "Sklad": ["sklad", "skladník", "logistika", "warehouse", "logistics"]
+  "Sales": ["sales", "obchod", "predaj", "obchodník", "sales team"]
+  "HR": ["hr", "personál", "personálne", "human resources", "personalista"]
+  "Manažér": ["manažér", "manažer", "manager", "vedúci", "šéf", "veduci"]
+  "Zákazník": ["klient", "customer", "užívateľ", "zákazník", "zakaznik"]
+  "Backoffice": ["back office", "backoffice", "bo", "podpora", "support"]
+  "Účtovník": ["účtovník", "uctovnik", "financie", "finančné oddelenie", "finance team"]
+  "Systém": ["aplikácia", "platforma", "is", "system", "systém"]
+defaults:
+  primary_process_lane: "Systém"

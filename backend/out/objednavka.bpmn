@@ -1,0 +1,157 @@
+<?xml version='1.0' encoding='utf-8'?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Defs_1" targetNamespace="http://example.com/bpmn">
+  <process id="objedn-vka-tovaru-8d30d2c2" name="ObjednÃ¡vka tovaru" isExecutable="false">
+    <laneSet id="LaneSet_1">
+      <lane id="lane_1" name="ZÃ¡kaznÃ­k">
+        <flowNodeRef>start_1</flowNodeRef>
+        <flowNodeRef>task_1</flowNodeRef>
+        <flowNodeRef>task_2</flowNodeRef>
+        <flowNodeRef>task_3</flowNodeRef>
+        <flowNodeRef>task_4</flowNodeRef>
+      </lane>
+      <lane id="lane_2" name="E-shop">
+        <flowNodeRef>task_5</flowNodeRef>
+        <flowNodeRef>task_6</flowNodeRef>
+        <flowNodeRef>task_7</flowNodeRef>
+        <flowNodeRef>task_8</flowNodeRef>
+      </lane>
+      <lane id="lane_3" name="KuriÃ©r">
+        <flowNodeRef>end_1</flowNodeRef>
+        <flowNodeRef>task_9</flowNodeRef>
+        <flowNodeRef>task_10</flowNodeRef>
+        <flowNodeRef>task_11</flowNodeRef>
+        <flowNodeRef>task_12</flowNodeRef>
+      </lane>
+    </laneSet>
+    <startEvent id="start_1" name="Start" />
+    <endEvent id="end_1" name="End" />
+    <task id="task_1" name="VyplnÃ­ koÅ¡Ã­k a kontakty" />
+    <task id="task_2" name="Vyberie dopravu a platbu" />
+    <task id="task_3" name="PotvrdÃ­ objednÃ¡vku" />
+    <task id="task_4" name="UhradÃ­ online" />
+    <task id="task_5" name="Prijme objednÃ¡vku do systÃ©mu" />
+    <task id="task_6" name="OverÃ­ platbu a sklad" />
+    <task id="task_7" name="ZabalÃ­ a oznaÄÃ­ balÃ­k" />
+    <task id="task_8" name="OdovzdÃ¡ kuriÃ©rovi" />
+    <task id="task_9" name="Prevezme zÃ¡sielku v depe" />
+    <task id="task_10" name="Triedi a plÃ¡nuje trasu" />
+    <task id="task_11" name="DoruÄÃ­ zÃ¡kaznÃ­kovi" />
+    <task id="task_12" name="PotvrdÃ­ prevzatie" />
+    <sequenceFlow id="f_task_1_to_task_2" sourceRef="task_1" targetRef="task_2" />
+    <sequenceFlow id="f_task_2_to_task_3" sourceRef="task_2" targetRef="task_3" />
+    <sequenceFlow id="f_task_3_to_task_4" sourceRef="task_3" targetRef="task_4" />
+    <sequenceFlow id="f_task_5_to_task_6" sourceRef="task_5" targetRef="task_6" />
+    <sequenceFlow id="f_task_6_to_task_7" sourceRef="task_6" targetRef="task_7" />
+    <sequenceFlow id="f_task_7_to_task_8" sourceRef="task_7" targetRef="task_8" />
+    <sequenceFlow id="f_task_9_to_task_10" sourceRef="task_9" targetRef="task_10" />
+    <sequenceFlow id="f_task_10_to_task_11" sourceRef="task_10" targetRef="task_11" />
+    <sequenceFlow id="f_task_11_to_task_12" sourceRef="task_11" targetRef="task_12" />
+    <sequenceFlow id="f_start_1_to_task_1" sourceRef="start_1" targetRef="task_1" />
+    <sequenceFlow id="f_task_12_to_end_1" sourceRef="task_12" targetRef="end_1" />
+  </process>
+  <collaboration id="Collab_1">
+    <participant id="Participant_1" name="ObjednÃ¡vka tovaru" processRef="objedn-vka-tovaru-8d30d2c2" />
+  </collaboration>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1" name="ObjednÃ¡vka tovaru">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collab_1">
+      <bpmndi:BPMNShape id="DI_Participant_1" bpmnElement="Participant_1" isHorizontal="true">
+        <dc:Bounds x="20" y="20" width="3000" height="450" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_lane_1" bpmnElement="lane_1">
+        <dc:Bounds x="20" y="40" width="3000" height="130" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_lane_2" bpmnElement="lane_2">
+        <dc:Bounds x="20" y="170" width="3000" height="130" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_lane_3" bpmnElement="lane_3">
+        <dc:Bounds x="20" y="300" width="3000" height="130" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_start_1" bpmnElement="start_1">
+        <dc:Bounds x="100" y="87" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_end_1" bpmnElement="end_1">
+        <dc:Bounds x="100" y="347" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_1" bpmnElement="task_1">
+        <dc:Bounds x="320" y="77" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_2" bpmnElement="task_2">
+        <dc:Bounds x="540" y="77" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_3" bpmnElement="task_3">
+        <dc:Bounds x="760" y="77" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_4" bpmnElement="task_4">
+        <dc:Bounds x="980" y="77" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_5" bpmnElement="task_5">
+        <dc:Bounds x="100" y="207" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_6" bpmnElement="task_6">
+        <dc:Bounds x="320" y="207" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_7" bpmnElement="task_7">
+        <dc:Bounds x="540" y="207" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_8" bpmnElement="task_8">
+        <dc:Bounds x="760" y="207" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_9" bpmnElement="task_9">
+        <dc:Bounds x="320" y="337" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_10" bpmnElement="task_10">
+        <dc:Bounds x="540" y="337" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_11" bpmnElement="task_11">
+        <dc:Bounds x="760" y="337" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DI_task_12" bpmnElement="task_12">
+        <dc:Bounds x="980" y="337" width="160" height="56" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_f_task_1_to_task_2" bpmnElement="f_task_1_to_task_2">
+        <di:waypoint x="480" y="105" />
+        <di:waypoint x="540" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_2_to_task_3" bpmnElement="f_task_2_to_task_3">
+        <di:waypoint x="700" y="105" />
+        <di:waypoint x="760" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_3_to_task_4" bpmnElement="f_task_3_to_task_4">
+        <di:waypoint x="920" y="105" />
+        <di:waypoint x="980" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_5_to_task_6" bpmnElement="f_task_5_to_task_6">
+        <di:waypoint x="260" y="235" />
+        <di:waypoint x="320" y="235" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_6_to_task_7" bpmnElement="f_task_6_to_task_7">
+        <di:waypoint x="480" y="235" />
+        <di:waypoint x="540" y="235" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_7_to_task_8" bpmnElement="f_task_7_to_task_8">
+        <di:waypoint x="700" y="235" />
+        <di:waypoint x="760" y="235" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_9_to_task_10" bpmnElement="f_task_9_to_task_10">
+        <di:waypoint x="480" y="365" />
+        <di:waypoint x="540" y="365" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_10_to_task_11" bpmnElement="f_task_10_to_task_11">
+        <di:waypoint x="700" y="365" />
+        <di:waypoint x="760" y="365" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_11_to_task_12" bpmnElement="f_task_11_to_task_12">
+        <di:waypoint x="920" y="365" />
+        <di:waypoint x="980" y="365" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_start_1_to_task_1" bpmnElement="f_start_1_to_task_1">
+        <di:waypoint x="136" y="105" />
+        <di:waypoint x="320" y="105" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f_task_12_to_end_1" bpmnElement="f_task_12_to_end_1">
+        <di:waypoint x="1140" y="365" />
+        <di:waypoint x="100" y="365" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>

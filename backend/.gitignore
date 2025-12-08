@@ -1,0 +1,41 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.log
+
+# Virtual envs
+.venv/
+.venv*/
+venv/
+env/
+**/venv*/
+**/.venv*/
+venv-aider/
+**/venv-aider/
+
+# IDE
+.vscode/
+.idea/
+
+# Build / dist
+dist/
+build/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large data/artifacts
+*.mat
+*.csv
+*.xlsx
+
+# Generated previews/exports (prispôsob si)
+exports/
+
+.aider.tags.cache.v4/
+.aider* 
+
+*.bak
+*.patch

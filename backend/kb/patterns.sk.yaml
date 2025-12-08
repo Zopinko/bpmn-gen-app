@@ -1,0 +1,37 @@
+constructs:
+  - id: IF_ELSE
+    intent: exclusive_gateway
+    hints:
+      - "(?i)\\b(ak|pokiaľ|v prípade)\\b.+\\b(potom|tak)\\b"
+      - "(?i).+\\b(inak|else)\\b.+"
+    template: "exclusive_if_else"
+
+  - id: IF_THEN
+    intent: exclusive_gateway
+    hints:
+      - "(?i)^\\s*ak\\b[^,]+,\\s*(?!(inak|else)\\b).+"
+    template: "exclusive_if_then"
+
+  - id: PARALLEL
+    intent: parallel_gateway
+    hints:
+      - "(?i)\\b(súbežne|paralelne|zároveň|naraz|popri tom)\\b"
+    template: "parallel_split_join"
+
+  - id: INCLUSIVE
+    intent: inclusive_gateway
+    hints:
+      - "(?i)\\b(voliteľne|môže sa|ak sa vyžaduje|aspoň jedno|niekedy aj)\\b"
+    template: "inclusive_split_join"
+
+  - id: WHILE_LOOP
+    intent: loop
+    hints:
+      - "(?i)\\b(opakuj kým|kým|pokým|až do)\\b"
+    template: "while_loop"
+
+  - id: HANDOFF
+    intent: message_flow
+    hints:
+      - "(?i)\\b(po(šle|došle)|notifikuj|informuj)\\b.+\\b(oddeleniu|backoffice|zákazníkovi|tímu)\\b"
+    template: "message_task"

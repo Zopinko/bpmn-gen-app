@@ -1,0 +1,1059 @@
+﻿:root {
+  color-scheme: dark;
+  --bg-panel: #0f1623;
+  --bg-card: #101524;
+  --border-subtle: #1f2937;
+  --text-primary: #e5e7eb;
+  --text-muted: #9ca3af;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #05070c;
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  background: #05070c;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: #0b0f17;
+}
+
+.app-nav__brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+
+.app-nav__links {
+  display: flex;
+  gap: 12px;
+}
+
+.app-nav__link {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.app-nav__link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.app-shell__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(320px, 20%) 80%;
+  width: 100%;
+  height: 100%;
+  background: #05070c;
+}
+
+.api-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 16px 16px 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.api-status__label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.api-status__value {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.api-status--active .api-status__value {
+  color: #22c55e;
+}
+
+.api-status--inactive .api-status__value {
+  color: #ef4444;
+}
+
+.api-status--loading .api-status__value {
+  color: #6b7280;
+}
+
+.api-status__hint {
+  margin: 0 16px 12px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-right: 1px solid #111827;
+  padding: 16px;
+  background: #0b0f17;
+  overflow-y: auto;
+}
+
+.control-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.control-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.control-textarea {
+  width: 100%;
+  min-height: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 10px;
+  resize: vertical;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.control-row--buttons {
+  flex-wrap: wrap;
+}
+
+.control-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  min-width: 80px;
+}
+
+.control-select,
+.control-input {
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 6px 8px;
+}
+
+.control-input {
+  width: 90px;
+}
+
+.btn {
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn--small {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.btn:hover:not(:disabled) {
+  background: #162236;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.control-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.control-run-id {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.apply-status {
+  font-size: 12px;
+}
+
+.apply-status--success {
+  color: #22c55e;
+}
+
+.apply-status--error {
+  color: #f97316;
+}
+
+.proposals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.proposal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.proposal--high {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.proposal--medium {
+  border-color: rgba(250, 204, 21, 0.6);
+}
+
+.proposal--low {
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+.proposal__title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.proposal__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.proposal__annotations {
+  margin: 8px 0;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proposal__annotation-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.proposal__annotation-description {
+  margin-top: 2px;
+}
+
+.proposal__actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.map-panel {
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+}
+
+.dual-map {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dual-map__pane {
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid #111827;
+  background: #ffffff;
+}
+
+.dual-map__pane:last-child {
+  border-bottom: none;
+}
+
+.dual-map__pane--hidden {
+  display: none;
+}
+
+.map-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.map-viewer__header {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #111827;
+  background: var(--bg-panel);
+}
+
+.map-viewer__title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.map-viewer__subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.map-viewer__refresh {
+  border-radius: 6px;
+  border: 1px solid #2563eb;
+  background: transparent;
+  color: #93c5fd;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.map-viewer__refresh:hover {
+  background: rgba(37, 99, 235, 0.2);
+}
+
+.map-viewer__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+}
+
+.map-viewer__canvas {
+  width: 100%;
+  height: 100%;
+  background: #ffffff;
+  position: relative;
+}
+.map-viewer__canvas > div {
+  width: 100%;
+  height: 100%;
+}
+
+.map-viewer__status {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: rgba(15, 22, 35, 0.85);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(191, 219, 254, 0.3);
+}
+
+.map-viewer__status--error {
+  color: #f97316;
+  border-color: rgba(249, 115, 22, 0.5);
+}
+
+.map-viewer__annotations {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: min(280px, 90%);
+  max-height: 60%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-note {
+  background: rgba(15, 22, 35, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.map-note--success {
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+.map-note--warning {
+  border-color: rgba(250, 204, 21, 0.6);
+}
+
+.map-note--error {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.map-note__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.map-note__description {
+  margin-top: 4px;
+  color: #cbd5f5;
+}
+
+.map-note__tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.map-note__tag {
+  background: rgba(37, 99, 235, 0.2);
+  color: #bfdbfe;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.map-note__icon {
+  font-size: 15px;
+}
+
+.map-overlay {
+  background: rgba(15, 22, 35, 0.85);
+  border: 2px solid rgba(250, 204, 21, 0.6);
+  color: #facc15;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(15, 22, 35, 0.5);
+}
+
+.map-overlay--error {
+  border-color: rgba(239, 68, 68, 0.7);
+  color: #f87171;
+}
+
+.map-overlay--info {
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #93c5fd;
+}
+
+.map-overlay--warning {
+  border-color: rgba(250, 204, 21, 0.7);
+  color: #facc15;
+}
+
+.map-overlay--success {
+  border-color: rgba(34, 197, 94, 0.7);
+  color: #34d399;
+}
+
+.overlay-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.overlay-legend__title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.overlay-legend__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+
+.overlay-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.overlay-legend__icon {
+  font-size: 16px;
+}
+
+.ai-mode-switch {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-mode-switch__btn {
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.ai-mode-switch__btn.is-active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  cursor: default;
+}
+
+.ai-mode-switch__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-mode-switch--disabled .ai-mode-switch__btn {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ab-result {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  color: #bfdbfe;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.wizard-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 34%) 1fr;
+  gap: 12px;
+  height: calc(100vh - 64px);
+}
+
+.wizard-form {
+  padding: 16px;
+  background: #0b0f17;
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+}
+
+.wizard-heading {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.wizard-subtitle {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.wizard-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wizard-section__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.wizard-field input,
+.wizard-field textarea,
+.wizard-steps {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 10px;
+  font-size: 0.95rem;
+}
+
+.wizard-steps {
+  width: 100%;
+}
+
+.wizard-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.wizard-load-inline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.wizard-load-input {
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 8px;
+  width: 160px;
+}
+
+.wizard-error {
+  margin-top: 8px;
+  color: #f87171;
+  font-size: 0.9rem;
+}
+
+.wizard-toast {
+  margin-top: 8px;
+  color: #34d399;
+  font-size: 0.9rem;
+}
+
+.wizard-models-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.wizard-models-panel {
+  background: #0b0f17;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  width: min(960px, 90vw);
+  max-height: 80vh;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.wizard-models-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.wizard-models-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.wizard-models-table th,
+.wizard-models-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.wizard-models-table th {
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.wizard-models-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wizard-json {
+  margin-top: 14px;
+  background: #0f1623;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  overflow: auto;
+  max-height: 260px;
+}
+
+.wizard-json__header {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.wizard-viewer {
+  position: relative;
+  background: #0f1623;
+  height: 100%;
+}
+
+.wizard-placeholder {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.wizard-lane-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 320px;
+  max-width: 90%;
+  background: rgba(11, 15, 23, 0.96);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
+}
+
+.wizard-lane-panel__header {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 1100px) {
+  .app {
+    grid-template-columns: minmax(280px, 35%) 1fr;
+  }
+  .wizard-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .wizard-viewer {
+    min-height: 50vh;
+  }
+}
+
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .control-panel {
+    max-height: 45vh;
+  }
+.map-panel {
+  height: 55vh;
+}
+}
+
+/* BPMN interaction styling (override with hover/selection colors) */
+.map-viewer__canvas .djs-outline {
+  stroke: rgba(59, 130, 246, 0);
+  stroke-width: 1.4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, stroke 120ms ease;
+}
+
+.map-viewer__canvas .djs-element.hover > .djs-outline,
+.map-viewer__canvas .djs-connection.hover > .djs-outline {
+  stroke: transparent;
+  opacity: 0;
+}
+
+.map-viewer__canvas .djs-element.selected:not(.dragging):not(.moving) > .djs-outline,
+.map-viewer__canvas .djs-connection.selected:not(.dragging):not(.moving) > .djs-outline {
+  stroke: transparent;
+  stroke-width: 1.8px;
+  opacity: 0;
+}
+
+.map-viewer__canvas .djs-element.dragging > .djs-outline,
+.map-viewer__canvas .djs-element.moving > .djs-outline,
+.map-viewer__canvas .djs-connection.dragging > .djs-outline,
+.map-viewer__canvas .djs-connection.moving > .djs-outline {
+  stroke: rgba(248, 113, 113, 0.95);
+  stroke-width: 1.8px;
+  opacity: 1;
+}
+
+.map-viewer__canvas .djs-shape .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  transition: fill 120ms ease, stroke 120ms ease;
+}
+
+.map-viewer__canvas .djs-shape.hover:not(.dragging):not(.moving) .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  fill: rgba(96, 165, 250, 0.12) !important;
+}
+
+.map-viewer__canvas .djs-shape.selected:not(.dragging):not(.moving) .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(59, 130, 246, 0.95) !important;
+  fill: rgba(59, 130, 246, 0.2) !important;
+}
+
+.map-viewer__canvas .djs-shape.dragging .djs-visual > :where(path, rect, circle, ellipse, polygon),
+.map-viewer__canvas .djs-shape.moving .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(248, 113, 113, 0.95) !important;
+  fill: rgba(248, 113, 113, 0.28) !important;
+}
+
+.map-viewer__canvas .djs-connection .djs-visual > path {
+  transition: stroke 120ms ease, stroke-width 120ms ease;
+}
+
+/* Hover effect for arrows (connections) */
+.map-viewer__canvas .djs-connection .djs-visual > path:hover {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  stroke-width: 2.6px !important;
+}
+
+.map-viewer__canvas .djs-connection .djs-visual > polygon:hover {
+  fill: rgba(96, 165, 250, 0.95) !important;
+  stroke: rgba(96, 165, 250, 0.95) !important;
+}
+
+.map-viewer__canvas .djs-connection.hover:not(.dragging):not(.moving) .djs-visual > path {
+  stroke: rgba(96, 165, 250, 0.95);
+  stroke-width: 2.2px;
+}
+
+/* --- Full-object hover highlight --- */
+
+/* 1) HOVER TEXT — label text turns blue */
+.map-viewer__canvas .djs-shape.hover text {
+  fill: rgba(96, 165, 250, 0.95) !important;
+}
+
+/* 2) HOVER EXTERNAL LABELS */
+.map-viewer__canvas .djs-label.hover text {
+  fill: rgba(96, 165, 250, 0.95) !important;
+}
+
+/* 3) HOVER CONNECTIONS — arrow & line */
+.map-viewer__canvas .djs-connection.hover .djs-visual > path {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  stroke-width: 2.2px !important;
+}
+
+/* 4) HOVER CONNECTION LABELS */
+.map-viewer__canvas .djs-connection.hover text {
+  fill: rgba(96, 165, 250, 0.95) !important;
+}
+
+/* Hover effect for sequence flows (arrow lines) */
+.map-viewer__canvas .djs-connection.hover .djs-visual > path {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  stroke-width: 2.4px !important;
+}
+
+/* Hover efekt pre sequence flows */
+.djs-connection.hover .djs-visual > path {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  stroke-width: 2.4px !important;
+}
+
+/* Hover pre connection arrowheads */
+.djs-connection.hover .djs-visual polygon {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  fill: rgba(96, 165, 250, 0.95) !important;
+}
+
+.map-viewer__canvas .djs-connection.selected:not(.dragging):not(.moving) .djs-visual > path {
+  stroke: rgba(59, 130, 246, 0.95);
+  stroke-width: 2.6px;
+}
+
+.map-viewer__canvas .djs-connection.dragging .djs-visual > path,
+.map-viewer__canvas .djs-connection.moving .djs-visual > path {
+  stroke: rgba(248, 113, 113, 0.95);
+  stroke-width: 2.6px;
+}
+
+.map-viewer__canvas .djs-resizer,
+.map-viewer__canvas .djs-segment-dragger,
+.map-viewer__canvas .djs-bendpoint {
+  stroke: rgba(96, 165, 250, 0.95);
+  fill: rgba(96, 165, 250, 0.2);
+  opacity: 0;
+  transition: opacity 120ms ease, fill 120ms ease;
+}
+
+.map-viewer__canvas .djs-element.hover .djs-resizer,
+.map-viewer__canvas .djs-element.hover .djs-segment-dragger,
+.map-viewer__canvas .djs-connection.hover .djs-bendpoint {
+  opacity: 1;
+}
+
+.map-viewer__canvas .djs-element.dragging .djs-resizer,
+.map-viewer__canvas .djs-element.dragging .djs-segment-dragger,
+.map-viewer__canvas .djs-connection.dragging .djs-bendpoint,
+.map-viewer__canvas .djs-element.moving .djs-resizer,
+.map-viewer__canvas .djs-element.moving .djs-segment-dragger,
+.map-viewer__canvas .djs-connection.moving .djs-bendpoint,
+.map-viewer__canvas .djs-element.selected .djs-resizer,
+.map-viewer__canvas .djs-element.selected .djs-segment-dragger,
+.map-viewer__canvas .djs-connection.selected .djs-bendpoint {
+  stroke: rgba(248, 113, 113, 0.95);
+  fill: rgba(248, 113, 113, 0.35);
+  opacity: 1;
+}
+
+.map-viewer__canvas .djs-element.djs-lane .djs-resizer,
+.map-viewer__canvas .djs-element.djs-lane .djs-segment-dragger {
+  opacity: 0.35;
+}
+
+.map-viewer__canvas .djs-element.djs-lane.hover .djs-resizer,
+.map-viewer__canvas .djs-element.djs-lane.hover .djs-segment-dragger,
+.map-viewer__canvas .djs-element.djs-lane.selected .djs-resizer,
+.map-viewer__canvas .djs-element.djs-lane.selected .djs-segment-dragger {
+  opacity: 1;
+}
+
+/* Make context pad actions more visible when a shape is selected */
+.map-viewer__canvas .djs-context-pad .entry {
+  opacity: 1 !important;
+  color: #1f2937 !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  filter: none;
+}
+
+.map-viewer__canvas .djs-context-pad .entry:hover {
+  color: #111827 !important;
+  background: rgba(248, 250, 252, 0.98) !important;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.32);
+  opacity: 1 !important;
+}
+
+/* Hover sequence flow (arrows + lines) */
+.djs-element.djs-connection:hover .djs-visual > path {
+  stroke: rgba(96, 165, 250, 0.95) !important;
+  stroke-width: 2.6px !important;
+}
+
+.djs-element.djs-connection:hover .djs-visual > polygon {
+  fill: rgba(96, 165, 250, 0.95) !important;
+  stroke: rgba(96, 165, 250, 0.95) !important;
+}
+
+/* Drag ghost visibility (make the moving preview darker) */
+.djs-dragger {
+  opacity: 1 !important;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.2));
+}
+
+.djs-dragger .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(37, 99, 235, 0.9) !important;
+  stroke-width: 2.4px !important;
+  fill: rgba(37, 99, 235, 0.3) !important;
+}
+
+.djs-dragger .djs-visual text {
+  fill: rgba(30, 64, 175, 0.9) !important;
+}
+
+/* Darker placeholder at original position while dragging */
+.map-viewer__canvas .djs-dragging .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(17, 24, 39, 0.7) !important;
+  stroke-width: 2px !important;
+  fill: rgba(17, 24, 39, 0.16) !important;
+}
+
+.map-viewer__canvas .djs-dragging .djs-visual text {
+  fill: rgba(17, 24, 39, 0.6) !important;
+}
+
+/* Drag preview (make ghost slightly darker/visible) */
+.djs-dragger {
+  opacity: 1 !important;
+}
+
+.djs-dragger .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: #2563eb !important;
+  stroke-width: 2.4px !important;
+  fill: rgba(37, 99, 235, 0.32) !important;
+}
+
+.djs-dragger .djs-visual text {
+  fill: #1e3a8a !important;
+}
+

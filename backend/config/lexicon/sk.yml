@@ -1,0 +1,103 @@
+control_tokens:
+  XOR: ["[XOR]"]
+  AND: ["[AND]"]
+  EVENT: ["[EVENT]"]
+  TIMER: ["[TIMER:", "[TIMER]"]     # [TIMER: 48h] alebo [TIMER] (bez hodnoty)
+  ERROR: ["[ERROR]"]
+  SUB: ["[SUB]"]
+
+inclusive_gateway:
+  - "aspoň jeden"
+  - "aspon jeden"
+  - "alespoň jeden"
+  - "alespon jeden"
+  - "jeden z"
+  - "môže prebehnúť viac"
+  - "moze prebehnut viac"
+  - "inkluzívna brána"
+  - "inkluzívne rozhodnutie"
+  - "inclusive gateway"
+  - "inclusive decision"
+
+exclusive_gateway:
+  - "ak"
+  - "inak"
+  - "else"
+  - "pokiaľ"
+  - "keď"
+  - "v prípade"
+  - "in case"
+  - "exkluzívna brána"
+  - "exkluzívne rozhodnutie"
+  - "exclusive gateway"
+  - "exclusive decision"
+  - "xor brána"
+  - "xor decision"
+
+parallel_gateway:
+  - "súbežne"
+  - "naraz"
+  - "zároveň"
+  - "parallel"
+  - "oba"
+  - "obidve"
+  - "both"
+  - "paralelná brána"
+  - "paralelné rozhodnutie"
+  - "parallel gateway"
+  - "parallel decision"
+
+manual_task:
+  - "ručná úloha"
+  - "ručná činnosť"
+  - "ručný krok"
+  - "ručné spracovanie"
+  - "manual task"
+  - "manual step"
+  - "manual activity"
+  - "hand task"
+  - "hand operation"
+  - "ručne spracuj"
+  - "rucne spracuj"
+
+event_based_gateway:
+  - "počkaj na"
+  - "po prijatí"
+  - "po obdržaní"
+  - "po doručení"
+  - "signal"
+  - "notification"
+  - "notifikácia"
+
+timer_event:
+  - "timeout"
+  - "po"
+  - "počkaj"
+  - "deadline"
+  - "oneskorenie"
+
+error_event:
+  - "pri chybe"
+  - "ak zlyhá"
+  - "zlyhanie"
+  - "výnimka"
+  - "on error"
+
+message_event_send:
+  - "odošli správu"
+  - "pošli správu"
+  - "send request"
+  - "send message"
+
+message_event_receive:
+  - "prijmi správu"
+  - "po prijatí"
+  - "receive"
+  - "request"
+  - "response"
+
+subprocess:
+  - "blok"
+  - "podproces"
+  - "subprocess"
+  - "group of steps"
