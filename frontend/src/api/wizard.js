@@ -113,3 +113,27 @@ export async function listWizardModels(params = {}) {
   }
   return response.json();
 }
+
+export async function deleteWizardModel(modelId) {
+  const response = await fetch(`${API_BASE}/wizard/models/${modelId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export async function renameWizardModel(modelId, name) {
+  const response = await fetch(`${API_BASE}/wizard/models/${modelId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return response.json();
+}

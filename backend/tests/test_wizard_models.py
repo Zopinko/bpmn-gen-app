@@ -88,3 +88,30 @@ def test_list_search_and_delete_models(tmp_path):
     assert not (tmp_path / "models" / f"{first_id}.json").exists()
     missing = client.get(f"/wizard/models/{first_id}")
     assert missing.status_code == 404
+
+
+def test_rename_model(tmp_path):
+    _setup_tmp_dir(tmp_path)
+    client = _make_client()
+    payload = {
+        "name": "Original",
+        "engine_json": _sample_engine(),
+        "diagram_xml": "<definitions></definitions>",
+    }
+    create_resp = client.post("/wizard/models", json=payload)
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    model_id = created["id"]
+    old_updated_at = created["updated_at"]
+
+    new_name = "Premenovany model"
+    rename_resp = client.patch(f"/wizard/models/{model_id}", json={"name": new_name})
+    assert rename_resp.status_code == 200
+    renamed = rename_resp.json()
+    assert renamed["name"] == new_name
+    assert renamed["updated_at"] != old_updated_at
+
+    list_resp = client.get("/wizard/models")
+    assert list_resp.status_code == 200
+    items = list_resp.json().get("items") or []
+    assert any(item["id"] == model_id and item["name"] == new_name for item in items)

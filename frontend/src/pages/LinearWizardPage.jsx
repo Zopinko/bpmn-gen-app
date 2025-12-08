@@ -8,6 +8,8 @@ import {
   loadWizardModel,
   renderEngineXml,
   listWizardModels,
+  deleteWizardModel,
+  renameWizardModel,
 } from "../api/wizard";
 import { useRef } from "react";
 
@@ -56,6 +58,7 @@ export default function LinearWizardPage() {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
+  const [modelsActionLoading, setModelsActionLoading] = useState(false);
 
   const handleGenerate = async () => {
     setError(null);
@@ -212,6 +215,46 @@ export default function LinearWizardPage() {
   const openModels = async () => {
     setModelsOpen(true);
     await fetchModels();
+  };
+
+  const handleDeleteModel = async (id) => {
+    if (!window.confirm("Naozaj chcete zmazat tento model?")) return;
+    setModelsError(null);
+    setInfo(null);
+    setModelsActionLoading(true);
+    try {
+      await deleteWizardModel(id);
+      await fetchModels();
+      if (loadId.trim() === id) {
+        setLoadId("");
+      }
+      setInfo("Model bol zmazany.");
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa zmazat model.";
+      setModelsError(message);
+    } finally {
+      setModelsActionLoading(false);
+    }
+  };
+
+  const handleRenameModel = async (id, currentName) => {
+    const newName = window.prompt("Zadajte novy nazov modelu", currentName || "");
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setModelsError(null);
+    setInfo(null);
+    setModelsActionLoading(true);
+    try {
+      await renameWizardModel(id, trimmed);
+      await fetchModels();
+      setInfo("Model bol premenovany.");
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa premenovat model.";
+      setModelsError(message);
+    } finally {
+      setModelsActionLoading(false);
+    }
   };
 
   const loadModelFromList = async (id) => {
@@ -472,9 +515,25 @@ export default function LinearWizardPage() {
                                 className="btn btn--small"
                                 type="button"
                                 onClick={() => loadModelFromList(m.id)}
-                                disabled={loadLoading}
+                                disabled={loadLoading || modelsActionLoading}
                               >
                                 Otvoriť
+                              </button>
+                              <button
+                                className="btn btn--small"
+                                type="button"
+                                onClick={() => handleRenameModel(m.id, m.name || m.id)}
+                                disabled={modelsLoading || modelsActionLoading}
+                              >
+                                Premenovať
+                              </button>
+                              <button
+                                className="btn btn--small"
+                                type="button"
+                                onClick={() => handleDeleteModel(m.id)}
+                                disabled={modelsLoading || modelsActionLoading}
+                              >
+                                Zmazať
                               </button>
                             </div>
                           </td>

@@ -164,6 +164,26 @@ def delete_wizard_model(model_id: str):
     return {"ok": True}
 
 
+@router.patch("/wizard/models/{model_id}")
+def rename_wizard_model(model_id: str, payload: dict = Body(...)):
+    new_name = payload.get("name") if isinstance(payload, dict) else None
+    if not isinstance(new_name, str) or not new_name.strip():
+        raise HTTPException(status_code=400, detail="name je povinné a musí byť string.")
+
+    try:
+        existing = storage_load_model(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Model nenájdený.")
+
+    updated = storage_save_model(
+        name=new_name.strip(),
+        engine_json=existing.get("engine_json") or {},
+        diagram_xml=existing.get("diagram_xml") or "",
+        model_id=model_id,
+    )
+    return updated
+
+
 @router.post("/generate")
 async def generate(payload: dict = Body(...)):
     if not payload:
