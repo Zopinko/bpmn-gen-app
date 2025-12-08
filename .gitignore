@@ -1,0 +1,2 @@
+# Ignore persisted wizard models (stored locally only)
+backend/data/models/
