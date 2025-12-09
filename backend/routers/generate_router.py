@@ -21,6 +21,9 @@ from schemas.wizard import (
     LaneAppendResponse,
     LinearWizardRequest,
     LinearWizardResponse,
+    WizardModelBase,
+    WizardModelDetail,
+    WizardModelList,
 )
 import logging
 
@@ -110,7 +113,7 @@ async def wizard_import_bpmn(file: UploadFile = File(...)):
     return {"engine_json": engine}
 
 
-@router.post("/wizard/models")
+@router.post("/wizard/models", response_model=WizardModelBase)
 def create_wizard_model(payload: dict = Body(...)):
     """
     Uloží model s engine_json a aktuálnym BPMN XML (DI) do perzistentného úložiska.
@@ -118,6 +121,8 @@ def create_wizard_model(payload: dict = Body(...)):
     name = payload.get("name") or "Process"
     engine = payload.get("engine_json")
     xml = payload.get("diagram_xml")
+    generator_input = payload.get("generator_input") if isinstance(payload, dict) else None
+    process_meta = payload.get("process_meta") if isinstance(payload, dict) else None
 
     if not isinstance(engine, dict):
         raise HTTPException(status_code=400, detail="engine_json je povinné a musí byť objekt.")
@@ -125,7 +130,14 @@ def create_wizard_model(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="diagram_xml je povinné a musí byť string.")
 
     validate_payload(engine)
-    model = storage_save_model(name=name, engine_json=engine, diagram_xml=xml, model_id=payload.get("id"))
+    model = storage_save_model(
+        name=name,
+        engine_json=engine,
+        diagram_xml=xml,
+        model_id=payload.get("id"),
+        generator_input=generator_input,
+        process_meta=process_meta,
+    )
     return {
         "id": model["id"],
         "name": model["name"],
@@ -134,7 +146,7 @@ def create_wizard_model(payload: dict = Body(...)):
     }
 
 
-@router.get("/wizard/models/{model_id}")
+@router.get("/wizard/models/{model_id}", response_model=WizardModelDetail)
 def get_wizard_model(model_id: str):
     try:
         model = storage_load_model(model_id)
@@ -143,7 +155,7 @@ def get_wizard_model(model_id: str):
     return model
 
 
-@router.get("/wizard/models")
+@router.get("/wizard/models", response_model=WizardModelList)
 def list_wizard_models(limit: int = 20, offset: int = 0, search: str | None = None):
     """
     Jednoduché listovanie uložených modelov (perzistentné úložisko).
@@ -164,7 +176,7 @@ def delete_wizard_model(model_id: str):
     return {"ok": True}
 
 
-@router.patch("/wizard/models/{model_id}")
+@router.patch("/wizard/models/{model_id}", response_model=WizardModelBase)
 def rename_wizard_model(model_id: str, payload: dict = Body(...)):
     new_name = payload.get("name") if isinstance(payload, dict) else None
     if not isinstance(new_name, str) or not new_name.strip():
@@ -180,6 +192,8 @@ def rename_wizard_model(model_id: str, payload: dict = Body(...)):
         engine_json=existing.get("engine_json") or {},
         diagram_xml=existing.get("diagram_xml") or "",
         model_id=model_id,
+        generator_input=existing.get("generator_input"),
+        process_meta=existing.get("process_meta"),
     )
     return updated
 

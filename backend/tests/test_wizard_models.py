@@ -42,6 +42,23 @@ def test_create_and_get_model(tmp_path):
             "name": "My Model",
             "engine_json": _sample_engine(),
             "diagram_xml": "<definitions></definitions>",
+            "generator_input": {
+                "processName": "My Model",
+                "roles": "Role 1\nRole 2",
+                "trigger": "Start",
+                "input": "Input data",
+                "output": "Output data",
+                "mainSteps": "Step 1\nStep 2",
+            },
+            "process_meta": {
+                "owner": "Owner",
+                "department": "Dept",
+                "status": "Draft",
+                "version": "1.0",
+                "internalId": "MODEL-1",
+                "tags": "tag1, tag2",
+                "description": "Sample description",
+            },
         }
         create_resp = client.post("/wizard/models", json=payload)
         assert create_resp.status_code == 200
@@ -58,6 +75,8 @@ def test_create_and_get_model(tmp_path):
         fetched = get_resp.json()
         assert fetched["engine_json"]["processId"] == "Process_Save_1"
         assert fetched["diagram_xml"].startswith("<definitions")
+        assert fetched.get("generator_input", {}).get("processName") == "My Model"
+        assert fetched.get("process_meta", {}).get("owner") == "Owner"
     finally:
         if old_env is None:
             os.environ.pop("BPMN_MODELS_DIR", None)
@@ -84,6 +103,8 @@ def test_list_search_and_delete_models(tmp_path):
         data = resp.json()
         assert data["items"]
         assert data["total"] >= 2
+        # process_meta should be included in list for version visibility
+        assert "process_meta" in data["items"][0]
 
         search_resp = client.get("/wizard/models?search=Model%201")
         assert search_resp.status_code == 200
@@ -113,6 +134,8 @@ def test_rename_model(tmp_path):
             "name": "Original",
             "engine_json": _sample_engine(),
             "diagram_xml": "<definitions></definitions>",
+            "generator_input": {"processName": "Original"},
+            "process_meta": {"owner": "Tester"},
         }
         create_resp = client.post("/wizard/models", json=payload)
         assert create_resp.status_code == 200
@@ -126,11 +149,17 @@ def test_rename_model(tmp_path):
         renamed = rename_resp.json()
         assert renamed["name"] == new_name
         assert renamed["updated_at"] != old_updated_at
+        assert renamed.get("generator_input", {}).get("processName") == "Original"
 
         list_resp = client.get("/wizard/models")
         assert list_resp.status_code == 200
         items = list_resp.json().get("items") or []
         assert any(item["id"] == model_id and item["name"] == new_name for item in items)
+
+        fetched = client.get(f"/wizard/models/{model_id}")
+        assert fetched.status_code == 200
+        fetched_body = fetched.json()
+        assert fetched_body.get("process_meta", {}).get("owner") == "Tester"
     finally:
         if old_env is None:
             os.environ.pop("BPMN_MODELS_DIR", None)

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import MapViewer from "../components/MapViewer";
 import {
   appendLaneFromDescription,
@@ -11,7 +11,6 @@ import {
   deleteWizardModel,
   renameWizardModel,
 } from "../api/wizard";
-import { useRef } from "react";
 
 function formatDateTime(isoString) {
   if (!isoString) return "";
@@ -25,20 +24,25 @@ function formatDateTime(isoString) {
   });
 }
 
-const DEFAULTS = {
-  processName: "Spracovanie žiadosti o úver",
-  roles: ["Klient", "Call centrum", "Back office"],
-  startTrigger: "Klient odošle online žiadosť",
-  output: "Úver je schválený alebo zamietnutý",
-  steps: [
-    "Overiť kompletnosť žiadosti",
-    "Dohodnúť termín telefonátu s klientom",
-    "Vyhodnotiť bonitu",
-    "Pripraviť zmluvu a poslať na podpis",
-  ],
-};
-
-const toMultiline = (items) => items.join("\n");
+const createEmptyProcessCardState = () => ({
+  generatorInput: {
+    processName: "",
+    roles: "",
+    trigger: "",
+    input: "",
+    output: "",
+    mainSteps: "",
+  },
+  processMeta: {
+    owner: "",
+    department: "",
+    status: "Draft",
+    version: "",
+    internalId: "",
+    tags: "",
+    description: "",
+  },
+});
 
 const splitLines = (text) =>
   (text || "")
@@ -46,13 +50,24 @@ const splitLines = (text) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+const mapGeneratorInputToPayload = (generatorInput) => {
+  const roles = splitLines(generatorInput.roles);
+  const steps = splitLines(generatorInput.mainSteps);
+  const processName = (generatorInput.processName || "").trim() || "Process";
+  return {
+    process_name: processName,
+    roles,
+    start_trigger: generatorInput.trigger,
+    input: generatorInput.input,
+    output: generatorInput.output,
+    steps,
+  };
+};
+
 export default function LinearWizardPage() {
   const fileInputRef = useRef(null);
-  const [processName, setProcessName] = useState(DEFAULTS.processName);
-  const [rolesRaw, setRolesRaw] = useState(toMultiline(DEFAULTS.roles));
-  const [startTrigger, setStartTrigger] = useState(DEFAULTS.startTrigger);
-  const [output, setOutput] = useState(DEFAULTS.output);
-  const [stepsRaw, setStepsRaw] = useState(toMultiline(DEFAULTS.steps));
+  const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
+  const [drawerOpen, setDrawerOpen] = useState(true);
   const [engineJson, setEngineJson] = useState(null);
   const [xml, setXml] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -73,25 +88,44 @@ export default function LinearWizardPage() {
   const [modelsActionLoading, setModelsActionLoading] = useState(false);
   const [modelsSearch, setModelsSearch] = useState("");
 
+  const updateGeneratorInput = (field, value) =>
+    setProcessCard((prev) => ({
+      ...prev,
+      generatorInput: { ...prev.generatorInput, [field]: value },
+    }));
+
+  const updateProcessMeta = (field, value) =>
+    setProcessCard((prev) => ({
+      ...prev,
+      processMeta: { ...prev.processMeta, [field]: value },
+    }));
+
+  const hydrateProcessCard = (payload) => {
+    const next = createEmptyProcessCardState();
+    const generatorInput = payload?.generator_input || payload?.generatorInput;
+    const processMeta = payload?.process_meta || payload?.processMeta;
+    if (generatorInput && typeof generatorInput === "object") {
+      next.generatorInput = { ...next.generatorInput, ...generatorInput };
+    }
+    if (processMeta && typeof processMeta === "object") {
+      next.processMeta = { ...next.processMeta, ...processMeta };
+    }
+    setProcessCard(next);
+  };
+
   const handleGenerate = async () => {
     setError(null);
     setInfo(null);
     setIsLoading(true);
     try {
-      const roles = splitLines(rolesRaw);
-      const steps = splitLines(stepsRaw);
-
-      const payload = {
-        process_name: processName,
-        roles,
-        start_trigger: startTrigger,
-        output,
-        steps,
-      };
-
+      const payload = mapGeneratorInputToPayload(processCard.generatorInput);
       const response = await generateLinearWizardDiagram(payload);
-      setEngineJson(response?.engine_json || null);
-      const xmlText = await renderEngineXml(response?.engine_json || payload);
+      const generatedEngine = response?.engine_json;
+      if (!generatedEngine) {
+        throw new Error("Chýba engine_json v odpovedi.");
+      }
+      setEngineJson(generatedEngine);
+      const xmlText = await renderEngineXml(generatedEngine);
       setXml(xmlText);
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
@@ -105,7 +139,7 @@ export default function LinearWizardPage() {
 
   const viewerProps = useMemo(
     () => ({
-      title: "Linear Wizard náhľad",
+      title: "Karta procesu - náhľad",
       subtitle: engineJson?.name || engineJson?.processName || "Náhľad BPMN",
       xml,
       loading: isLoading && !xml,
@@ -147,6 +181,7 @@ export default function LinearWizardPage() {
   };
 
   const deriveDefaultName = () => {
+    if (processCard.generatorInput.processName?.trim()) return processCard.generatorInput.processName.trim();
     if (engineJson?.name) return engineJson.name;
     if (engineJson?.processName) return engineJson.processName;
     const start = (engineJson?.nodes || []).find((n) => (n.type || "").toLowerCase().includes("start"));
@@ -171,6 +206,8 @@ export default function LinearWizardPage() {
         name: deriveDefaultName(),
         engine_json: engineJson,
         diagram_xml: diagramXml,
+        generator_input: processCard.generatorInput,
+        process_meta: processCard.processMeta,
       };
       await saveWizardModel(payload);
       setInfo("Model bol uložený.");
@@ -180,6 +217,23 @@ export default function LinearWizardPage() {
     } finally {
       setSaveLoading(false);
     }
+  };
+
+  const applyLoadedModel = (resp, { closeModels = false } = {}) => {
+    const loadedEngine = resp?.engine_json;
+    const diagram = resp?.diagram_xml;
+    if (!loadedEngine || !diagram) {
+      throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
+    }
+    setEngineJson(loadedEngine);
+    setXml(diagram);
+    setSelectedLane(null);
+    setLaneDescription("");
+    hydrateProcessCard(resp);
+    if (closeModels) {
+      setModelsOpen(false);
+    }
+    setDrawerOpen(false);
   };
 
   const handleLoadModel = async () => {
@@ -193,15 +247,7 @@ export default function LinearWizardPage() {
     setLoadLoading(true);
     try {
       const resp = await loadWizardModel(trimmed);
-      const loadedEngine = resp?.engine_json;
-      const diagram = resp?.diagram_xml;
-      if (!loadedEngine || !diagram) {
-        throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
-      }
-      setEngineJson(loadedEngine);
-      setXml(diagram);
-      setSelectedLane(null);
-      setLaneDescription("");
+      applyLoadedModel(resp);
       setInfo("Model bol načítaný.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa načítať model.";
@@ -231,9 +277,7 @@ export default function LinearWizardPage() {
   };
 
   const handleDeleteModel = async (id, name) => {
-    const confirmed = window.confirm(
-      `Naozaj chcete zmazat tento model?\n\nModel: ${name || id}`,
-    );
+    const confirmed = window.confirm(`Naozaj chcete zmazat tento model?\n\nModel: ${name || id}`);
     if (!confirmed) return;
     setModelsError(null);
     setInfo(null);
@@ -278,17 +322,8 @@ export default function LinearWizardPage() {
     setInfo(null);
     try {
       const resp = await loadWizardModel(id);
-      const loadedEngine = resp?.engine_json;
-      const diagram = resp?.diagram_xml;
-      if (!loadedEngine || !diagram) {
-        throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
-      }
-      setEngineJson(loadedEngine);
-      setXml(diagram);
-      setSelectedLane(null);
-      setLaneDescription("");
+      applyLoadedModel(resp, { closeModels: true });
       setInfo("Model bol načítaný.");
-      setModelsOpen(false);
     } catch (e) {
       const message = e?.message || "Nepodarilo sa načítať model.";
       setError(message);
@@ -308,22 +343,17 @@ export default function LinearWizardPage() {
     setInfo(null);
     setExportLoading(true);
     try {
-      // 1) Získaj presný BPMN XML z modelera (s DI/layoutom)
       const { xml: diagramXml } = await modelerRef.current.saveXML({ format: true });
 
-      // 2) Ulož model (SAVE) na backend pred exportom
-      const name =
-        engineJson.name ||
-        engineJson.processName ||
-        engineJson.processId ||
-        "process";
+      const name = engineJson.name || engineJson.processName || engineJson.processId || "process";
       await saveWizardModel({
         name,
         engine_json: engineJson,
         diagram_xml: diagramXml,
+        generator_input: processCard.generatorInput,
+        process_meta: processCard.processMeta,
       });
 
-      // 3) Stiahni presne to isté XML lokálne
       const safeName = (name || "process").replace(/[^\w.-]+/g, "_").replace(/_+/g, "_");
       const filename = `${safeName || "process"}.bpmn`;
       const blob = new Blob([diagramXml], { type: "application/bpmn+xml" });
@@ -364,7 +394,7 @@ export default function LinearWizardPage() {
       setXml(newXml);
       setSelectedLane(null);
       setLaneDescription("");
-      setInfo("BPMN model bol importovaný do wizzarda.");
+      setInfo("BPMN model bol importovaný do Karty procesu.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa importovať BPMN.";
       setError(message);
@@ -376,124 +406,215 @@ export default function LinearWizardPage() {
     }
   };
 
+  const generatorInput = processCard.generatorInput;
+  const processMeta = processCard.processMeta;
+
   return (
-    <div className="wizard-layout">
-      <div className="wizard-form">
-        <h1 className="wizard-heading">Linear Wizard</h1>
-        <p className="wizard-subtitle">
-          Rýchle zostavenie lineárneho BPMN bez AI. Vyplň role, triggery a kroky, potom klikni na Generovať.
-        </p>
-
-        <div className="wizard-section">
-          <h2 className="wizard-section__title">Informácie o procese</h2>
-          <label className="wizard-field">
-            <span>Názov procesu</span>
-            <input value={processName} onChange={(e) => setProcessName(e.target.value)} />
-          </label>
-          <label className="wizard-field">
-            <span>Role (po jednej na riadok)</span>
-            <textarea
-              value={rolesRaw}
-              onChange={(e) => setRolesRaw(e.target.value)}
-              rows={4}
-              placeholder={"Klient\nBack office"}
-            />
-          </label>
-          <label className="wizard-field">
-            <span>Spúšťač (start)</span>
-            <input value={startTrigger} onChange={(e) => setStartTrigger(e.target.value)} />
-          </label>
-          <label className="wizard-field">
-            <span>Výstup (end)</span>
-            <input value={output} onChange={(e) => setOutput(e.target.value)} />
-          </label>
-        </div>
-
-        <div className="wizard-section">
-          <h2 className="wizard-section__title">Hlavné kroky</h2>
-          <textarea
-            value={stepsRaw}
-            onChange={(e) => setStepsRaw(e.target.value)}
-            rows={8}
-            placeholder={"Krok 1\nKrok 2\nKrok 3"}
-            className="wizard-steps"
-          />
-        </div>
-
-        <div className="wizard-actions">
-          <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
-            {isLoading ? "Generujem..." : "Generovať diagram"}
-          </button>
-          <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
-            {exportLoading ? "Exportujem..." : "Export BPMN"}
-          </button>
-          <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
-            {importLoading ? "Importujem..." : "Import BPMN"}
-          </button>
-          <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
-            {saveLoading ? "Ukladám..." : "Uložiť model"}
-          </button>
-          <button className="btn" type="button" onClick={openModels}>
-            Uložené modely
-          </button>
-          <div className="wizard-load-inline">
-            <input
-              type="text"
-              placeholder="Model ID"
-              value={loadId}
-              onChange={(e) => setLoadId(e.target.value)}
-              className="wizard-load-input"
-            />
-            <button className="btn btn--small" type="button" onClick={handleLoadModel} disabled={loadLoading}>
-              {loadLoading ? "Načítavam..." : "Načítať"}
-            </button>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".bpmn,application/xml"
-            style={{ display: "none" }}
-            onChange={handleImportChange}
-          />
-        </div>
-        {error ? <div className="wizard-error">{error}</div> : null}
-        {info ? <div className="wizard-toast">{info}</div> : null}
-
-        {/* engine_json náhľad bol odstránený podľa zadania */}
+    <div className="process-card-layout">
+      <div className="process-card-rail">
+        <button
+          type="button"
+          className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
+          onClick={() => setDrawerOpen((prev) => !prev)}
+        >
+          {drawerOpen ? "Skryť" : "Karta procesu"}
+        </button>
       </div>
 
-      <div className="wizard-viewer">
-        {xml ? (
-          <MapViewer {...viewerProps} />
-        ) : (
-          <div className="wizard-placeholder">
-            Vyplň formulár a klikni na Generovať diagram pre náhľad.
+      <div className={`process-card-drawer ${drawerOpen ? "is-open" : ""}`}>
+        <div className="process-card-header">
+          <div>
+            <div className="process-card-label">Karta procesu</div>
+            <div className="process-card-description">Vyplň vstupy pre generovanie BPMN a meta údaje.</div>
           </div>
-        )}
-        {selectedLane ? (
-          <div className="wizard-lane-panel">
-            <div className="wizard-lane-panel__header">
-              Lane: {selectedLane.name || selectedLane.id}
+          <button
+            type="button"
+            className="process-card-close"
+            aria-label="Zavrieť kartu procesu"
+            onClick={() => setDrawerOpen(false)}
+          >
+            ×
+          </button>
+        </div>
+        <div className="process-card-body">
+          <section className="process-card-section">
+            <div className="process-card-section__title">
+              <h2>Generovanie BPMN</h2>
+              <span className="process-card-pill">Vstup</span>
             </div>
             <label className="wizard-field">
-              <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
-              <textarea
-                value={laneDescription}
-                onChange={(e) => setLaneDescription(e.target.value)}
-                rows={6}
-                placeholder={"Krok A\nKrok B\nKrok C"}
+              <span>Názov procesu</span>
+              <input
+                value={generatorInput.processName}
+                onChange={(e) => updateGeneratorInput("processName", e.target.value)}
+                placeholder="Spracovanie žiadosti"
               />
             </label>
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={handleAppendToLane}
-              disabled={isLoading}
-            >
-              {isLoading ? "Pridávam..." : "Vytvoriť kroky v tejto lane"}
-            </button>
-          </div>
-        ) : null}
+            <label className="wizard-field">
+              <span>Role / swimlanes (po jednej na riadok)</span>
+              <textarea
+                value={generatorInput.roles}
+                onChange={(e) => updateGeneratorInput("roles", e.target.value)}
+                rows={4}
+                placeholder={"Klient\nBack office"}
+              />
+            </label>
+            <label className="wizard-field">
+              <span>Spúšťač procesu</span>
+              <input
+                value={generatorInput.trigger}
+                onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
+                placeholder="Napíšte čo proces spustí"
+              />
+            </label>
+            <label className="wizard-field">
+              <span>Vstup</span>
+              <textarea
+                value={generatorInput.input}
+                onChange={(e) => updateGeneratorInput("input", e.target.value)}
+                rows={2}
+                placeholder="Zoznam vstupov pre proces"
+              />
+            </label>
+            <label className="wizard-field">
+              <span>Výstup</span>
+              <textarea
+                value={generatorInput.output}
+                onChange={(e) => updateGeneratorInput("output", e.target.value)}
+                rows={2}
+                placeholder="Konečný výstup procesu"
+              />
+            </label>
+            <label className="wizard-field">
+              <span>Hlavné kroky procesu</span>
+              <textarea
+                value={generatorInput.mainSteps}
+                onChange={(e) => updateGeneratorInput("mainSteps", e.target.value)}
+                rows={6}
+                placeholder={"Krok 1\nKrok 2\nKrok 3"}
+              />
+            </label>
+            <div className="process-card-buttons">
+              <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
+                {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
+              </button>
+            </div>
+          </section>
+
+          <section className="process-card-section">
+            <div className="process-card-section__title">
+              <h2>Meta údaje o procese</h2>
+              <span className="process-card-pill process-card-pill--muted">Opis</span>
+            </div>
+            <div className="process-card-grid">
+              <label className="wizard-field">
+                <span>Vlastník procesu</span>
+                <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
+              </label>
+              <label className="wizard-field">
+                <span>Oddelenie</span>
+                <input
+                  value={processMeta.department}
+                  onChange={(e) => updateProcessMeta("department", e.target.value)}
+                />
+              </label>
+              <label className="wizard-field">
+                <span>Stav procesu</span>
+                <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)}>
+                  <option value="Draft">Draft</option>
+                  <option value="Schválený">Schválený</option>
+                  <option value="Archivovaný">Archivovaný</option>
+                </select>
+              </label>
+              <label className="wizard-field">
+                <span>Verzia</span>
+                <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
+                <small className="field-hint">
+                  Verzia sa zobrazí v zozname uložených modelov, aby ste vedeli rozlíšiť jednotlivé verzie procesu.
+                </small>
+              </label>
+              <label className="wizard-field">
+                <span>Interné ID</span>
+                <input
+                  value={processMeta.internalId}
+                  onChange={(e) => updateProcessMeta("internalId", e.target.value)}
+                />
+              </label>
+              <label className="wizard-field">
+                <span>Tagy (čiarkou oddelené)</span>
+                <input value={processMeta.tags} onChange={(e) => updateProcessMeta("tags", e.target.value)} />
+              </label>
+            </div>
+            <label className="wizard-field">
+              <span>Popis procesu</span>
+              <textarea
+                value={processMeta.description}
+                onChange={(e) => updateProcessMeta("description", e.target.value)}
+                rows={3}
+              />
+            </label>
+          </section>
+
+          <section className="process-card-section process-card-section--actions">
+            <div className="process-card-actions">
+              <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
+                {exportLoading ? "Exportujem..." : "Export BPMN"}
+              </button>
+              <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
+                {importLoading ? "Importujem..." : "Import BPMN"}
+              </button>
+              <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
+                {saveLoading ? "Ukladám..." : "Uložiť model"}
+              </button>
+              <button className="btn" type="button" onClick={openModels}>
+                Uložené modely
+              </button>
+            </div>
+            <div className="process-card-inline-load">
+              <input
+                type="text"
+                placeholder="Model ID"
+                value={loadId}
+                onChange={(e) => setLoadId(e.target.value)}
+                className="wizard-load-input"
+              />
+              <button className="btn btn--small" type="button" onClick={handleLoadModel} disabled={loadLoading}>
+                {loadLoading ? "Načítavam..." : "Načítaj"}
+              </button>
+            </div>
+          </section>
+
+          {error ? <div className="wizard-error">{error}</div> : null}
+          {info ? <div className="wizard-toast">{info}</div> : null}
+        </div>
+      </div>
+
+      <div className="process-card-main">
+        <div className="wizard-viewer">
+          {xml ? (
+            <MapViewer {...viewerProps} />
+          ) : (
+            <div className="wizard-placeholder">Vyplň Kartu procesu a klikni na Vygenerovať BPMN pre náhľad.</div>
+          )}
+          {selectedLane ? (
+            <div className="wizard-lane-panel">
+              <div className="wizard-lane-panel__header">Lane: {selectedLane.name || selectedLane.id}</div>
+              <label className="wizard-field">
+                <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
+                <textarea
+                  value={laneDescription}
+                  onChange={(e) => setLaneDescription(e.target.value)}
+                  rows={6}
+                  placeholder={"Krok A\nKrok B\nKrok C"}
+                />
+              </label>
+              <button className="btn btn-primary" type="button" onClick={handleAppendToLane} disabled={isLoading}>
+                {isLoading ? "Pridávam..." : "Vytvoriť kroky v tejto lane"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
         {modelsOpen ? (
           <div className="wizard-models-modal" onClick={() => setModelsOpen(false)}>
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
@@ -526,6 +647,7 @@ export default function LinearWizardPage() {
                   <thead>
                     <tr>
                       <th>Názov modelu</th>
+                      <th>Verzia</th>
                       <th>Vytvorený</th>
                       <th>Naposledy upravený</th>
                       <th>Akcie</th>
@@ -540,44 +662,45 @@ export default function LinearWizardPage() {
                       [...models]
                         .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
                         .map((m) => (
-                        <tr key={m.id}>
-                          <td>
-                            <span className="wizard-model-name" title={m.name || m.id}>
-                              {m.name || m.id}
-                            </span>
-                          </td>
+                          <tr key={m.id}>
+                            <td>
+                              <span className="wizard-model-name" title={m.name || m.id}>
+                                {m.name || m.id}
+                              </span>
+                            </td>
+                          <td>{m.process_meta?.version || "–"}</td>
                           <td>{formatDateTime(m.created_at)}</td>
-                          <td>{formatDateTime(m.updated_at)}</td>
-                          <td>
-                            <div className="wizard-models-actions">
-                              <button
-                                className="btn btn--small btn-primary"
-                                type="button"
-                                onClick={() => loadModelFromList(m.id)}
-                                disabled={loadLoading || modelsActionLoading}
-                              >
-                                Otvoriť
-                              </button>
-                              <button
-                                className="btn btn--small btn-link"
-                                type="button"
-                                onClick={() => handleRenameModel(m.id, m.name || m.id)}
-                                disabled={modelsLoading || modelsActionLoading}
-                              >
-                                Premenovať
-                              </button>
-                              <button
-                                className="btn btn--small btn-danger"
-                                type="button"
-                                onClick={() => handleDeleteModel(m.id, m.name || m.id)}
-                                disabled={modelsLoading || modelsActionLoading}
-                              >
-                                Zmazať
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                            <td>{formatDateTime(m.updated_at)}</td>
+                            <td>
+                              <div className="wizard-models-actions">
+                                <button
+                                  className="btn btn--small btn-primary"
+                                  type="button"
+                                  onClick={() => loadModelFromList(m.id)}
+                                  disabled={loadLoading || modelsActionLoading}
+                                >
+                                  Otvoriť
+                                </button>
+                                <button
+                                  className="btn btn--small btn-link"
+                                  type="button"
+                                  onClick={() => handleRenameModel(m.id, m.name || m.id)}
+                                  disabled={modelsLoading || modelsActionLoading}
+                                >
+                                  Premenovať
+                                </button>
+                                <button
+                                  className="btn btn--small btn-danger"
+                                  type="button"
+                                  onClick={() => handleDeleteModel(m.id, m.name || m.id)}
+                                  disabled={modelsLoading || modelsActionLoading}
+                                >
+                                  Zmazať
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
                     ) : (
                       <tr>
                         <td colSpan={4}>Žiadne uložené modely.</td>
@@ -595,6 +718,14 @@ export default function LinearWizardPage() {
           </div>
         ) : null}
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".bpmn,application/xml"
+        style={{ display: "none" }}
+        onChange={handleImportChange}
+      />
     </div>
   );
 }

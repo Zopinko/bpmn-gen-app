@@ -333,7 +333,7 @@ function App() {
               Text → mapa
             </Link>
             <Link to="/wizard/linear" className="app-nav__link">
-              Wizard (linear)
+              Karta procesu
             </Link>
           </nav>
         </header>

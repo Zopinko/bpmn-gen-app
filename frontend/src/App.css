@@ -617,6 +617,174 @@ body {
   overflow: auto;
 }
 
+.process-card-layout {
+  display: flex;
+  height: calc(100vh - 64px);
+  background: #0b0f17;
+}
+
+.process-card-rail {
+  width: 144px;
+  min-width: 144px;
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px;
+  background: #0b0f17;
+}
+
+.process-card-toggle {
+  width: 100%;
+  min-height: 56px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.08));
+  color: var(--text-primary);
+  font-weight: 700;
+  padding-left: 8px;
+  padding-right: 8px;
+  writing-mode: horizontal-tb;
+  text-orientation: initial;
+  transform: none;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.process-card-toggle.is-active {
+  border-color: rgba(59, 130, 246, 0.8);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.22), rgba(59, 130, 246, 0.12));
+}
+
+.process-card-drawer {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: #0f1623;
+  border-right: 1px solid var(--border-subtle);
+  transition: width 180ms ease, opacity 180ms ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.process-card-drawer.is-open {
+  width: 640px;
+  max-width: 720px;
+  min-width: 600px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.process-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.process-card-label {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.process-card-description {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.process-card-close {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.process-card-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.process-card-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.process-card-section__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.process-card-section__title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.process-card-pill {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+  font-size: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.24);
+}
+
+.process-card-pill--muted {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+}
+
+.process-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.process-card-buttons {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.process-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.process-card-inline-load {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.process-card-main {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: #0f1623;
+}
+
+.process-card-section--actions {
+  gap: 12px;
+}
+
 .wizard-layout {
   display: grid;
   grid-template-columns: minmax(320px, 34%) 1fr;
@@ -669,6 +837,7 @@ body {
 }
 
 .wizard-field input,
+.wizard-field select,
 .wizard-field textarea,
 .wizard-steps {
   width: 100%;
@@ -849,6 +1018,12 @@ body {
   margin-bottom: 8px;
 }
 
+.field-hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
 @media (max-width: 1100px) {
   .app {
     grid-template-columns: minmax(280px, 35%) 1fr;
@@ -858,6 +1033,33 @@ body {
     height: auto;
   }
   .wizard-viewer {
+    min-height: 50vh;
+  }
+  .process-card-layout {
+    flex-direction: column;
+    height: auto;
+  }
+  .process-card-rail {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+  .process-card-toggle {
+    writing-mode: horizontal-tb;
+    transform: none;
+    min-height: auto;
+    padding: 10px 14px;
+    width: auto;
+  }
+  .process-card-drawer,
+  .process-card-drawer.is-open {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .process-card-main {
     min-height: 50vh;
   }
 }

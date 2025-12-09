@@ -26,3 +26,25 @@ class LaneAppendRequest(BaseModel):
 class LaneAppendResponse(BaseModel):
     engine_json: Any
     issues: list[dict] | None = None
+
+
+class WizardModelBase(BaseModel):
+    id: str
+    name: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    process_meta: dict | None = None
+
+
+class WizardModelDetail(WizardModelBase):
+    engine_json: Any
+    diagram_xml: str
+    generator_input: dict | None = None
+    process_meta: dict | None = None
+
+
+class WizardModelList(BaseModel):
+    items: list[WizardModelBase]
+    total: int
+    limit: int
+    offset: int

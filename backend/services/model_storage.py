@@ -35,18 +35,26 @@ def save_model(
     engine_json: Dict[str, Any],
     diagram_xml: str,
     model_id: Optional[str] = None,
+    generator_input: Optional[Dict[str, Any]] = None,
+    process_meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create or update a model. Returns full model."""
     model_id = model_id or str(uuid4())
     path = _model_path(model_id)
     created_at = _now_iso()
+    existing_generator_input: Optional[Dict[str, Any]] = None
+    existing_process_meta: Optional[Dict[str, Any]] = None
     if path.exists():
         try:
             with path.open("r", encoding="utf-8") as f:
                 existing = json.load(f)
             created_at = existing.get("created_at", created_at)
+            existing_generator_input = existing.get("generator_input")
+            existing_process_meta = existing.get("process_meta")
         except Exception:
             pass
+    final_generator_input = existing_generator_input if generator_input is None else generator_input
+    final_process_meta = existing_process_meta if process_meta is None else process_meta
     model = {
         "id": model_id,
         "name": name,
@@ -55,6 +63,10 @@ def save_model(
         "created_at": created_at,
         "updated_at": _now_iso(),
     }
+    if final_generator_input is not None:
+        model["generator_input"] = final_generator_input
+    if final_process_meta is not None:
+        model["process_meta"] = final_process_meta
     with path.open("w", encoding="utf-8") as f:
         json.dump(model, f, ensure_ascii=False)
     return model
@@ -87,6 +99,7 @@ def list_models(search: str | None = None) -> List[Dict[str, Any]]:
                     "name": data.get("name"),
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),
+                    "process_meta": data.get("process_meta"),
                 }
             )
         except Exception:
