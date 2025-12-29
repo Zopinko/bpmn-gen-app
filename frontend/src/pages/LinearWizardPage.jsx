@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MapViewer from "../components/MapViewer";
 import {
   appendLaneFromDescription,
@@ -11,6 +11,29 @@ import {
   deleteWizardModel,
   renameWizardModel,
 } from "../api/wizard";
+
+const HELP_RULES = [
+  {
+    title: "Bežný krok (Task)",
+    syntax: "ľubovoľný text na riadok",
+    example: "Overíme identitu zákazníka",
+  },
+  {
+    title: "Rozhodnutie (XOR gateway)",
+    syntax: "Ak <podmienka> tak <krok>, inak <krok/koniec>",
+    example: "Ak zákazník schváli ponuku tak priprav zmluvu, inak koniec",
+  },
+  {
+    title: "Paralelné kroky (AND) – presný zápis",
+    syntax: "Paralelne: <krok>; <krok>; <krok>",
+    example: "Paralelne: priprav zmluvu; over identitu; nastav splátky",
+  },
+  {
+    title: "Paralelné kroky (AND) – voľný text",
+    syntax: "Zároveň/Súčasne <krok>, <krok> a <krok>",
+    example: "Zároveň priprav zmluvu, over identitu a nastav splátky",
+  },
+];
 
 function formatDateTime(isoString) {
   if (!isoString) return "";
@@ -87,6 +110,14 @@ export default function LinearWizardPage() {
   const [modelsError, setModelsError] = useState(null);
   const [modelsActionLoading, setModelsActionLoading] = useState(false);
   const [modelsSearch, setModelsSearch] = useState("");
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
+  const [sidebarWidth, setSidebarWidth] = useState(640);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [processPanelHeight, setProcessPanelHeight] = useState(620);
+  const [isResizingPanels, setIsResizingPanels] = useState(false);
+  const verticalResizeStart = useRef({ y: 0, h: 0 });
+  const layoutRef = useRef(null);
 
   const updateGeneratorInput = (field, value) =>
     setProcessCard((prev) => ({
@@ -99,6 +130,71 @@ export default function LinearWizardPage() {
       ...prev,
       processMeta: { ...prev.processMeta, [field]: value },
     }));
+
+  const appendLine = (current, text) => {
+    const base = (current || "").trimEnd();
+    return base ? `${base}\n${text}` : text;
+  };
+
+  const insertHelpExample = (text) => {
+    if (helpInsertTarget?.type === "lane") {
+      setLaneDescription((prev) => appendLine(prev, text));
+    } else {
+      setProcessCard((prev) => ({
+        ...prev,
+        generatorInput: {
+          ...prev.generatorInput,
+          mainSteps: appendLine(prev.generatorInput.mainSteps, text),
+        },
+      }));
+    }
+  };
+
+  useEffect(() => {
+    if (selectedLane) {
+      setHelpInsertTarget({
+        type: "lane",
+        laneId: selectedLane.id,
+        laneName: selectedLane.name || selectedLane.id,
+      });
+    } else {
+      setHelpInsertTarget({ type: "process" });
+    }
+  }, [selectedLane]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+    const onMove = (e) => {
+      const rect = layoutRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const offset = e.clientX - rect.left;
+      const clamped = Math.min(820, Math.max(540, offset));
+      setSidebarWidth(clamped);
+    };
+    const stop = () => setIsResizingSidebar(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", stop);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", stop);
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (!isResizingPanels) return;
+    const onMove = (e) => {
+      const delta = e.clientY - verticalResizeStart.current.y;
+      const next = Math.min(1200, Math.max(320, verticalResizeStart.current.h + delta));
+      setProcessPanelHeight(next);
+    };
+    const stop = () => setIsResizingPanels(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", stop);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", stop);
+    };
+  }, [isResizingPanels]);
 
   const hydrateProcessCard = (payload) => {
     const next = createEmptyProcessCardState();
@@ -410,184 +506,324 @@ export default function LinearWizardPage() {
   const processMeta = processCard.processMeta;
 
   return (
-    <div className="process-card-layout">
+    <div className="process-card-layout" ref={layoutRef}>
       <div className="process-card-rail">
         <button
           type="button"
           className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
+          style={
+            drawerOpen
+              ? {
+                  backgroundColor: "#1b3a6b",
+                  color: "#fff",
+                  borderColor: "#2f5ca0",
+                  boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                }
+              : undefined
+          }
           onClick={() => setDrawerOpen((prev) => !prev)}
         >
-          {drawerOpen ? "Skryť" : "Karta procesu"}
+          {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
+        </button>
+        <button
+          type="button"
+          className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
+          style={
+            helpOpen
+              ? {
+                  backgroundColor: "#1b3a6b",
+                  color: "#fff",
+                  borderColor: "#2f5ca0",
+                  boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                }
+              : undefined
+          }
+          onClick={() => setHelpOpen((prev) => !prev)}
+        >
+          {helpOpen ? "Skryť pomoc" : "Pomoc"}
         </button>
       </div>
 
-      <div className={`process-card-drawer ${drawerOpen ? "is-open" : ""}`}>
-        <div className="process-card-header">
-          <div>
-            <div className="process-card-label">Karta procesu</div>
-            <div className="process-card-description">Vyplň vstupy pre generovanie BPMN a meta údaje.</div>
-          </div>
-          <button
-            type="button"
-            className="process-card-close"
-            aria-label="Zavrieť kartu procesu"
-            onClick={() => setDrawerOpen(false)}
-          >
-            ×
-          </button>
+      {drawerOpen || helpOpen ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            width: "100%",
+            maxWidth: 820,
+            minWidth: 540,
+            flex: "0 0 640px",
+            overflow: "auto",
+            paddingRight: 16,
+          }}
+        >
+          {drawerOpen ? (
+            <div
+              className={`process-card-drawer ${drawerOpen ? "is-open" : ""}`}
+              style={{ height: processPanelHeight, minHeight: 320, overflow: "auto" }}
+            >
+              <div className="process-card-header">
+                <div>
+                  <div className="process-card-label">Karta procesu</div>
+                  <div className="process-card-description">Vyplň vstupy pre generovanie BPMN a meta údaje.</div>
+                </div>
+                <button
+                  type="button"
+                  className="process-card-close"
+                  aria-label="Zavrieť kartu procesu"
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="process-card-body">
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Generovanie BPMN</h2>
+                    <span className="process-card-pill">Vstup</span>
+                  </div>
+                  <label className="wizard-field">
+                    <span>Názov procesu</span>
+                    <input
+                      value={generatorInput.processName}
+                      onChange={(e) => updateGeneratorInput("processName", e.target.value)}
+                      placeholder="Spracovanie žiadosti"
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Role / swimlanes (po jednej na riadok)</span>
+                    <textarea
+                      value={generatorInput.roles}
+                      onChange={(e) => updateGeneratorInput("roles", e.target.value)}
+                      rows={4}
+                      placeholder={"Klient\nBack office"}
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Spúšťač procesu</span>
+                    <input
+                      value={generatorInput.trigger}
+                      onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
+                      placeholder="Napíšte čo proces spustí"
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Vstup</span>
+                    <textarea
+                      value={generatorInput.input}
+                      onChange={(e) => updateGeneratorInput("input", e.target.value)}
+                      rows={2}
+                      placeholder="Zoznam vstupov pre proces"
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Výstup</span>
+                    <textarea
+                      value={generatorInput.output}
+                      onChange={(e) => updateGeneratorInput("output", e.target.value)}
+                      rows={2}
+                      placeholder="Konečný výstup procesu"
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Hlavné kroky procesu</span>
+                    <textarea
+                      value={generatorInput.mainSteps}
+                      onChange={(e) => updateGeneratorInput("mainSteps", e.target.value)}
+                      rows={6}
+                      placeholder={"Krok 1\nKrok 2\nKrok 3"}
+                    />
+                  </label>
+                  <div className="process-card-buttons">
+                    <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
+                      {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
+                    </button>
+                  </div>
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Meta údaje o procese</h2>
+                    <span className="process-card-pill process-card-pill--muted">Opis</span>
+                  </div>
+                  <div className="process-card-grid">
+                    <label className="wizard-field">
+                      <span>Vlastník procesu</span>
+                      <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
+                    </label>
+                    <label className="wizard-field">
+                      <span>Oddelenie</span>
+                      <input
+                        value={processMeta.department}
+                        onChange={(e) => updateProcessMeta("department", e.target.value)}
+                      />
+                    </label>
+                    <label className="wizard-field">
+                      <span>Stav procesu</span>
+                      <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)}>
+                        <option value="Draft">Draft</option>
+                        <option value="Schválený">Schválený</option>
+                        <option value="Archivovaný">Archivovaný</option>
+                      </select>
+                    </label>
+                    <label className="wizard-field">
+                      <span>Verzia</span>
+                      <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
+                      <small className="field-hint">
+                        Verzia sa zobrazí v zozname uložených modelov, aby ste vedeli rozlíšiť jednotlivé verzie procesu.
+                      </small>
+                    </label>
+                    <label className="wizard-field">
+                      <span>Interné ID</span>
+                      <input
+                        value={processMeta.internalId}
+                        onChange={(e) => updateProcessMeta("internalId", e.target.value)}
+                      />
+                    </label>
+                    <label className="wizard-field">
+                      <span>Tagy (čiarkou oddelené)</span>
+                      <input value={processMeta.tags} onChange={(e) => updateProcessMeta("tags", e.target.value)} />
+                    </label>
+                  </div>
+                  <label className="wizard-field">
+                    <span>Popis procesu</span>
+                    <textarea
+                      value={processMeta.description}
+                      onChange={(e) => updateProcessMeta("description", e.target.value)}
+                      rows={3}
+                    />
+                  </label>
+                </section>
+
+                <section className="process-card-section process-card-section--actions">
+                  <div className="process-card-actions">
+                    <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
+                      {exportLoading ? "Exportujem..." : "Export BPMN"}
+                    </button>
+                    <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
+                      {importLoading ? "Importujem..." : "Import BPMN"}
+                    </button>
+                    <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
+                      {saveLoading ? "Ukladám..." : "Uložiť model"}
+                    </button>
+                    <button className="btn" type="button" onClick={openModels}>
+                      Uložené modely
+                    </button>
+                  </div>
+                  <div className="process-card-inline-load">
+                    <input
+                      type="text"
+                      placeholder="Model ID"
+                      value={loadId}
+                      onChange={(e) => setLoadId(e.target.value)}
+                      className="wizard-load-input"
+                    />
+                    <button className="btn btn--small" type="button" onClick={handleLoadModel} disabled={loadLoading}>
+                      {loadLoading ? "Načítavam..." : "Načítaj"}
+                    </button>
+                  </div>
+                </section>
+
+                {error ? <div className="wizard-error">{error}</div> : null}
+                {info ? <div className="wizard-toast">{info}</div> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {drawerOpen && helpOpen ? (
+            <div
+              style={{
+                height: 9,
+                cursor: "row-resize",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                background: isResizingPanels
+                  ? "linear-gradient(90deg, rgba(47,92,160,0.5), rgba(47,92,160,0.35))"
+                  : "linear-gradient(90deg, rgba(47,92,160,0.28), rgba(47,92,160,0.18))",
+                transition: "background 120ms ease",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
+                boxShadow: isResizingPanels ? "0 0 0 1px rgba(47,92,160,0.4) inset" : "none",
+              }}
+              onMouseDown={(e) => {
+                verticalResizeStart.current = { y: e.clientY, h: processPanelHeight };
+                setIsResizingPanels(true);
+              }}
+              title="Ťahaj pre zmenu výšky Karty procesu vs. Pomoc"
+            >
+              <span
+                style={{
+                  height: 4,
+                  width: 48,
+                  borderRadius: 12,
+                  background: "repeating-linear-gradient(90deg, rgba(255,255,255,0.45), rgba(255,255,255,0.45) 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)",
+                }}
+              />
+            </div>
+          ) : null}
+
+          {helpOpen ? (
+            <div className="process-card-drawer is-open process-card-help">
+              <div className="process-card-header">
+                <div>
+                  <div className="process-card-label">Pomoc</div>
+                  <div className="process-card-description">
+                    Vkladáš do:{" "}
+                    {helpInsertTarget?.type === "lane"
+                      ? `lane ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
+                      : "hlavné kroky"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="process-card-close"
+                  aria-label="Zavrieť pomoc"
+                  onClick={() => setHelpOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="process-card-body">
+                <div className="wizard-help-list">
+                  {HELP_RULES.map((rule) => (
+                    <div key={rule.title} className="wizard-help-item">
+                      <div className="wizard-help-head">
+                        <strong>{rule.title}</strong>
+                      </div>
+                      <div className="wizard-help-body">
+                        <div className="wizard-help-line">
+                          <span className="wizard-help-label">Syntax:</span>{" "}
+                          <code>{rule.syntax}</code>
+                        </div>
+                        <div className="wizard-help-line">
+                          <span className="wizard-help-label">Príklad:</span>{" "}
+                          <button
+                            type="button"
+                            className="btn btn--small btn-link"
+                            onClick={() => insertHelpExample(rule.example)}
+                          >
+                            {rule.example}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--small btn-primary"
+                            onClick={() => insertHelpExample(rule.example)}
+                          >
+                            Vložiť
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
-        <div className="process-card-body">
-          <section className="process-card-section">
-            <div className="process-card-section__title">
-              <h2>Generovanie BPMN</h2>
-              <span className="process-card-pill">Vstup</span>
-            </div>
-            <label className="wizard-field">
-              <span>Názov procesu</span>
-              <input
-                value={generatorInput.processName}
-                onChange={(e) => updateGeneratorInput("processName", e.target.value)}
-                placeholder="Spracovanie žiadosti"
-              />
-            </label>
-            <label className="wizard-field">
-              <span>Role / swimlanes (po jednej na riadok)</span>
-              <textarea
-                value={generatorInput.roles}
-                onChange={(e) => updateGeneratorInput("roles", e.target.value)}
-                rows={4}
-                placeholder={"Klient\nBack office"}
-              />
-            </label>
-            <label className="wizard-field">
-              <span>Spúšťač procesu</span>
-              <input
-                value={generatorInput.trigger}
-                onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
-                placeholder="Napíšte čo proces spustí"
-              />
-            </label>
-            <label className="wizard-field">
-              <span>Vstup</span>
-              <textarea
-                value={generatorInput.input}
-                onChange={(e) => updateGeneratorInput("input", e.target.value)}
-                rows={2}
-                placeholder="Zoznam vstupov pre proces"
-              />
-            </label>
-            <label className="wizard-field">
-              <span>Výstup</span>
-              <textarea
-                value={generatorInput.output}
-                onChange={(e) => updateGeneratorInput("output", e.target.value)}
-                rows={2}
-                placeholder="Konečný výstup procesu"
-              />
-            </label>
-            <label className="wizard-field">
-              <span>Hlavné kroky procesu</span>
-              <textarea
-                value={generatorInput.mainSteps}
-                onChange={(e) => updateGeneratorInput("mainSteps", e.target.value)}
-                rows={6}
-                placeholder={"Krok 1\nKrok 2\nKrok 3"}
-              />
-            </label>
-            <div className="process-card-buttons">
-              <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
-                {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
-              </button>
-            </div>
-          </section>
-
-          <section className="process-card-section">
-            <div className="process-card-section__title">
-              <h2>Meta údaje o procese</h2>
-              <span className="process-card-pill process-card-pill--muted">Opis</span>
-            </div>
-            <div className="process-card-grid">
-              <label className="wizard-field">
-                <span>Vlastník procesu</span>
-                <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
-              </label>
-              <label className="wizard-field">
-                <span>Oddelenie</span>
-                <input
-                  value={processMeta.department}
-                  onChange={(e) => updateProcessMeta("department", e.target.value)}
-                />
-              </label>
-              <label className="wizard-field">
-                <span>Stav procesu</span>
-                <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)}>
-                  <option value="Draft">Draft</option>
-                  <option value="Schválený">Schválený</option>
-                  <option value="Archivovaný">Archivovaný</option>
-                </select>
-              </label>
-              <label className="wizard-field">
-                <span>Verzia</span>
-                <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
-                <small className="field-hint">
-                  Verzia sa zobrazí v zozname uložených modelov, aby ste vedeli rozlíšiť jednotlivé verzie procesu.
-                </small>
-              </label>
-              <label className="wizard-field">
-                <span>Interné ID</span>
-                <input
-                  value={processMeta.internalId}
-                  onChange={(e) => updateProcessMeta("internalId", e.target.value)}
-                />
-              </label>
-              <label className="wizard-field">
-                <span>Tagy (čiarkou oddelené)</span>
-                <input value={processMeta.tags} onChange={(e) => updateProcessMeta("tags", e.target.value)} />
-              </label>
-            </div>
-            <label className="wizard-field">
-              <span>Popis procesu</span>
-              <textarea
-                value={processMeta.description}
-                onChange={(e) => updateProcessMeta("description", e.target.value)}
-                rows={3}
-              />
-            </label>
-          </section>
-
-          <section className="process-card-section process-card-section--actions">
-            <div className="process-card-actions">
-              <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
-                {exportLoading ? "Exportujem..." : "Export BPMN"}
-              </button>
-              <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
-                {importLoading ? "Importujem..." : "Import BPMN"}
-              </button>
-              <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
-                {saveLoading ? "Ukladám..." : "Uložiť model"}
-              </button>
-              <button className="btn" type="button" onClick={openModels}>
-                Uložené modely
-              </button>
-            </div>
-            <div className="process-card-inline-load">
-              <input
-                type="text"
-                placeholder="Model ID"
-                value={loadId}
-                onChange={(e) => setLoadId(e.target.value)}
-                className="wizard-load-input"
-              />
-              <button className="btn btn--small" type="button" onClick={handleLoadModel} disabled={loadLoading}>
-                {loadLoading ? "Načítavam..." : "Načítaj"}
-              </button>
-            </div>
-          </section>
-
-          {error ? <div className="wizard-error">{error}</div> : null}
-          {info ? <div className="wizard-toast">{info}</div> : null}
-        </div>
-      </div>
+      ) : null}
 
       <div className="process-card-main">
         <div className="wizard-viewer">
@@ -598,7 +834,23 @@ export default function LinearWizardPage() {
           )}
           {selectedLane ? (
             <div className="wizard-lane-panel">
-              <div className="wizard-lane-panel__header">Lane: {selectedLane.name || selectedLane.id}</div>
+              <div className="wizard-lane-panel__header" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span>Lane: {selectedLane.name || selectedLane.id}</span>
+                <button
+                  type="button"
+                  className="btn btn--small btn-link"
+                  onClick={() => {
+                    setHelpOpen(true);
+                    setHelpInsertTarget({
+                      type: "lane",
+                      laneId: selectedLane.id,
+                      laneName: selectedLane.name || selectedLane.id,
+                    });
+                  }}
+                >
+                  POMOC
+                </button>
+              </div>
               <label className="wizard-field">
                 <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
                 <textarea
