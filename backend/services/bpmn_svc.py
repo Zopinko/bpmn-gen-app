@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import heapq
 import re
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Callable
 from uuid import uuid4
 from services.architect.normalize import postprocess_engine_json
 from services.architect import _mk_question
@@ -69,6 +69,166 @@ def _slugify_process_id(raw_name: str) -> str:
     return normalized or "process"
 
 
+def _expand_conditional_step(
+    step: str,
+    lane_id: str,
+    prev_id: str | None,
+    make_gateway_id: Callable[[], str],
+    make_task_ids: Callable[[], tuple[str, str]],
+    make_flow_id: Callable[[str, str], str],
+    include_lane_in_flow: bool = False,
+) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
+    """Return (new_prev, nodes, flows) for a conditional 'Ak ...' step."""
+    cond = then_part = else_part = None
+
+    # Variant 1a: explicit ELSE with tak/potom and optional commas
+    m = re.match(
+        r"^\s*Ak\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+?)\s*,?\s*inak\s*[:\-]?\s*(?P<else>.+)\s*$",
+        step,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        cond = (m.group("cond") or "").strip()
+        then_part = (m.group("then") or "").strip()
+        else_part = (m.group("else") or "").strip() or None
+    else:
+        # Variant 1b: tak/potom bez explicitného inak (fallback)
+        m = re.match(
+            r"^\s*Ak\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+)\s*$",
+            step,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            cond = (m.group("cond") or "").strip()
+            then_part = (m.group("then") or "").strip()
+        else:
+            # Variant 2: legacy "Ak X, Y" without explicit tak/potom
+            m = re.match(r"^\s*Ak\s+(.*?),(.*)$", step, flags=re.IGNORECASE)
+            if m:
+                cond = m.group(1).strip()
+                then_part = m.group(2).strip()
+
+    if not cond or not then_part:
+        return None, [], []
+
+    then_part = then_part or "Krok"
+    gw_id = make_gateway_id()
+    gw_name = _mk_question(cond)
+    yes_id, else_id = make_task_ids()
+
+    nodes = [
+        {
+            "id": gw_id,
+            "type": "exclusiveGateway",
+            "name": gw_name,
+            "laneId": lane_id,
+        },
+        {"id": yes_id, "type": "task", "name": then_part, "laneId": lane_id},
+    ]
+
+    end_keywords = {"koniec", "end", "ukonci", "ukonči", "stop"}
+    else_lower = (else_part or "").lower()
+    if else_part and else_lower in end_keywords:
+        nodes.append({"id": else_id, "type": "endEvent", "name": else_part, "laneId": lane_id})
+    else:
+        nodes.append({"id": else_id, "type": "task", "name": else_part or "Inak", "laneId": lane_id})
+
+    flows: list[Dict[str, Any]] = []
+    if prev_id:
+        flow = {"id": make_flow_id(prev_id, gw_id), "source": prev_id, "target": gw_id}
+        if include_lane_in_flow:
+            flow["laneId"] = lane_id
+        flows.append(flow)
+
+    flow_yes = {"id": make_flow_id(gw_id, yes_id), "source": gw_id, "target": yes_id, "name": "Áno"}
+    flow_no = {"id": make_flow_id(gw_id, else_id), "source": gw_id, "target": else_id, "name": "Nie"}
+    if include_lane_in_flow:
+        flow_yes["laneId"] = lane_id
+        flow_no["laneId"] = lane_id
+
+    flows.extend([flow_yes, flow_no])
+    return yes_id, nodes, flows
+
+
+def _expand_parallel_step(
+    step: str,
+    lane_id: str,
+    prev_id: str | None,
+    make_gateway_id: Callable[[], str],
+    make_task_id: Callable[[], str],
+    make_flow_id: Callable[[str, str], str],
+    include_lane_in_flow: bool = False,
+) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
+    """Return (new_prev, nodes, flows) for parallel patterns or fallback."""
+    items: list[str] = []
+
+    # Highest priority: explicit "Paralelne: A; B; ..."
+    m = re.match(r"^\s*Paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
+    if m:
+        raw = m.group(1)
+        items = [
+            part.strip().rstrip(".") for part in raw.split(";") if part.strip().rstrip(".")
+        ]
+    else:
+        # Next: "Zároveň ..." with at least one explicit " a "
+        trimmed = step.lstrip()
+        lowered = trimmed.lower()
+        prefixes = ["zároveň", "zaroven", "súčasne", "sucasne"]
+        prefix = next((p for p in prefixes if lowered.startswith(p)), None)
+        if prefix:
+            raw = trimmed[len(prefix) :].strip()
+            if re.search(r"\s+a\s+", raw, flags=re.IGNORECASE):
+                parts = [p.strip().rstrip(".") for p in raw.split(",") if p.strip().rstrip(".")]
+                last_chunk = parts.pop() if parts else raw
+                subparts = [
+                    s.strip().rstrip(".")
+                    for s in re.split(r"\s+a\s+", last_chunk)
+                    if s.strip().rstrip(".")
+                ]
+                items = [x for x in parts + subparts if x]
+
+    if len(items) < 2:
+        return None, [], []  # fallback to normal task handling
+
+    split_id = make_gateway_id()
+    join_id = make_gateway_id()
+
+    nodes: list[Dict[str, Any]] = [
+        {
+            "id": split_id,
+            "type": "parallelGateway",
+            "laneId": lane_id,
+            "name": "Paralelne",
+        },
+        {
+            "id": join_id,
+            "type": "parallelGateway",
+            "laneId": lane_id,
+            "name": "Zlúčenie paralelných vetiev",
+        },
+    ]
+    flows: list[Dict[str, Any]] = []
+
+    if prev_id:
+        flow = {"id": make_flow_id(prev_id, split_id), "source": prev_id, "target": split_id}
+        if include_lane_in_flow:
+            flow["laneId"] = lane_id
+        flows.append(flow)
+
+    for item in items:
+        task_id = make_task_id()
+        nodes.append({"id": task_id, "type": "task", "name": item, "laneId": lane_id})
+
+        f1 = {"id": make_flow_id(split_id, task_id), "source": split_id, "target": task_id}
+        f2 = {"id": make_flow_id(task_id, join_id), "source": task_id, "target": join_id}
+        if include_lane_in_flow:
+            f1["laneId"] = lane_id
+            f2["laneId"] = lane_id
+        flows.extend([f1, f2])
+
+    return join_id, nodes, flows
+
+
 def build_linear_engine_from_wizard(data: LinearWizardRequest) -> Dict[str, Any]:
     """
     Deterministically build a linear engine_json from a wizard payload without any AI calls.
@@ -107,68 +267,35 @@ def build_linear_engine_from_wizard(data: LinearWizardRequest) -> Dict[str, Any]
         return f"gw_{uuid4().hex[:8]}"
 
     for idx, step in enumerate(step_names, start=1):
-        cond_match = re.match(r"^\s*Ak\s+(.*?),(.*)$", step, flags=re.IGNORECASE)
-        if cond_match:
-            condition = cond_match.group(1).strip()
-            then_part = cond_match.group(2).strip() or "Krok"
-            gw_id = _new_gateway_id()
-            gw_name = _mk_question(condition)
-            nodes.append(
-                {
-                    "id": gw_id,
-                    "type": "exclusiveGateway",
-                    "name": gw_name,
-                    "laneId": primary_lane_id,
-                }
-            )
-            flows.append(
-                {
-                    "id": f"flow_{previous}_to_{gw_id}",
-                    "source": previous,
-                    "target": gw_id,
-                    "laneId": primary_lane_id,
-                }
-            )
+        par_counter = {"i": 0}
+        new_prev, new_nodes, new_flows = _expand_parallel_step(
+            step=step,
+            lane_id=primary_lane_id,
+            prev_id=previous,
+            make_gateway_id=_new_gateway_id,
+            make_task_id=lambda: f"task_{idx}_p_{(par_counter.__setitem__('i', par_counter['i'] + 1) or par_counter['i'])}",
+            make_flow_id=lambda s, t: f"flow_{s}_to_{t}",
+            include_lane_in_flow=True,
+        )
+        if new_nodes:
+            nodes.extend(new_nodes)
+            flows.extend(new_flows)
+            previous = new_prev or previous
+            continue
 
-            yes_id = f"task_{idx}_yes"
-            nodes.append(
-                {
-                    "id": yes_id,
-                    "type": "task",
-                    "name": then_part,
-                    "laneId": primary_lane_id,
-                }
-            )
-            flows.append(
-                {
-                    "id": f"flow_{gw_id}_to_{yes_id}",
-                    "source": gw_id,
-                    "target": yes_id,
-                    "name": "Áno",
-                    "laneId": primary_lane_id,
-                }
-            )
-
-            else_id = f"task_{idx}_no"
-            nodes.append(
-                {
-                    "id": else_id,
-                    "type": "task",
-                    "name": "Inak",
-                    "laneId": primary_lane_id,
-                }
-            )
-            flows.append(
-                {
-                    "id": f"flow_{gw_id}_to_{else_id}",
-                    "source": gw_id,
-                    "target": else_id,
-                    "name": "Nie",
-                    "laneId": primary_lane_id,
-                }
-            )
-
-            previous = yes_id
+        new_prev, new_nodes, new_flows = _expand_conditional_step(
+            step=step,
+            lane_id=primary_lane_id,
+            prev_id=previous,
+            make_gateway_id=_new_gateway_id,
+            make_task_ids=lambda: (f"task_{idx}_yes", f"task_{idx}_no"),
+            make_flow_id=lambda s, t: f"flow_{s}_to_{t}",
+            include_lane_in_flow=True,
+        )
+        if new_nodes:
+            nodes.extend(new_nodes)
+            flows.extend(new_flows)
+            previous = new_prev or previous
             continue
 
         task_id = f"task_{idx}"
@@ -278,66 +405,35 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
     prev_id = nodes[lane_node_indices[-1]]["id"] if lane_node_indices else None
 
     for step in steps:
-        cond_match = re.match(r"^\s*Ak\s+(.*?),(.*)$", step, flags=re.IGNORECASE)
-        if cond_match:
-            condition = cond_match.group(1).strip()
-            then_part = cond_match.group(2).strip() or "Krok"
-            gw_id = _new_gateway_id()
-            gw_name = _mk_question(condition)
-            nodes.append(
-                {
-                    "id": gw_id,
-                    "type": "exclusiveGateway",
-                    "name": gw_name,
-                    "laneId": target_lane_id,
-                }
-            )
-            if prev_id:
-                flows.append(
-                    {
-                        "id": _new_flow_id(prev_id, gw_id),
-                        "source": prev_id,
-                        "target": gw_id,
-                    }
-                )
+        par_counter = {"i": 0}
+        new_prev, new_nodes, new_flows = _expand_parallel_step(
+            step=step,
+            lane_id=target_lane_id,
+            prev_id=prev_id,
+            make_gateway_id=_new_gateway_id,
+            make_task_id=lambda: _new_task_id(),
+            make_flow_id=_new_flow_id,
+            include_lane_in_flow=False,
+        )
+        if new_nodes:
+            nodes.extend(new_nodes)
+            flows.extend(new_flows)
+            prev_id = new_prev or prev_id
+            continue
 
-            yes_id = _new_task_id()
-            nodes.append(
-                {
-                    "id": yes_id,
-                    "type": "task",
-                    "name": then_part,
-                    "laneId": target_lane_id,
-                }
-            )
-            flows.append(
-                {
-                    "id": _new_flow_id(gw_id, yes_id),
-                    "source": gw_id,
-                    "target": yes_id,
-                    "name": "Áno",
-                }
-            )
-
-            else_id = _new_task_id()
-            nodes.append(
-                {
-                    "id": else_id,
-                    "type": "task",
-                    "name": "Inak",
-                    "laneId": target_lane_id,
-                }
-            )
-            flows.append(
-                {
-                    "id": _new_flow_id(gw_id, else_id),
-                    "source": gw_id,
-                    "target": else_id,
-                    "name": "Nie",
-                }
-            )
-
-            prev_id = yes_id
+        new_prev, new_nodes, new_flows = _expand_conditional_step(
+            step=step,
+            lane_id=target_lane_id,
+            prev_id=prev_id,
+            make_gateway_id=_new_gateway_id,
+            make_task_ids=lambda: (_new_task_id(), _new_task_id()),
+            make_flow_id=_new_flow_id,
+            include_lane_in_flow=False,
+        )
+        if new_nodes:
+            nodes.extend(new_nodes)
+            flows.extend(new_flows)
+            prev_id = new_prev or prev_id
             continue
 
         created_id = _new_task_id()
@@ -369,6 +465,115 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
         "engine_json": validated,
         "issues": [issue.model_dump() for issue in issues],
     }
+
+
+if __name__ == "__main__":
+    # Quick smoke checks for conditional parsing variations.
+    gw_ids = iter(["gw_demo_1", "gw_demo_2"])
+    task_ids = iter([f"t{i}" for i in range(1, 10)])
+
+    def _demo_gw():
+        return next(gw_ids)
+
+    def _demo_tasks():
+        return next(task_ids), next(task_ids)
+
+    def _demo_flow(s: str, t: str) -> str:
+        return f"flow_{s}_to_{t}"
+
+    _p, _nodes, _flows = _expand_conditional_step(
+        "Ak prší tak zober dáždnik, inak end",
+        "Lane_A",
+        "start",
+        make_gateway_id=_demo_gw,
+        make_task_ids=_demo_tasks,
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=True,
+    )
+    assert any(n["type"] == "endEvent" for n in _nodes), "Else endEvent expected"
+    assert len(_flows) == 3, "Should create three flows (prev->gw, gw->yes, gw->no)"
+
+    _p, _nodes, _flows = _expand_conditional_step(
+        "Ak chyba, tak retry, inak stop",
+        "Lane_C",
+        "prev2",
+        make_gateway_id=_demo_gw,
+        make_task_ids=_demo_tasks,
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=False,
+    )
+    assert any(n.get("name") == "stop" for n in _nodes), "Else text should propagate (not placeholder)"
+    assert any(n.get("name") == "retry" for n in _nodes), "Then text should propagate"
+
+    _p, _nodes, _flows = _expand_conditional_step(
+        "Ak prší, tak zober dáždnik, inak zavolaj kuriéra",
+        "Lane_D",
+        "start2",
+        make_gateway_id=_demo_gw,
+        make_task_ids=_demo_tasks,
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=True,
+    )
+    assert any(n.get("name") == "zober dáždnik" for n in _nodes), "Then text lost when comma present"
+    assert any(n.get("name") == "zavolaj kuriéra" for n in _nodes), "Else text lost when comma present"
+
+    _p, _nodes, _flows = _expand_conditional_step(
+        "Ak slabo upečieme medovníky, tak budú nedopečené, inak budú dobré",
+        "Lane_E",
+        "start3",
+        make_gateway_id=_demo_gw,
+        make_task_ids=_demo_tasks,
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=True,
+    )
+    assert any(n.get("name") == "budú nedopečené" for n in _nodes), "Then should capture pred inak"
+    assert any(n.get("name") == "budú dobré" for n in _nodes), "Else should capture text za inak"
+
+    _p, _nodes, _flows = _expand_parallel_step(
+        "Paralelne: A; B; C",
+        "Lane_P",
+        "prevP",
+        make_gateway_id=_demo_gw,
+        make_task_id=lambda: next(task_ids),
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=True,
+    )
+    assert _p, "Parallel should return join id as new prev"
+    assert sum(1 for n in _nodes if n.get("type") == "parallelGateway") == 2, "Should create split and join"
+    assert sum(1 for n in _nodes if n.get("type") == "task") == 3, "Should create tasks for each branch"
+
+    _p, _nodes, _flows = _expand_parallel_step(
+        "Zaroven priprav zmluvu a zapis vysledok",
+        "Lane_Z",
+        "prevZ",
+        make_gateway_id=_demo_gw,
+        make_task_id=lambda: next(task_ids),
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=False,
+    )
+    assert sum(1 for n in _nodes if n.get("type") == "task") == 2, "Zároveň should split into two tasks"
+
+    _p, _nodes, _flows = _expand_parallel_step(
+        "Súčasne priprav zmluvu a zapíš výsledok",
+        "Lane_S",
+        "prevS",
+        make_gateway_id=_demo_gw,
+        make_task_id=lambda: next(task_ids),
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=False,
+    )
+    assert sum(1 for n in _nodes if n.get("type") == "task") == 2, "Súčasne alias should split into two tasks"
+
+    _p, _nodes, _flows = _expand_conditional_step(
+        "Ak chyba, retry",
+        "Lane_B",
+        "prev",
+        make_gateway_id=_demo_gw,
+        make_task_ids=_demo_tasks,
+        make_flow_id=_demo_flow,
+        include_lane_in_flow=False,
+    )
+    assert any(n.get("name") == "Inak" for n in _nodes), "Fallback Inak task expected"
 
 
 CANONICAL_TYPES = {
