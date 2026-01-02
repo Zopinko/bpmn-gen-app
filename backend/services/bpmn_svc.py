@@ -20,7 +20,7 @@ from schemas.wizard import (
 # services/bpmn_svc.py
 
 LAYOUT_VERSION = "topo_v3"
-POOL_HEADER_WIDTH = 40  # px, rovnaké ako bpmn-js default
+POOL_HEADER_WIDTH = 30  # px, rovnaké ako bpmn-js default
 
 # -------------------------------
 # Namespaces a helpers
@@ -367,6 +367,7 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
     if not target_lane_id:
         raise ValueError("Lane not found")
 
+    nodes_by_id = {node.get("id"): node for node in nodes if node.get("id")}
     existing_ids = {node.get("id") for node in nodes}
     flow_ids = {flow.get("id") for flow in flows}
 
@@ -393,16 +394,74 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
         existing_ids.add(candidate)
         return candidate
 
+    lane_node_indices = [
+        idx for idx, node in enumerate(nodes) if node.get("laneId") == target_lane_id
+    ]
+    lane_nodes = [nodes[idx] for idx in lane_node_indices]
+    end_node_id = None
+    end_flow_id = None
+    gateway_types = {
+        "exclusiveGateway",
+        "parallelGateway",
+        "inclusiveGateway",
+        "eventBasedGateway",
+    }
+    end_candidates = [node for node in lane_nodes if _normalize_node_type(node) == "endEvent"]
+    for node in reversed(lane_nodes):
+        if _normalize_node_type(node) != "endEvent":
+            continue
+        has_outgoing = any(flow.get("source") == node.get("id") for flow in flows)
+        if has_outgoing:
+            continue
+        incoming_to_end = [flow for flow in flows if flow.get("target") == node.get("id")]
+        if incoming_to_end:
+            src_id = incoming_to_end[0].get("source")
+            src_node = nodes_by_id.get(src_id)
+            if src_node and _normalize_node_type(src_node) in gateway_types:
+                continue
+        end_node_id = node.get("id")
+        break
+    if end_node_id is None and end_candidates:
+        end_node_id = end_candidates[-1].get("id")
+
+    prev_id = None
+    if end_node_id:
+        incoming_to_end = [flow for flow in flows if flow.get("target") == end_node_id]
+        for flow in incoming_to_end:
+            src_id = flow.get("source")
+            src_node = nodes_by_id.get(src_id)
+            if not src_node:
+                continue
+            src_type = _normalize_node_type(src_node)
+            if src_type in gateway_types:
+                continue
+            if src_node.get("laneId") == target_lane_id and src_type != "endEvent":
+                prev_id = src_id
+                end_flow_id = flow.get("id")
+                break
+        if prev_id is None:
+            for node in reversed(lane_nodes):
+                if node.get("id") != end_node_id and _normalize_node_type(node) != "endEvent":
+                    prev_id = node.get("id")
+                    break
+    elif lane_nodes:
+        prev_id = lane_nodes[-1].get("id")
+
+    if end_node_id and prev_id and end_flow_id is None:
+        for flow in flows:
+            if flow.get("source") == prev_id and flow.get("target") == end_node_id:
+                end_flow_id = flow.get("id")
+                break
+
     steps = [
         line.strip() for line in (data.description or "").splitlines() if line.strip()
     ]
     if not steps:
         return postprocess_engine_json(engine, locale="sk")
 
-    lane_node_indices = [
-        idx for idx, node in enumerate(nodes) if node.get("laneId") == target_lane_id
-    ]
-    prev_id = nodes[lane_node_indices[-1]]["id"] if lane_node_indices else None
+    if end_flow_id:
+        flows = [flow for flow in flows if flow.get("id") != end_flow_id]
+        flow_ids.discard(end_flow_id)
 
     for step in steps:
         par_counter = {"i": 0}
@@ -454,6 +513,20 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
                 }
             )
         prev_id = created_id
+
+    if end_node_id and prev_id:
+        has_link = any(
+            flow.get("source") == prev_id and flow.get("target") == end_node_id
+            for flow in flows
+        )
+        if not has_link:
+            flows.append(
+                {
+                    "id": _new_flow_id(prev_id, end_node_id),
+                    "source": prev_id,
+                    "target": end_node_id,
+                }
+            )
 
     engine["nodes"] = nodes
     engine["flows"] = flows
@@ -631,16 +704,17 @@ def _indent(elem, level: int = 0):
 # -------------------------------
 def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     GRID_X = 250  # väčší horizontálny odstup medzi uzlami
-    GRID_Y = 220  # väčší vertikálny odstup (vzdušnejšie lane)
+    GRID_Y = 180  # väčší vertikálny odstup (vzdušnejšie lane)
     BASE_LANE_X = 0  # offset lane od ľavého okraja poolu
     BASE_LANE_Y = 0  # lane začína hneď pri vrchu poolu
-    ROW_MARGIN = 24
-    POOL_PAD_X = 80
+    LANE_CONTENT_PAD = 80  # left padding before first node
+    ROW_MARGIN = 8
+    POOL_PAD_X = 60
     POOL_PAD_Y = 0  # žiadny extra vertikálny padding – výška = súčet lanes
     MIN_LANE_HEIGHT = 200
     GATEWAY_EXTRA_PADDING = 16
     WAYPOINT_SPACING = 44
-    LANE_MARGIN = 40
+    LANE_MARGIN = 0
     SYSTEM_LANE_ID = "Lane_System"
 
     NODE_SIZES = {
@@ -673,7 +747,7 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         for lane in lanes
         if lane.get("id")
     }
-    lane_name_map.setdefault(SYSTEM_LANE_ID, "System")
+    system_needed = False
 
     nodes_by_id: Dict[str, Dict[str, Any]] = {}
     node_order: Dict[str, int] = {}
@@ -687,9 +761,12 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         node_order[node_id] = idx
         ntype = _normalize_node_type(node)
         node_type[node_id] = ntype
-        lane_id = node.get("laneId") or SYSTEM_LANE_ID
+        lane_id = node.get("laneId")
+        if not lane_id or lane_id not in lane_name_map:
+            system_needed = True
+            lane_id = SYSTEM_LANE_ID
         if lane_id not in lane_name_map:
-            lane_name_map[lane_id] = lane_id
+            lane_name_map[lane_id] = "System" if lane_id == SYSTEM_LANE_ID else lane_id
         lane_for_node[node_id] = lane_id
 
     def _resolve_edge_endpoint(
@@ -713,14 +790,16 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
             seen_lanes.add(lane_id)
             ordered_lanes.append(lane_id)
 
-    for flow in flows:
-        src = _resolve_edge_endpoint(flow, ("source", "sourceRef", "sourceId"))
-        tgt = _resolve_edge_endpoint(flow, ("target", "targetRef", "targetId"))
-        if src in lane_for_node:
-            register_lane(lane_for_node[src])
-        if tgt in lane_for_node:
-            register_lane(lane_for_node[tgt])
+    # Prefer the engine_json lane order (creation/order in wizard or process card).
+    for lane in lanes:
+        register_lane(lane.get("id"))
 
+    # Add any lanes referenced by nodes but missing from the lane list.
+    for node in nodes:
+        lane_id = lane_for_node.get(node.get("id")) or node.get("laneId")
+        register_lane(lane_id)
+
+    # Fall back to any remaining lanes for determinism.
     all_lane_ids = {lane_id for lane_id in lane_name_map if lane_id}
     remaining_lanes = sorted(
         (lane_id for lane_id in all_lane_ids if lane_id not in seen_lanes),
@@ -791,7 +870,9 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         if min_level > levels[nid]:
             levels[nid] = min_level
 
-    lane_offsets = {lane_id: float(BASE_LANE_X) for lane_id in ordered_lanes}
+    lane_offsets = {
+        lane_id: float(BASE_LANE_X + LANE_CONTENT_PAD) for lane_id in ordered_lanes
+    }
 
     row_index = {}
     lane_row_counts = {}
@@ -938,12 +1019,12 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     if pos:
         max_x = max((x + w) for x, y, w, h in pos.values())
 
-    pool_x = 8.0
+    pool_x = 0.0
     pool_y = 0.0
     has_lanes = bool(lanes)
     lane_x = pool_x + (POOL_HEADER_WIDTH if has_lanes else 16)
     lane_width = float(max(620, max_x - lane_x + POOL_PAD_X))
-    pool_w = lane_x + lane_width + 16
+    pool_w = lane_x + lane_width
     # výška poolu = suma lane výšok (už vrátane marginov) + prípadný padding (0)
     pool_h = float(current_lane_y + POOL_PAD_Y)
 
@@ -1283,11 +1364,15 @@ def _add_di(
 
         src_center = lane_center(src_id)
         tgt_center = lane_center(tgt_id)
+        src_lane = lane_for_node.get(src_id)
+        tgt_lane = lane_for_node.get(tgt_id)
         if (
             src_center is not None
             and tgt_center is not None
             and abs(src_center - tgt_center) > 1
         ):
+            if src_lane == tgt_lane:
+                return src_right, tgt_left
             if tgt_center > src_center:
                 return bottom_mid(src_id), top_mid(tgt_id)
             if tgt_center < src_center:
@@ -1345,6 +1430,22 @@ def _add_di(
         src_type = node_type_map.get(src_id)
         is_gateway_src = src_type in gateway_types
 
+        def _l_path(start_point: Point, end_point: Point, horizontal_first: bool) -> List[Point]:
+            sx, sy = start_point
+            tx, ty = end_point
+            if horizontal_first:
+                return _dedup([(sx, sy), (tx, sy), (tx, ty)])
+            return _dedup([(sx, sy), (sx, ty), (tx, ty)])
+
+        def _gateway_l_path(start_point: Point, end_point: Point) -> List[Point]:
+            sx, sy = start_point
+            tx, ty = end_point
+            delta_x = tx - sx
+            if delta_x <= WAYPOINT_SPACING:
+                return _l_path(start_point, end_point, horizontal_first=True)
+            elbow_x = sx + min(H_OFFSET, delta_x - WAYPOINT_SPACING)
+            return _dedup([(sx, sy), (elbow_x, sy), (elbow_x, ty), (tx, ty)])
+
         if src_id == tgt_id:
             sx, sy = right_mid(src_id)
             loop_x = sx + H_OFFSET
@@ -1363,40 +1464,32 @@ def _add_di(
 
         # ŠPECIÁLNY PRÍPAD: alternatívna vetva z gateway – chceme čisté “L” dole a späť
         if is_gateway_src and branch_kind == "alt":
-            start_point = bottom_mid(src_id)
-            end_point = top_mid(tgt_id)
+            start_point = right_mid(src_id)
+            end_point = left_mid(tgt_id)
             ignore = {src_id, tgt_id}
-            sx, sy = start_point
-            tx, ty = end_point
-            src_lane = lane_for_node.get(src_id)
-            tgt_lane = lane_for_node.get(tgt_id)
-            mid_y: float
-            if src_lane == tgt_lane:
-                # same lane: local L-shape inside the lane
-                mid_y = float(sy + GRID_Y // 3)
-                path = [
-                    (sx, sy),
-                    (sx, mid_y),
-                    (tx, mid_y),
-                    (tx, ty),
-                ]
-            else:
-                src_center = lane_center(src_id)
-                tgt_center = lane_center(tgt_id)
-                if src_center is not None and tgt_center is not None:
-                    mid_y = (src_center + tgt_center) / 2
-                else:
-                    mid_y = (sy + ty) / 2
-                path = [
-                    (sx, sy),
-                    (sx, mid_y),
-                    (tx, mid_y),
-                    (tx, ty),
-                ]
+            path = _gateway_l_path(start_point, end_point)
             if not _path_collides(path, ignore):
-                return _dedup(path)
+                return path
+            path = _l_path(start_point, end_point, horizontal_first=True)
+            if not _path_collides(path, ignore):
+                return path
+            path = _l_path(start_point, end_point, horizontal_first=False)
+            if not _path_collides(path, ignore):
+                return path
 
         # special case: cross-lane flow from non-gateway node
+        tgt_is_gateway = node_type_map.get(tgt_id) in gateway_types
+        if not is_gateway_src and tgt_is_gateway:
+            start_point = right_mid(src_id)
+            end_point = left_mid(tgt_id)
+            ignore = {src_id, tgt_id}
+            path = _gateway_l_path(start_point, end_point)
+            if not _path_collides(path, ignore):
+                return path
+            path = _l_path(start_point, end_point, horizontal_first=True)
+            if not _path_collides(path, ignore):
+                return path
+
         src_lane = lane_for_node.get(src_id)
         tgt_lane = lane_for_node.get(tgt_id)
         if (
@@ -1431,10 +1524,16 @@ def _add_di(
         if is_gateway_src and branch_kind == "main":
             start_point, end_point = _choose_ports(src_id, tgt_id, branch_kind)
             ignore = {src_id, tgt_id}
-            straight_candidate = [start_point, end_point]
-            if not _path_collides(straight_candidate, ignore):
-                return _dedup(straight_candidate)
-            # ak je kolízia, ešte to neskôr skúsi generický algoritmus
+            path = _gateway_l_path(start_point, end_point)
+            if not _path_collides(path, ignore):
+                return path
+            path = _l_path(start_point, end_point, horizontal_first=True)
+            if not _path_collides(path, ignore):
+                return path
+            path = _l_path(start_point, end_point, horizontal_first=False)
+            if not _path_collides(path, ignore):
+                return path
+            # ak je kolizia, este to neskor skusi genericky algoritmus
 
         # GENERICKÝ PRÍPAD – všetko ostatné (vrátane nongateway vetiev)
         start_point, end_point = _choose_ports(src_id, tgt_id, branch_kind)
