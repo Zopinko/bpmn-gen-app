@@ -150,10 +150,13 @@ export default function LinearWizardPage() {
   const [mentorError, setMentorError] = useState(null);
   const [mentorApplyingId, setMentorApplyingId] = useState(null);
   const [mentorStatus, setMentorStatus] = useState(null);
+  const [historyCount, setHistoryCount] = useState(0);
   const verticalResizeStart = useRef({ y: 0, h: 0 });
   const layoutRef = useRef(null);
   const syncInFlightRef = useRef(false);
   const lastSyncedXmlRef = useRef("");
+  const historyRef = useRef([]);
+  const undoInProgressRef = useRef(false);
   const [helpInputs, setHelpInputs] = useState(() =>
     HELP_RULES.reduce((acc, rule) => {
       acc[rule.id] = (rule.fields || []).reduce((fieldsAcc, field) => {
@@ -286,6 +289,8 @@ export default function LinearWizardPage() {
     setMentorError(null);
     setMentorApplyingId(null);
     setMentorStatus(null);
+    historyRef.current = [];
+    setHistoryCount(0);
   };
 
   const handleNewModel = () => {
@@ -294,9 +299,50 @@ export default function LinearWizardPage() {
     resetWizardState();
   };
 
+  const pushHistorySnapshot = useCallback((engine, diagramXml) => {
+    if (!engine || !diagramXml) return;
+    const last = historyRef.current[historyRef.current.length - 1];
+    if (last?.xml === diagramXml) return;
+    let snapshot = null;
+    try {
+      snapshot = { engine: JSON.parse(JSON.stringify(engine)), xml: diagramXml };
+    } catch {
+      return;
+    }
+    const next = [...historyRef.current, snapshot].slice(-5);
+    historyRef.current = next;
+    setHistoryCount(next.length);
+  }, []);
+
+  const handleUndo = () => {
+    if (!historyRef.current.length) return;
+    const snapshot = historyRef.current.pop();
+    setHistoryCount(historyRef.current.length);
+    if (!snapshot) return;
+    undoInProgressRef.current = true;
+    setEngineJson(snapshot.engine);
+    setXml(snapshot.xml);
+    lastSyncedXmlRef.current = snapshot.xml;
+    if (Array.isArray(snapshot.engine?.lanes) && snapshot.engine.lanes.length) {
+      setProcessCard((prev) => ({
+        ...prev,
+        generatorInput: {
+          ...prev.generatorInput,
+          roles: snapshot.engine.lanes.map((lane) => lane.name || lane.id).join("\n"),
+        },
+      }));
+    }
+    window.setTimeout(() => {
+      undoInProgressRef.current = false;
+    }, 0);
+  };
+
   const applyLaneOrder = useCallback(
     async (nextLanes) => {
       if (!engineJson) return;
+      if (!undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
       const updatedEngine = { ...engineJson, lanes: nextLanes };
       setEngineJson(updatedEngine);
       setProcessCard((prev) => ({
@@ -314,15 +360,17 @@ export default function LinearWizardPage() {
         setError(message);
       }
     },
-    [engineJson],
+    [engineJson, pushHistorySnapshot, xml],
   );
 
   const handleDiagramChange = useCallback(
     async (diagramXml) => {
       if (!diagramXml || !diagramXml.trim()) return;
       if (syncInFlightRef.current) return;
+      if (undoInProgressRef.current) return;
       if (diagramXml === lastSyncedXmlRef.current) return;
       if (!engineJson) return;
+      pushHistorySnapshot(engineJson, xml);
       syncInFlightRef.current = true;
       try {
         const file = new File([diagramXml], "diagram.bpmn", {
@@ -332,6 +380,9 @@ export default function LinearWizardPage() {
         const importedEngine = response?.engine_json || response;
         if (importedEngine) {
           setEngineJson(importedEngine);
+          if (diagramXml !== xml) {
+            setXml(diagramXml);
+          }
           if (Array.isArray(importedEngine.lanes) && importedEngine.lanes.length) {
             setProcessCard((prev) => ({
               ...prev,
@@ -350,7 +401,7 @@ export default function LinearWizardPage() {
         syncInFlightRef.current = false;
       }
     },
-    [engineJson],
+    [engineJson, pushHistorySnapshot, xml],
   );
 
   const findLaneIndex = (laneRef, lanes) => {
@@ -415,6 +466,9 @@ export default function LinearWizardPage() {
     setInfo(null);
     setIsLoading(true);
     try {
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
       const payload = mapGeneratorInputToPayload(processCard.generatorInput);
       const response = await generateLinearWizardDiagram(payload);
       const generatedEngine = response?.engine_json;
@@ -444,11 +498,13 @@ export default function LinearWizardPage() {
       onLaneSelect: setSelectedLane,
       onLaneOrderChange: reorderLanesByNames,
       onDiagramChange: handleDiagramChange,
+      onUndo: handleUndo,
+      canUndo: historyCount > 0,
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
       },
     }),
-    [engineJson, error, handleDiagramChange, isLoading, reorderLanesByNames, xml],
+    [engineJson, error, handleDiagramChange, handleUndo, historyCount, isLoading, reorderLanesByNames, xml],
   );
 
   const handleAppendToLane = async () => {
@@ -459,6 +515,9 @@ export default function LinearWizardPage() {
     setIsLoading(true);
     setError(null);
     try {
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
       const payload = {
         lane_id: selectedLane.id,
         lane_name: selectedLane.name,
@@ -523,6 +582,9 @@ export default function LinearWizardPage() {
     const diagram = resp?.diagram_xml;
     if (!loadedEngine || !diagram) {
       throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
+    }
+    if (engineJson && xml && !undoInProgressRef.current) {
+      pushHistorySnapshot(engineJson, xml);
     }
     setEngineJson(loadedEngine);
     setXml(diagram);
@@ -686,6 +748,9 @@ export default function LinearWizardPage() {
     setInfo(null);
     setImportLoading(true);
     try {
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
       const response = await importBpmn(file);
       const importedEngine = response?.engine_json || response;
       setEngineJson(importedEngine);
@@ -753,6 +818,9 @@ export default function LinearWizardPage() {
     setMentorStatus(null);
     setMentorApplyingId(proposal.id);
     try {
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
       const payload = {
         engine_json: engineJson,
         selected_ids: [proposal.id],
@@ -832,6 +900,9 @@ export default function LinearWizardPage() {
           onClick={() => setMentorOpen((prev) => !prev)}
         >
           {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
+        </button>
+        <button type="button" className="process-card-toggle process-card-toggle--models" onClick={openModels}>
+          Uložené modely
         </button>
       </div>
 
@@ -1000,9 +1071,6 @@ export default function LinearWizardPage() {
                     </button>
                     <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
                       {saveLoading ? "Ukladám..." : "Uložiť model"}
-                    </button>
-                    <button className="btn" type="button" onClick={openModels}>
-                      Uložené modely
                     </button>
                   </div>
                   <div className="process-card-inline-load">

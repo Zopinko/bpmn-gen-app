@@ -29,6 +29,8 @@ export default function MapViewer({
   onLaneSelect,
   onLaneOrderChange,
   onDiagramChange,
+  onUndo,
+  canUndo = false,
   onModelerReady,
 }) {
   const containerRef = useRef(null);
@@ -651,6 +653,17 @@ export default function MapViewer({
               <button className="map-toolbar__btn" type="button" onClick={zoomFit} title="Prispôsobiť">
                 Fit
               </button>
+              {onUndo ? (
+                <button
+                  className="map-toolbar__btn map-toolbar__btn--undo"
+                  type="button"
+                  onClick={onUndo}
+                  title="Spat"
+                  disabled={!canUndo}
+                >
+                  Spat
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>

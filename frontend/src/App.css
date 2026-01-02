@@ -454,6 +454,16 @@ body {
   background: rgba(59, 130, 246, 0.22);
 }
 
+.map-toolbar__btn--undo {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.18);
+  color: #fef3c7;
+}
+
+.map-toolbar__btn--undo:hover {
+  background: rgba(251, 191, 36, 0.3);
+}
+
 .map-viewer__canvas {
   width: 100%;
   height: 100%;
@@ -736,6 +746,18 @@ body {
 .process-card-toggle.is-active {
   border-color: rgba(59, 130, 246, 0.8);
   background: linear-gradient(180deg, rgba(59, 130, 246, 0.22), rgba(59, 130, 246, 0.12));
+}
+
+.process-card-toggle--models {
+  margin-top: 12px;
+  border-color: rgba(34, 197, 94, 0.45);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.08));
+  color: #dcfce7;
+}
+
+.process-card-toggle--models:hover {
+  border-color: rgba(34, 197, 94, 0.75);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.28), rgba(34, 197, 94, 0.12));
 }
 
 .process-card-drawer {
