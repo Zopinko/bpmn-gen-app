@@ -412,6 +412,48 @@ body {
   background: #ffffff;
 }
 
+.map-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(191, 219, 254, 0.3);
+  background: rgba(15, 22, 35, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 6;
+  transform: none;
+}
+
+.map-toolbar.is-collapsed {
+  padding: 4px;
+}
+
+.map-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-toolbar__toggle,
+.map-toolbar__btn {
+  border-radius: 8px;
+  border: 1px solid rgba(147, 197, 253, 0.45);
+  background: rgba(59, 130, 246, 0.12);
+  color: #e2e8f0;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.map-toolbar__toggle:hover,
+.map-toolbar__btn:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
 .map-viewer__canvas {
   width: 100%;
   height: 100%;
@@ -421,6 +463,46 @@ body {
 .map-viewer__canvas > div {
   width: 100%;
   height: 100%;
+}
+
+.lane-dnd-handle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.4);
+  background: rgba(15, 22, 35, 0.85);
+  color: #e2e8f0;
+  font-size: 11px;
+  cursor: grab;
+  user-select: none;
+  min-width: 140px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.lane-dnd-handle:active {
+  cursor: grabbing;
+}
+
+.lane-dnd-handle__title {
+  font-weight: 600;
+}
+
+.lane-dnd-handle__hint {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.lane-dnd-indicator {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.0), rgba(37, 99, 235, 0.9), rgba(37, 99, 235, 0.0));
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 7;
 }
 
 .map-viewer__status {
@@ -1016,6 +1098,39 @@ body {
 .wizard-lane-panel__header {
   font-weight: 700;
   margin-bottom: 8px;
+}
+
+.wizard-lane-panel__hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  line-height: 1.3;
+}
+
+.wizard-help-template {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(47, 92, 160, 0.25);
+  background: rgba(15, 22, 35, 0.35);
+}
+
+.wizard-help-inputs {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wizard-help-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.wizard-help-input input {
+  width: 100%;
 }
 
 .field-hint {

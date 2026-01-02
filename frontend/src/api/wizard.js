@@ -137,3 +137,33 @@ export async function renameWizardModel(modelId, name) {
   }
   return response.json();
 }
+
+export async function mentorReview(payload) {
+  const response = await fetch(`${API_BASE}/mentor/review`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function mentorApply(payload) {
+  const response = await fetch(`${API_BASE}/mentor/apply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}

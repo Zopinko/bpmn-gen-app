@@ -27,11 +27,54 @@ export default function MapViewer({
   annotations = [],
   onRefresh,
   onLaneSelect,
+  onLaneOrderChange,
+  onDiagramChange,
   onModelerReady,
 }) {
   const containerRef = useRef(null);
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const lastLaneOrderRef = useRef("");
+  const laneOrderChangeRef = useRef(onLaneOrderChange);
+  const diagramChangeRef = useRef(onDiagramChange);
+  const changeTimerRef = useRef(null);
+  const skipDiagramChangeRef = useRef(false);
+  const laneHandleOverlayIdsRef = useRef([]);
+  const laneHandleMapRef = useRef(new Map());
+  const annotationOverlayIdsRef = useRef([]);
+  const laneDragStateRef = useRef({
+    active: false,
+    laneName: "",
+    targetIndex: -1,
+    indicatorEl: null,
+    moveHandler: null,
+    upHandler: null,
+  });
+
+  useEffect(() => {
+    laneOrderChangeRef.current = onLaneOrderChange;
+  }, [onLaneOrderChange]);
+
+  useEffect(() => {
+    diagramChangeRef.current = onDiagramChange;
+  }, [onDiagramChange]);
+
+  const zoomBy = (delta) => {
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    const canvas = modeler.get("canvas");
+    const current = canvas.zoom();
+    const next = Math.min(2.0, Math.max(0.2, current + delta));
+    canvas.zoom(next);
+  };
+
+  const zoomFit = () => {
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    const canvas = modeler.get("canvas");
+    canvas.zoom("fit-viewport", "auto");
+  };
 
   useEffect(() => {
     const modeler = new BpmnModeler({
@@ -110,6 +153,20 @@ export default function MapViewer({
       );
     };
 
+    const hideLaneHandles = () => {
+      laneHandleMapRef.current.forEach((handle) => {
+        handle.style.display = "none";
+      });
+    };
+
+    const showLaneHandle = (laneId) => {
+      hideLaneHandles();
+      const handle = laneHandleMapRef.current.get(laneId);
+      if (handle) {
+        handle.style.display = "flex";
+      }
+    };
+
     const handleElementClick = (event) => {
       const { element } = event;
 
@@ -124,9 +181,11 @@ export default function MapViewer({
             id: element.id,
             name: element.businessObject?.name || "",
           });
+          showLaneHandle(element.id);
         }
       } else if (typeof onLaneSelect === "function") {
         onLaneSelect(null);
+        hideLaneHandles();
       }
     };
 
@@ -135,6 +194,7 @@ export default function MapViewer({
       if (typeof onLaneSelect === "function") {
         onLaneSelect(null);
       }
+      hideLaneHandles();
     };
 
     // Štýlujeme všetky aktuálne drag ghosty (aj pre resize, aj pre move)
@@ -212,17 +272,68 @@ export default function MapViewer({
       }
     };
 
+    const emitLaneOrder = () => {
+      const handler = laneOrderChangeRef.current;
+      if (typeof handler !== "function") return;
+      const elementRegistry = modeler.get("elementRegistry");
+      if (!elementRegistry) return;
+      const laneElements = elementRegistry
+        .getAll()
+        .filter((el) => el.businessObject?.$type === "bpmn:Lane");
+      if (!laneElements.length) return;
+      const orderedNames = laneElements
+        .map((el) => ({
+          name: el.businessObject?.name || el.businessObject?.id || "",
+          y: typeof el.y === "number" ? el.y : 0,
+        }))
+        .filter((entry) => entry.name)
+        .sort((a, b) => a.y - b.y)
+        .map((entry) => entry.name);
+      if (!orderedNames.length) return;
+      const key = orderedNames.join("|");
+      if (key === lastLaneOrderRef.current) return;
+      lastLaneOrderRef.current = key;
+      handler(orderedNames);
+    };
+
+    const handleLaneMoveEnd = (event) => {
+      const shape = event?.shape || event?.context?.shape || event?.element;
+      const boType = shape?.businessObject?.$type;
+      if (boType !== "bpmn:Lane") return;
+      emitLaneOrder();
+    };
+
+    const handleDiagramChanged = () => {
+      if (skipDiagramChangeRef.current) return;
+      const handler = diagramChangeRef.current;
+      if (typeof handler !== "function") return;
+      if (!modelerRef.current?.saveXML) return;
+      if (changeTimerRef.current) {
+        clearTimeout(changeTimerRef.current);
+      }
+      changeTimerRef.current = setTimeout(async () => {
+        try {
+          const { xml: currentXml } = await modelerRef.current.saveXML({ format: true });
+          handler(currentXml);
+        } catch {
+          // ignore sync errors from temporary model states
+        }
+      }, 400);
+    };
+
     if (eventBus) {
       eventBus.on("shape.move.start", startGhostStyling);
       eventBus.on("shape.move.move", startGhostStyling);
       eventBus.on("shape.move.end", stopGhostStyling);
       eventBus.on("shape.move.cancel", stopGhostStyling);
+      eventBus.on("shape.move.end", handleLaneMoveEnd);
       eventBus.on("shape.resize.start", startGhostStyling);
       eventBus.on("shape.resize.move", startGhostStyling);
       eventBus.on("shape.resize.end", stopGhostStyling);
       eventBus.on("shape.resize.cancel", stopGhostStyling);
       eventBus.on("element.click", handleElementClick);
       eventBus.on("canvas.click", handleCanvasClick);
+      eventBus.on("commandStack.changed", handleDiagramChanged);
     }
 
     return () => {
@@ -234,15 +345,22 @@ export default function MapViewer({
         eventBus.off("shape.move.move", startGhostStyling);
         eventBus.off("shape.move.end", stopGhostStyling);
         eventBus.off("shape.move.cancel", stopGhostStyling);
+        eventBus.off("shape.move.end", handleLaneMoveEnd);
         eventBus.off("shape.resize.start", startGhostStyling);
         eventBus.off("shape.resize.move", startGhostStyling);
         eventBus.off("shape.resize.end", stopGhostStyling);
         eventBus.off("shape.resize.cancel", stopGhostStyling);
         eventBus.off("element.click", handleElementClick);
         eventBus.off("canvas.click", handleCanvasClick);
+        eventBus.off("commandStack.changed", handleDiagramChanged);
       }
       clearLaneHandles();
       stopGhostStyling();
+      hideLaneHandles();
+      if (changeTimerRef.current) {
+        clearTimeout(changeTimerRef.current);
+        changeTimerRef.current = null;
+      }
       modeler.destroy();
       modelerRef.current = null;
     };
@@ -256,10 +374,17 @@ export default function MapViewer({
       if (modeler.clear) {
         modeler.clear();
       }
+      if (laneHandleOverlayIdsRef.current.length) {
+        const overlays = modeler.get("overlays");
+        laneHandleOverlayIdsRef.current.forEach((id) => overlays.remove(id));
+        laneHandleOverlayIdsRef.current = [];
+        laneHandleMapRef.current.clear();
+      }
       return;
     }
 
     let cancelled = false;
+    skipDiagramChangeRef.current = true;
     modeler
       .importXML(xml)
       .then(() => {
@@ -267,15 +392,193 @@ export default function MapViewer({
         setImportError("");
         const canvas = modeler.get("canvas");
         canvas.zoom("fit-viewport", "auto");
+
+        const overlays = modeler.get("overlays");
+        const elementRegistry = modeler.get("elementRegistry");
+        if (!overlays || !elementRegistry) return;
+
+        laneHandleOverlayIdsRef.current.forEach((id) => overlays.remove(id));
+        laneHandleOverlayIdsRef.current = [];
+        laneHandleMapRef.current.clear();
+
+        const emitLaneOrder = (orderedNames) => {
+          const handler = laneOrderChangeRef.current;
+          if (typeof handler !== "function") return;
+          const key = orderedNames.join("|");
+          if (key === lastLaneOrderRef.current) return;
+          lastLaneOrderRef.current = key;
+          handler(orderedNames);
+        };
+
+        const getLaneMetrics = () => {
+          const lanes = elementRegistry
+            .getAll()
+            .filter((el) => el.businessObject?.$type === "bpmn:Lane");
+          if (!lanes.length) return [];
+          const viewbox = canvas.viewbox();
+          return lanes
+            .map((lane) => {
+              const name = lane.businessObject?.name || lane.businessObject?.id || "";
+              const y = typeof lane.y === "number" ? lane.y : 0;
+              const height = typeof lane.height === "number" ? lane.height : 0;
+              const top = (y - viewbox.y) * viewbox.scale;
+              const mid = (y + height / 2 - viewbox.y) * viewbox.scale;
+              const bottom = (y + height - viewbox.y) * viewbox.scale;
+              return { name, y, height, top, mid, bottom };
+            })
+            .filter((entry) => entry.name)
+            .sort((a, b) => a.y - b.y);
+        };
+
+        const cleanupDrag = () => {
+          const dragState = laneDragStateRef.current;
+          if (dragState.moveHandler) {
+            window.removeEventListener("mousemove", dragState.moveHandler);
+          }
+          if (dragState.upHandler) {
+            window.removeEventListener("mouseup", dragState.upHandler);
+          }
+          if (dragState.indicatorEl?.parentNode) {
+            dragState.indicatorEl.parentNode.removeChild(dragState.indicatorEl);
+          }
+          laneDragStateRef.current = {
+            active: false,
+            laneName: "",
+            targetIndex: -1,
+            indicatorEl: null,
+            moveHandler: null,
+            upHandler: null,
+          };
+        };
+
+        const beginLaneDrag = (laneName) => (event) => {
+          const handler = laneOrderChangeRef.current;
+          if (typeof handler !== "function") return;
+          if (!laneName) return;
+          event.preventDefault();
+          const dragState = laneDragStateRef.current;
+          if (dragState.active) return;
+
+          const container = canvas.getContainer();
+          if (!container) return;
+          const indicator = document.createElement("div");
+          indicator.className = "lane-dnd-indicator";
+          container.appendChild(indicator);
+
+          const updateIndicator = (clientY) => {
+            const metrics = getLaneMetrics();
+            if (!metrics.length) return { targetIndex: -1, orderedNames: [] };
+            const containerRect = container.getBoundingClientRect();
+            const relY = clientY - containerRect.top;
+            let targetIndex = metrics.findIndex((entry) => relY < entry.mid);
+            if (targetIndex < 0) {
+              targetIndex = metrics.length;
+            }
+            let indicatorTop;
+            if (targetIndex === metrics.length) {
+              const last = metrics[metrics.length - 1];
+              indicatorTop = last.bottom;
+            } else {
+              indicatorTop = metrics[targetIndex].top;
+            }
+            indicator.style.top = `${Math.max(0, indicatorTop - 4)}px`;
+            return {
+              targetIndex,
+              orderedNames: metrics.map((entry) => entry.name),
+            };
+          };
+
+          const moveHandler = (moveEvent) => {
+            const { targetIndex } = updateIndicator(moveEvent.clientY);
+            laneDragStateRef.current.targetIndex = targetIndex;
+          };
+
+          const upHandler = (upEvent) => {
+            const { targetIndex, orderedNames } = updateIndicator(upEvent.clientY);
+            cleanupDrag();
+            if (!orderedNames.length) return;
+            const currentIndex = orderedNames.findIndex((name) => name === laneName);
+            if (currentIndex < 0 || targetIndex < 0) return;
+            const nextOrder = orderedNames.filter((name) => name !== laneName);
+            const insertIndex = targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
+            nextOrder.splice(Math.min(Math.max(insertIndex, 0), nextOrder.length), 0, laneName);
+            emitLaneOrder(nextOrder);
+          };
+
+          laneDragStateRef.current = {
+            active: true,
+            laneName,
+            targetIndex: -1,
+            indicatorEl: indicator,
+            moveHandler,
+            upHandler,
+          };
+          window.addEventListener("mousemove", moveHandler);
+          window.addEventListener("mouseup", upHandler);
+        };
+
+        const lanes = elementRegistry
+          .getAll()
+          .filter((el) => el.businessObject?.$type === "bpmn:Lane");
+        lanes.forEach((lane) => {
+          const laneId = lane.id;
+          const laneName = lane.businessObject?.name || lane.businessObject?.id || "";
+          if (!laneName) return;
+          const handle = document.createElement("div");
+          handle.className = "lane-dnd-handle";
+          handle.style.display = "none";
+          const title = document.createElement("div");
+          title.className = "lane-dnd-handle__title";
+          title.textContent = laneName;
+          const hint = document.createElement("div");
+          hint.className = "lane-dnd-handle__hint";
+          hint.textContent = "Potiahni pre presun";
+          handle.appendChild(title);
+          handle.appendChild(hint);
+          handle.addEventListener("mousedown", beginLaneDrag(laneName));
+          const id = overlays.add(lane, {
+            position: { top: 6, left: 6 },
+            html: handle,
+          });
+          laneHandleOverlayIdsRef.current.push(id);
+          laneHandleMapRef.current.set(laneId, handle);
+        });
+        if (!lanes.length && laneHandleOverlayIdsRef.current.length) {
+          cleanupDrag();
+        }
       })
       .catch((err) => {
         if (cancelled) return;
         const message = err?.message || String(err);
         setImportError(message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setTimeout(() => {
+          skipDiagramChangeRef.current = false;
+        }, 0);
       });
 
     return () => {
       cancelled = true;
+      const dragState = laneDragStateRef.current;
+      if (dragState.moveHandler) {
+        window.removeEventListener("mousemove", dragState.moveHandler);
+      }
+      if (dragState.upHandler) {
+        window.removeEventListener("mouseup", dragState.upHandler);
+      }
+      if (dragState.indicatorEl?.parentNode) {
+        dragState.indicatorEl.parentNode.removeChild(dragState.indicatorEl);
+      }
+      laneDragStateRef.current = {
+        active: false,
+        laneName: "",
+        targetIndex: -1,
+        indicatorEl: null,
+        moveHandler: null,
+        upHandler: null,
+      };
     };
   }, [xml]);
 
@@ -285,7 +588,10 @@ export default function MapViewer({
     const overlays = modeler.get("overlays");
     if (!overlays) return;
 
-    overlays.clear();
+    if (annotationOverlayIdsRef.current.length) {
+      annotationOverlayIdsRef.current.forEach((id) => overlays.remove(id));
+      annotationOverlayIdsRef.current = [];
+    }
     if (!annotations?.length) {
       return;
     }
@@ -296,10 +602,11 @@ export default function MapViewer({
       container.className = `map-overlay map-overlay--${note.severity || "info"}`;
       container.title = note.title || "";
       container.textContent = severityIcon(note.severity);
-      overlays.add(note.nodeId, {
+      const id = overlays.add(note.nodeId, {
         position: { top: -12, left: -12 },
         html: container,
       });
+      annotationOverlayIdsRef.current.push(id);
     });
   }, [annotations, xml]);
 
@@ -324,6 +631,29 @@ export default function MapViewer({
         ) : null}
       </div>
       <div className="map-viewer__body">
+        <div className={`map-toolbar ${toolbarCollapsed ? "is-collapsed" : ""}`}>
+          <button
+            className="map-toolbar__toggle"
+            type="button"
+            onClick={() => setToolbarCollapsed((prev) => !prev)}
+            title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
+          >
+            {toolbarCollapsed ? "Nástroje" : "Skryť"}
+          </button>
+          {!toolbarCollapsed ? (
+            <div className="map-toolbar__group">
+              <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
+                +
+              </button>
+              <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
+                -
+              </button>
+              <button className="map-toolbar__btn" type="button" onClick={zoomFit} title="Prispôsobiť">
+                Fit
+              </button>
+            </div>
+          ) : null}
+        </div>
         <div ref={containerRef} className="map-viewer__canvas" />
         {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
