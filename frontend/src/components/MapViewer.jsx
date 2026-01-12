@@ -21,6 +21,8 @@ const severityIcon = (severity) => {
 export default function MapViewer({
   title,
   subtitle,
+  subtitleMeta,
+  subtitleProminent = false,
   xml,
   loading = false,
   error = "",
@@ -37,6 +39,8 @@ export default function MapViewer({
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const hasSubtitle = Boolean(subtitle || subtitleMeta);
+  const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
   const laneOrderChangeRef = useRef(onLaneOrderChange);
   const diagramChangeRef = useRef(onDiagramChange);
@@ -369,6 +373,44 @@ export default function MapViewer({
   }, []);
 
   useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!modelerRef.current) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          active.tagName === "SELECT" ||
+          active.isContentEditable)
+      ) {
+        return;
+      }
+
+      const { key } = event;
+      if (key !== "ArrowUp" && key !== "ArrowDown" && key !== "ArrowLeft" && key !== "ArrowRight") {
+        return;
+      }
+
+      event.preventDefault();
+      const canvas = modelerRef.current.get("canvas");
+      const viewbox = canvas.viewbox();
+      const step = event.shiftKey ? 120 : 60;
+      const next = { ...viewbox };
+
+      if (key === "ArrowUp") next.y -= step;
+      if (key === "ArrowDown") next.y += step;
+      if (key === "ArrowLeft") next.x -= step;
+      if (key === "ArrowRight") next.x += step;
+
+      canvas.viewbox(next);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     const modeler = modelerRef.current;
     if (!modeler) return;
 
@@ -619,7 +661,12 @@ export default function MapViewer({
       <div className="map-viewer__header">
         <div>
           <div className="map-viewer__title">{title}</div>
-          {subtitle ? <div className="map-viewer__subtitle">{subtitle}</div> : null}
+          {hasSubtitle ? (
+            <div className={subtitleClassName}>
+              {subtitle ? <span className="map-viewer__subtitle-name">{subtitle}</span> : null}
+              {subtitleMeta ? <span className="map-viewer__subtitle-meta">{subtitleMeta}</span> : null}
+            </div>
+          ) : null}
         </div>
         {onRefresh ? (
           <button

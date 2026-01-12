@@ -26,7 +26,7 @@ const HELP_RULES = [
   {
     id: "xor",
     title: "Rozhodnutie (XOR gateway)",
-    syntax: "Ak <podmienka> tak <krok>, inak <krok/koniec>",
+    syntax: "Ak/Keď/Ked <podmienka> tak <krok>, inak <krok/koniec>",
     example: "Ak zakaznik schvali ponuku tak priprav zmluvu, inak koniec",
     template: "Ak <podmienka> tak <krok>, inak <inak>",
     fields: [
@@ -138,6 +138,7 @@ export default function LinearWizardPage() {
   const [modelsSearch, setModelsSearch] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
   const [mentorOpen, setMentorOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
   const [sidebarWidth, setSidebarWidth] = useState(640);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -150,6 +151,15 @@ export default function LinearWizardPage() {
   const [mentorError, setMentorError] = useState(null);
   const [mentorApplyingId, setMentorApplyingId] = useState(null);
   const [mentorStatus, setMentorStatus] = useState(null);
+  const [projectNotes, setProjectNotes] = useState([]);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteDraftFlags, setNoteDraftFlags] = useState({
+    riziko: false,
+    blokuje: false,
+    doplnit: false,
+  });
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingNoteText, setEditingNoteText] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
   const verticalResizeStart = useRef({ y: 0, h: 0 });
   const layoutRef = useRef(null);
@@ -488,10 +498,79 @@ export default function LinearWizardPage() {
     }
   };
 
+  const previewName =
+    engineJson?.name ||
+    engineJson?.processName ||
+    processCard.generatorInput.processName?.trim() ||
+    "Náhľad BPMN";
+  const previewVersion = (processCard.processMeta?.version || "").trim();
+  const previewVersionLabel = previewVersion ? `Verzia: ${previewVersion}` : "";
+
+  const addProjectNote = () => {
+    const text = noteDraft.trim();
+    if (!text) return;
+    const id = `note_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const next = {
+      id,
+      text,
+      status: "working",
+      flags: { ...noteDraftFlags },
+      createdAt: new Date().toISOString(),
+    };
+    setProjectNotes((prev) => [next, ...prev]);
+    setNoteDraft("");
+    setNoteDraftFlags({ riziko: false, blokuje: false, doplnit: false });
+  };
+
+  const startEditProjectNote = (note) => {
+    setEditingNoteId(note.id);
+    setEditingNoteText(note.text || "");
+  };
+
+  const cancelEditProjectNote = () => {
+    setEditingNoteId(null);
+    setEditingNoteText("");
+  };
+
+  const saveEditProjectNote = (id) => {
+    const text = editingNoteText.trim();
+    if (!text) return;
+    updateProjectNote(id, { text });
+    cancelEditProjectNote();
+  };
+
+  const updateProjectNote = (id, updates) => {
+    setProjectNotes((prev) =>
+      prev.map((note) => (note.id === id ? { ...note, ...updates } : note)),
+    );
+  };
+
+  const toggleProjectNoteFlag = (id, flag, value) => {
+    setProjectNotes((prev) =>
+      prev.map((note) =>
+        note.id === id
+          ? {
+              ...note,
+              flags: {
+                ...note.flags,
+                [flag]: value,
+              },
+            }
+          : note,
+      ),
+    );
+  };
+
+  const removeProjectNote = (id) => {
+    setProjectNotes((prev) => prev.filter((note) => note.id !== id));
+  };
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
-      subtitle: engineJson?.name || engineJson?.processName || "Náhľad BPMN",
+      subtitle: previewName,
+      subtitleMeta: previewVersionLabel,
+      subtitleProminent: true,
       xml,
       loading: isLoading && !xml,
       error: error || "",
@@ -504,7 +583,17 @@ export default function LinearWizardPage() {
         modelerRef.current = modeler;
       },
     }),
-    [engineJson, error, handleDiagramChange, handleUndo, historyCount, isLoading, reorderLanesByNames, xml],
+    [
+      error,
+      handleDiagramChange,
+      handleUndo,
+      historyCount,
+      isLoading,
+      previewName,
+      previewVersionLabel,
+      reorderLanesByNames,
+      xml,
+    ],
   );
 
   const handleAppendToLane = async () => {
@@ -904,6 +993,14 @@ export default function LinearWizardPage() {
         <button type="button" className="process-card-toggle process-card-toggle--models" onClick={openModels}>
           Uložené modely
         </button>
+        <div className="process-card-rail-spacer" />
+        <button
+          type="button"
+          className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
+          onClick={() => setNotesOpen(true)}
+        >
+          Poznámky
+        </button>
       </div>
 
       {drawerOpen || helpOpen || mentorOpen ? (
@@ -923,7 +1020,11 @@ export default function LinearWizardPage() {
           {drawerOpen ? (
             <div
               className={`process-card-drawer ${drawerOpen ? "is-open" : ""}`}
-              style={{ height: processPanelHeight, minHeight: 320, overflow: "auto" }}
+              style={{
+                height: !helpOpen && !mentorOpen ? "100%" : processPanelHeight,
+                minHeight: 320,
+                overflow: "auto",
+              }}
             >
               <div className="process-card-header">
                 <div>
@@ -1535,6 +1636,168 @@ export default function LinearWizardPage() {
                 <button className="btn" type="button" onClick={() => setModelsOpen(false)}>
                   Zavrieť
                 </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {notesOpen ? (
+          <div className="wizard-models-modal" onClick={() => setNotesOpen(false)}>
+            <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Poznámky k projektu</h3>
+                <button className="btn btn--small" type="button" onClick={() => setNotesOpen(false)}>
+                  Zavrieť
+                </button>
+              </div>
+              <div className="project-notes-body">
+                <label className="wizard-field">
+                  <span>Nová poznámka</span>
+                  <textarea
+                    className="project-notes-textarea project-notes-textarea--draft"
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    placeholder={"Dohody, otvorené otázky, rozhodnutia...\n- \n- "}
+                    rows={6}
+                  />
+                </label>
+                <div className="project-notes-actions">
+                  <div className="project-notes-flags">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={noteDraftFlags.riziko}
+                        onChange={(e) =>
+                          setNoteDraftFlags((prev) => ({ ...prev, riziko: e.target.checked }))
+                        }
+                      />
+                      <span>Riziko</span>
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={noteDraftFlags.blokuje}
+                        onChange={(e) =>
+                          setNoteDraftFlags((prev) => ({ ...prev, blokuje: e.target.checked }))
+                        }
+                      />
+                      <span>Blokuje</span>
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={noteDraftFlags.doplnit}
+                        onChange={(e) =>
+                          setNoteDraftFlags((prev) => ({ ...prev, doplnit: e.target.checked }))
+                        }
+                      />
+                      <span>Treba doplniť</span>
+                    </label>
+                  </div>
+                  <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
+                    Pridať poznámku
+                  </button>
+                </div>
+
+                <div className="project-notes-list">
+                  {projectNotes.length === 0 ? (
+                    <div className="project-notes-empty">
+                      Zatiaľ žiadne poznámky. Pridaj prvú vyššie.
+                    </div>
+                  ) : (
+                    projectNotes.map((note) => (
+                      <div
+                        key={note.id}
+                        className={`project-note-item project-note-item--${note.status}`}
+                      >
+                        <div className="project-note-header">
+                          <select
+                            value={note.status}
+                            onChange={(e) => updateProjectNote(note.id, { status: e.target.value })}
+                          >
+                            <option value="working">Pracuje sa</option>
+                            <option value="done">Vyriešené</option>
+                          </select>
+                          <div className="project-note-badges">
+                            {note.flags?.riziko ? <span className="project-note-badge is-risk">Riziko</span> : null}
+                            {note.flags?.blokuje ? <span className="project-note-badge is-blocker">Blokuje</span> : null}
+                            {note.flags?.doplnit ? (
+                              <span className="project-note-badge is-todo">Treba doplniť</span>
+                            ) : null}
+                          </div>
+                          <div className="project-note-actions">
+                            <button
+                              type="button"
+                              className="btn btn--small"
+                              onClick={() => startEditProjectNote(note)}
+                              disabled={editingNoteId === note.id}
+                            >
+                              Upraviť
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--small btn-danger"
+                              onClick={() => removeProjectNote(note.id)}
+                            >
+                              Zmazať
+                            </button>
+                          </div>
+                        </div>
+                        {editingNoteId === note.id ? (
+                          <div className="project-note-edit">
+                            <textarea
+                              className="project-note-edit__textarea"
+                              value={editingNoteText}
+                              onChange={(e) => setEditingNoteText(e.target.value)}
+                              rows={4}
+                            />
+                            <div className="project-note-edit__actions">
+                              <button
+                                type="button"
+                                className="btn btn--small btn-primary"
+                                onClick={() => saveEditProjectNote(note.id)}
+                                disabled={!editingNoteText.trim()}
+                              >
+                                Uložiť
+                              </button>
+                              <button type="button" className="btn btn--small" onClick={cancelEditProjectNote}>
+                                Zrušiť
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="project-note-text">{note.text}</div>
+                        )}
+                        <div className="project-notes-flags">
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={note.flags?.riziko}
+                              onChange={(e) => toggleProjectNoteFlag(note.id, "riziko", e.target.checked)}
+                            />
+                            <span>Riziko</span>
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={note.flags?.blokuje}
+                              onChange={(e) => toggleProjectNoteFlag(note.id, "blokuje", e.target.checked)}
+                            />
+                            <span>Blokuje</span>
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={note.flags?.doplnit}
+                              onChange={(e) => toggleProjectNoteFlag(note.id, "doplnit", e.target.checked)}
+                            />
+                            <span>Treba doplniť</span>
+                          </label>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
