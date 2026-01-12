@@ -1,16 +1,16 @@
 gateways:
-  exclusive: ["ak", "ak je", "pokiaľ", "v prípade že", "inak", "else", "rozhodnutie"]
-  parallel: ["súbežne", "paralelne", "zároveň", "naraz", "popri tom"]
-  inclusive: ["voliteľne", "môže sa stať", "ak sa vyžaduje", "niekedy aj", "aspoň jedno"]
+  exclusive: ["ak", "keď", "ked", "ak je", "pokiaŽ–", "v prÆðpade ‘–e", "inak", "else", "rozhodnutie"]
+  parallel: ["sÆ­be‘–ne", "paralelne", "zÆórove‘?", "naraz", "popri tom"]
+  inclusive: ["voliteŽ–ne", "mÆï‘–e sa sta‘¤", "ak sa vy‘–aduje", "niekedy aj", "aspo‘? jedno"]
 
 loops:
-  while: ["opakuj kým", "kým", "pokým", "až do"]
-  for_each: ["pre každú", "pre všetky", "iteruj po", "zoznam položiek"]
+  while: ["opakuj kÆñm", "kÆñm", "pokÆñm", "a‘– do"]
+  for_each: ["pre ka‘–dÆ­", "pre v‘óetky", "iteruj po", "zoznam polo‘–iek"]
 
 message:
-  send: ["pošle", "odošle", "notifikuj", "informuj", "emailom", "sms", "api požiadavka"]
-  receive: ["príde", "prijme", "dostane"]
+  send: ["po‘óle", "odo‘óle", "notifikuj", "informuj", "emailom", "sms", "api po‘–iadavka"]
+  receive: ["prÆðde", "prijme", "dostane"]
 
 flow_connectors:
-  then: ["potom", "následne", "ďalej", "po tom", "nato", "a potom"]
-  also: ["tiež", "zároveň", "popritom", "súčasne"]
+  then: ["potom", "nÆósledne", "Žalej", "po tom", "nato", "a potom"]
+  also: ["tie‘–", "zÆórove‘?", "popritom", "sÆ­Ž›asne"]

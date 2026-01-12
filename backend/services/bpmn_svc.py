@@ -78,12 +78,13 @@ def _expand_conditional_step(
     make_flow_id: Callable[[str, str], str],
     include_lane_in_flow: bool = False,
 ) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
-    """Return (new_prev, nodes, flows) for a conditional 'Ak ...' step."""
+    """Return (new_prev, nodes, flows) for a conditional 'Ak/Keď/Ked ...' step."""
     cond = then_part = else_part = None
+    cond_prefix = r"(?:Ak|Keď|Ked)"
 
     # Variant 1a: explicit ELSE with tak/potom and optional commas
     m = re.match(
-        r"^\s*Ak\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+?)\s*,?\s*inak\s*[:\-]?\s*(?P<else>.+)\s*$",
+        rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+?)\s*,?\s*inak\s*[:\-]?\s*(?P<else>.+)\s*$",
         step,
         flags=re.IGNORECASE,
     )
@@ -94,7 +95,7 @@ def _expand_conditional_step(
     else:
         # Variant 1b: tak/potom bez explicitného inak (fallback)
         m = re.match(
-            r"^\s*Ak\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+)\s*$",
+            rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+)\s*$",
             step,
             flags=re.IGNORECASE,
         )
@@ -103,7 +104,7 @@ def _expand_conditional_step(
             then_part = (m.group("then") or "").strip()
         else:
             # Variant 2: legacy "Ak X, Y" without explicit tak/potom
-            m = re.match(r"^\s*Ak\s+(.*?),(.*)$", step, flags=re.IGNORECASE)
+            m = re.match(rf"^\s*{cond_prefix}\s+(.*?),(.*)$", step, flags=re.IGNORECASE)
             if m:
                 cond = m.group(1).strip()
                 then_part = m.group(2).strip()
