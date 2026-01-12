@@ -939,68 +939,90 @@ export default function LinearWizardPage() {
   return (
     <div className="process-card-layout" ref={layoutRef}>
       <div className="process-card-rail">
-        <button
-          type="button"
-          className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
-          style={
-            drawerOpen
-              ? {
-                  backgroundColor: "#1b3a6b",
-                  color: "#fff",
-                  borderColor: "#2f5ca0",
-                  boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                }
-              : undefined
-          }
-          onClick={() => setDrawerOpen((prev) => !prev)}
-        >
-          {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
-        </button>
-        <button
-          type="button"
-          className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
-          style={
-            helpOpen
-              ? {
-                  backgroundColor: "#1b3a6b",
-                  color: "#fff",
-                  borderColor: "#2f5ca0",
-                  boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                }
-              : undefined
-          }
-          onClick={() => setHelpOpen((prev) => !prev)}
-        >
-          {helpOpen ? "Skryt pomocnik" : "Pomocnik"}
-        </button>
-        <button
-          type="button"
-          className={`process-card-toggle ${mentorOpen ? "is-active" : ""}`}
-          style={
-            mentorOpen
-              ? {
-                  backgroundColor: "#1b3a6b",
-                  color: "#fff",
-                  borderColor: "#2f5ca0",
-                  boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                }
-              : undefined
-          }
-          onClick={() => setMentorOpen((prev) => !prev)}
-        >
-          {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
-        </button>
-        <button type="button" className="process-card-toggle process-card-toggle--models" onClick={openModels}>
-          Uložené modely
-        </button>
+        <div className="process-card-rail-group">
+          <div className="process-card-rail-title">Proces</div>
+          <button
+            type="button"
+            className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
+            style={
+              drawerOpen
+                ? {
+                    backgroundColor: "#1b3a6b",
+                    color: "#fff",
+                    borderColor: "#2f5ca0",
+                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                  }
+                : undefined
+            }
+            onClick={() => setDrawerOpen((prev) => !prev)}
+          >
+            {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
+          </button>
+          <button
+            type="button"
+            className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
+            style={
+              helpOpen
+                ? {
+                    backgroundColor: "#1b3a6b",
+                    color: "#fff",
+                    borderColor: "#2f5ca0",
+                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                  }
+                : undefined
+            }
+            onClick={() => setHelpOpen((prev) => !prev)}
+          >
+            {helpOpen ? "Skryť pomocník" : "Pomocník"}
+          </button>
+          <button
+            type="button"
+            className={`process-card-toggle ${mentorOpen ? "is-active" : ""}`}
+            style={
+              mentorOpen
+                ? {
+                    backgroundColor: "#1b3a6b",
+                    color: "#fff",
+                    borderColor: "#2f5ca0",
+                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                  }
+                : undefined
+            }
+            onClick={() => setMentorOpen((prev) => !prev)}
+          >
+            {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
+          </button>
+        </div>
+
+        <div className="process-card-rail-divider" />
+
+        <div className="process-card-rail-group">
+          <div className="process-card-rail-title">Uloženie</div>
+          <button type="button" className="process-card-toggle process-card-toggle--models" onClick={openModels}>
+            Uložené modely
+          </button>
+          <button
+            type="button"
+            className="process-card-toggle process-card-toggle--save"
+            onClick={handleSaveModel}
+            disabled={saveLoading}
+          >
+            {saveLoading ? "Ukladám..." : "Uložiť model"}
+          </button>
+        </div>
+
         <div className="process-card-rail-spacer" />
-        <button
-          type="button"
-          className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
-          onClick={() => setNotesOpen(true)}
-        >
-          Poznámky
-        </button>
+
+        <div className="process-card-rail-group">
+          <div className="process-card-rail-title">Projekt</div>
+          <button
+            type="button"
+            className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
+            onClick={() => setNotesOpen(true)}
+          >
+            Poznámky
+          </button>
+        </div>
       </div>
 
       {drawerOpen || helpOpen || mentorOpen ? (
@@ -1102,6 +1124,9 @@ export default function LinearWizardPage() {
                     <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
                       {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
                     </button>
+                    <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
+                      {saveLoading ? "Ukladám..." : "Uložiť model"}
+                    </button>
                     <button className="btn btn-danger" type="button" onClick={handleNewModel}>
                       Nový model
                     </button>
@@ -1170,9 +1195,6 @@ export default function LinearWizardPage() {
                     <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
                       {importLoading ? "Importujem..." : "Import BPMN"}
                     </button>
-                    <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
-                      {saveLoading ? "Ukladám..." : "Uložiť model"}
-                    </button>
                   </div>
                   <div className="process-card-inline-load">
                     <input
@@ -1215,7 +1237,7 @@ export default function LinearWizardPage() {
                 verticalResizeStart.current = { y: e.clientY, h: processPanelHeight };
                 setIsResizingPanels(true);
               }}
-              title="Tahaj pre zmenu vysky Karty procesu vs. Pomocnik"
+              title="Ťahaj pre zmenu výšky Karty procesu vs. Pomocník"
             >
               <span
                 style={{
@@ -1232,18 +1254,18 @@ export default function LinearWizardPage() {
             <div className="process-card-drawer is-open process-card-help">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Pomocnik</div>
+                  <div className="process-card-label">Pomocník</div>
                   <div className="process-card-description">
-                    Vkladas do:{" "}
+                    Vkladáš do:{" "}
                     {helpInsertTarget?.type === "lane"
                       ? `lane ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
-                      : "hlavne kroky"}
+                      : "hlavné kroky"}
                   </div>
                 </div>
                 <button
                   type="button"
                   className="process-card-close"
-                  aria-label="Zavriet pomocnika"
+                  aria-label="Zavrieť pomocníka"
                   onClick={() => setHelpOpen(false)}
                 >
                   ×

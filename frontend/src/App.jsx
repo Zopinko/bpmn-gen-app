@@ -329,18 +329,19 @@ function App() {
         <header className="app-nav">
           <div className="app-nav__brand">BPMN.GEN</div>
           <nav className="app-nav__links">
-            <Link to="/" className="app-nav__link">
+            <Link to="/text" className="app-nav__link">
               Text → mapa
             </Link>
-            <Link to="/wizard/linear" className="app-nav__link">
+            <Link to="/" className="app-nav__link">
               Karta procesu
             </Link>
           </nav>
         </header>
         <main className="app-shell__body">
           <Routes>
-            <Route path="/" element={<GeneratorPage />} />
-            <Route path="/wizard/linear" element={<LinearWizardPage />} />
+            <Route path="/" element={<LinearWizardPage />} />
+            <Route path="/text" element={<GeneratorPage />} />
+            <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
