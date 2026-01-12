@@ -760,6 +760,15 @@ export default function LinearWizardPage() {
     }
   };
 
+  const handleOpenWithoutSave = () => {
+    const action = pendingOpenActionRef.current;
+    pendingOpenActionRef.current = null;
+    setSavePromptOpen(false);
+    if (action) {
+      action();
+    }
+  };
+
   const handleCancelOpen = () => {
     pendingOpenActionRef.current = null;
     setSavePromptOpen(false);
@@ -1819,15 +1828,15 @@ export default function LinearWizardPage() {
               <div className="wizard-models-header">
                 <h3 style={{ margin: 0 }}>Ulozit model?</h3>
                 <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
-                  Zrusit
+                  Zavriet
                 </button>
               </div>
               <div style={{ padding: "8px 0" }}>
                 Mas rozpracovany model. Chces ho ulozit pred otvorenim ineho?
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button className="btn" type="button" onClick={handleCancelOpen}>
-                  Zrusit
+                <button className="btn" type="button" onClick={handleOpenWithoutSave}>
+                  Neulozit
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
                   Ulozit model
