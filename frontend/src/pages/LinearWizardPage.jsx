@@ -170,6 +170,7 @@ export default function LinearWizardPage() {
   const verticalResizeStart = useRef({ y: 0, h: 0 });
   const layoutRef = useRef(null);
   const syncInFlightRef = useRef(false);
+  const pendingDiagramXmlRef = useRef("");
   const lastSyncedXmlRef = useRef("");
   const historyRef = useRef([]);
   const undoInProgressRef = useRef(false);
@@ -379,13 +380,14 @@ export default function LinearWizardPage() {
     [engineJson, pushHistorySnapshot, xml],
   );
 
-  const handleDiagramChange = useCallback(
-    async (diagramXml) => {
-      if (!diagramXml || !diagramXml.trim()) return;
-      if (syncInFlightRef.current) return;
-      if (undoInProgressRef.current) return;
-      if (diagramXml === lastSyncedXmlRef.current) return;
-      if (!engineJson) return;
+    const handleDiagramChange = useCallback(
+      async (diagramXml) => {
+        pendingDiagramXmlRef.current = diagramXml;
+        if (!diagramXml || !diagramXml.trim()) return;
+        if (syncInFlightRef.current) return;
+        if (undoInProgressRef.current) return;
+        if (diagramXml === lastSyncedXmlRef.current) return;
+        if (!engineJson) return;
       pushHistorySnapshot(engineJson, xml);
       syncInFlightRef.current = true;
       try {
@@ -413,12 +415,17 @@ export default function LinearWizardPage() {
       } catch (e) {
         const message = e?.message || "Nepodarilo sa synchronizovať zmeny v diagrame.";
         setError(message);
-      } finally {
-        syncInFlightRef.current = false;
-      }
-    },
-    [engineJson, pushHistorySnapshot, xml],
-  );
+        } finally {
+          syncInFlightRef.current = false;
+          const pendingXml = pendingDiagramXmlRef.current;
+          if (pendingXml && pendingXml !== diagramXml && pendingXml !== lastSyncedXmlRef.current) {
+            pendingDiagramXmlRef.current = "";
+            window.setTimeout(() => handleDiagramChange(pendingXml), 0);
+          }
+        }
+      },
+      [engineJson, pushHistorySnapshot, xml],
+    );
 
   const findLaneIndex = (laneRef, lanes) => {
     if (!laneRef || !Array.isArray(lanes)) return -1;

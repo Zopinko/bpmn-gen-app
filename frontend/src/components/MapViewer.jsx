@@ -42,6 +42,9 @@ export default function MapViewer({
   const hasSubtitle = Boolean(subtitle || subtitleMeta);
   const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
+  const lastViewboxRef = useRef(null);
+  const hasImportedRef = useRef(false);
+  const lastSavedXmlRef = useRef("");
   const laneOrderChangeRef = useRef(onLaneOrderChange);
   const diagramChangeRef = useRef(onDiagramChange);
   const changeTimerRef = useRef(null);
@@ -314,17 +317,24 @@ export default function MapViewer({
       const handler = diagramChangeRef.current;
       if (typeof handler !== "function") return;
       if (!modelerRef.current?.saveXML) return;
-      if (changeTimerRef.current) {
-        clearTimeout(changeTimerRef.current);
+    if (changeTimerRef.current) {
+      clearTimeout(changeTimerRef.current);
+    }
+    changeTimerRef.current = setTimeout(async () => {
+      try {
+        const { xml: currentXml } = await modelerRef.current.saveXML({ format: true });
+        lastSavedXmlRef.current = currentXml || "";
+        handler(currentXml);
+      } catch {
+        // ignore sync errors from temporary model states
       }
-      changeTimerRef.current = setTimeout(async () => {
-        try {
-          const { xml: currentXml } = await modelerRef.current.saveXML({ format: true });
-          handler(currentXml);
-        } catch {
-          // ignore sync errors from temporary model states
-        }
-      }, 400);
+    }, 400);
+  };
+
+    const handleViewboxChanged = (event) => {
+      if (event?.viewbox) {
+        lastViewboxRef.current = event.viewbox;
+      }
     };
 
     if (eventBus) {
@@ -339,6 +349,7 @@ export default function MapViewer({
       eventBus.on("shape.resize.cancel", stopGhostStyling);
       eventBus.on("element.click", handleElementClick);
       eventBus.on("canvas.click", handleCanvasClick);
+      eventBus.on("canvas.viewbox.changed", handleViewboxChanged);
       eventBus.on("commandStack.changed", handleDiagramChanged);
     }
 
@@ -358,6 +369,7 @@ export default function MapViewer({
         eventBus.off("shape.resize.cancel", stopGhostStyling);
         eventBus.off("element.click", handleElementClick);
         eventBus.off("canvas.click", handleCanvasClick);
+        eventBus.off("canvas.viewbox.changed", handleViewboxChanged);
         eventBus.off("commandStack.changed", handleDiagramChanged);
       }
       clearLaneHandles();
@@ -427,6 +439,10 @@ export default function MapViewer({
       return;
     }
 
+    if (xml === lastSavedXmlRef.current) {
+      return;
+    }
+
     let cancelled = false;
     skipDiagramChangeRef.current = true;
     modeler
@@ -435,7 +451,12 @@ export default function MapViewer({
         if (cancelled) return;
         setImportError("");
         const canvas = modeler.get("canvas");
-        canvas.zoom("fit-viewport", "auto");
+        if (hasImportedRef.current && lastViewboxRef.current) {
+          canvas.viewbox(lastViewboxRef.current);
+        } else {
+          canvas.zoom("fit-viewport", "auto");
+        }
+        hasImportedRef.current = true;
 
         const overlays = modeler.get("overlays");
         const elementRegistry = modeler.get("elementRegistry");
