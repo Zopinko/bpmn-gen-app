@@ -63,6 +63,32 @@ class Proposal(BaseModel):
     source: Optional[str] = None
 
 
+class MentorTarget(BaseModel):
+    id: str
+    type: Literal[
+        "task",
+        "event",
+        "gateway",
+        "sequenceFlow",
+        "messageFlow",
+        "lane",
+        "subprocess",
+        "unknown",
+    ]
+
+
+class MentorFinding(BaseModel):
+    id: str
+    severity: Literal["HARD", "SOFT", "INFO"]
+    target: MentorTarget
+    message: str
+    proposal: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    risk: Literal["model_invalid", "semantic_change", "cosmetic"]
+    autofix: bool = False
+    fix_payload: Optional[Dict[str, Any]] = None
+
+
 class TelemetryEvent(BaseModel):
     name: str
     value: Optional[Any] = None
@@ -84,20 +110,27 @@ class MentorReviewRequest(BaseModel):
 
 
 class MentorReviewResponse(BaseModel):
-    proposals: List[Proposal] = Field(default_factory=list)
+    findings: List[MentorFinding] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MentorEngineApplyAuditEntry(BaseModel):
     id: str
-    type: str
-    risk: Literal["low", "medium", "high"]
+    action: str
+    reason: str
 
 
 class MentorEngineApplyRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     engine_json: Dict[str, Any]
-    selected_ids: List[str] = Field(default_factory=list)
-    proposals: List[Proposal] = Field(default_factory=list)
+    accepted_finding_ids: List[str] = Field(
+        default_factory=list, alias="acceptedFindingIds"
+    )
+    fix_payload_overrides: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict, alias="fixPayloadOverrides"
+    )
+    findings: Optional[List[MentorFinding]] = None
 
 
 class MentorEngineApplyResponse(BaseModel):

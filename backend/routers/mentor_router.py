@@ -10,18 +10,20 @@ from mentor.models import (
     MentorReviewResponse,
     ValidationRequest,
 )
-from mentor.service import MentorProviderError, MentorService
+from mentor.rule_service import MentorRuleService
 from mentor.validator import validate_kb_version
 
 router = APIRouter(tags=["Mentor"])
 
-_service = MentorService()
+_service = MentorRuleService()
 
 
 @router.post("/mentor/review", response_model=MentorReviewResponse)
 def review(payload: MentorReviewRequest) -> MentorReviewResponse:
-    proposals, meta = _service.review(payload)
-    return MentorReviewResponse(proposals=proposals, meta=meta)
+    if payload.engine_json is None:
+        raise HTTPException(status_code=400, detail="engine_json is required")
+    findings, meta = _service.review(payload)
+    return MentorReviewResponse(findings=findings, meta=meta)
 
 
 @router.post("/mentor/apply", response_model=MentorEngineApplyResponse)
@@ -30,15 +32,12 @@ def apply(payload: MentorEngineApplyRequest) -> MentorEngineApplyResponse:  # ty
         raise HTTPException(status_code=400, detail="engine_json is required")
 
     try:
-        engine_json, audit_log = _service.apply_engine_patches(
+        engine_json, audit_log = _service.apply(
             engine_json=payload.engine_json,
-            proposals=payload.proposals or [],
-            selected_ids=payload.selected_ids or [],
+            accepted_finding_ids=payload.accepted_finding_ids or [],
+            fix_payload_overrides=payload.fix_payload_overrides or {},
+            findings=payload.findings or None,
         )
-    except MentorProviderError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -800,14 +800,14 @@ body {
 
 .process-card-toggle--models {
   margin-top: 12px;
-  border-color: rgba(34, 197, 94, 0.45);
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.08));
-  color: #dcfce7;
+  border-color: rgba(139, 92, 246, 0.55);
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.26), rgba(139, 92, 246, 0.1));
+  color: #ede9fe;
 }
 
 .process-card-toggle--models:hover {
-  border-color: rgba(34, 197, 94, 0.75);
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.28), rgba(34, 197, 94, 0.12));
+  border-color: rgba(139, 92, 246, 0.85);
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.36), rgba(139, 92, 246, 0.14));
 }
 
 .process-card-toggle--notes {
@@ -819,6 +819,40 @@ body {
 .process-card-toggle--notes:hover {
   border-color: rgba(249, 115, 22, 0.85);
   background: linear-gradient(180deg, rgba(249, 115, 22, 0.45), rgba(249, 115, 22, 0.2));
+}
+
+.process-card-toggle--new-model {
+  margin-top: 12px;
+  border-color: rgba(239, 68, 68, 0.6);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.32), rgba(239, 68, 68, 0.12));
+  color: #fee2e2;
+}
+
+.process-card-toggle--new-model:hover {
+  border-color: rgba(239, 68, 68, 0.9);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.42), rgba(239, 68, 68, 0.18));
+}
+
+.process-card-toggle--mentor-review {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.35), rgba(34, 197, 94, 0.12));
+  color: #dcfce7;
+}
+
+.process-card-toggle--mentor-review:hover {
+  border-color: rgba(34, 197, 94, 0.8);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.45), rgba(34, 197, 94, 0.18));
+}
+
+.process-card-toggle--mentor-review.is-stale {
+  border-color: rgba(245, 158, 11, 0.7);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.45), rgba(245, 158, 11, 0.18));
+  color: #1f2937;
+}
+
+.process-card-toggle--mentor-review.is-stale:hover {
+  border-color: rgba(245, 158, 11, 0.9);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.55), rgba(245, 158, 11, 0.22));
 }
 
 .process-card-drawer {
@@ -999,6 +1033,10 @@ body {
   gap: 6px;
   font-size: 0.95rem;
   color: var(--text-muted);
+}
+
+.wizard-field--full {
+  grid-column: 1 / -1;
 }
 
 .wizard-field input,
@@ -1538,6 +1576,76 @@ body {
 .map-viewer__canvas .djs-connection.hover .djs-visual > path {
   stroke: rgba(96, 165, 250, 0.95) !important;
   stroke-width: 2.4px !important;
+}
+
+/* Mentor review button */
+.btn-mentor-review {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 16px;
+  min-height: 40px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+
+.btn-mentor-review:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.btn-mentor-review.is-stale {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #1f2937;
+}
+
+.btn-mentor-review.is-stale:hover {
+  background: #d97706;
+  border-color: #d97706;
+}
+
+.btn-mentor-focus {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #fff;
+  font-weight: 700;
+}
+
+.btn-mentor-focus:hover {
+  background: #0284c7;
+  border-color: #0284c7;
+}
+
+.mentor-note {
+  background: rgba(15, 22, 36, 0.35);
+  border: 1px solid rgba(47, 92, 160, 0.2);
+}
+
+.mentor-note--hard {
+  border-color: rgba(239, 68, 68, 0.65);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3);
+}
+
+.mentor-note--soft {
+  border-color: rgba(251, 191, 36, 0.55);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2);
+}
+
+.mentor-note--info {
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+/* Mentor highlight marker */
+.map-viewer__canvas .mentor-highlight .djs-visual > :is(path, rect, polygon, circle, ellipse) {
+  stroke: rgba(245, 158, 11, 0.95) !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.6));
+}
+
+.map-viewer__canvas .mentor-highlight text {
+  fill: rgba(245, 158, 11, 0.95) !important;
 }
 
 /* Hover efekt pre sequence flows */
