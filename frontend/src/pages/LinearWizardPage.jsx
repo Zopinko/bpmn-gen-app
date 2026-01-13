@@ -138,6 +138,7 @@ export default function LinearWizardPage() {
   const [modelsError, setModelsError] = useState(null);
   const [modelsActionLoading, setModelsActionLoading] = useState(false);
   const [modelsSearch, setModelsSearch] = useState("");
+  const [expandedModelGroups, setExpandedModelGroups] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
   const [mentorOpen, setMentorOpen] = useState(false);
@@ -783,6 +784,10 @@ export default function LinearWizardPage() {
     }
   };
 
+  const toggleModelGroup = (key) => {
+    setExpandedModelGroups((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
+
   const openModels = async () => {
     setModelsOpen(true);
     await fetchModels();
@@ -1093,6 +1098,24 @@ export default function LinearWizardPage() {
   const generatorInput = processCard.generatorInput;
   const processMeta = processCard.processMeta;
   const selectedLaneIndex = selectedLane ? findLaneIndex(selectedLane, engineJson?.lanes || []) : -1;
+  const modelGroups = useMemo(() => {
+    const groups = new Map();
+    models.forEach((model) => {
+      const label = (model.name || "").trim() || model.id;
+      const key = label;
+      const group = groups.get(key) || { key, label, items: [] };
+      group.items.push(model);
+      groups.set(key, group);
+    });
+    return Array.from(groups.values())
+      .map((group) => {
+        const items = [...group.items].sort(
+          (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
+        );
+        return { ...group, items, latest: items[0] };
+      })
+      .sort((a, b) => new Date(b.latest?.updated_at || 0) - new Date(a.latest?.updated_at || 0));
+  }, [models]);
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
@@ -1810,54 +1833,105 @@ export default function LinearWizardPage() {
                   <tbody>
                     {modelsLoading ? (
                       <tr>
-                        <td colSpan={4}>Načítavam...</td>
+                        <td colSpan={5}>Načítavam...</td>
                       </tr>
-                    ) : models.length ? (
-                      [...models]
-                        .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
-                        .map((m) => (
-                          <tr key={m.id}>
+                    ) : modelGroups.length ? (
+                      modelGroups.flatMap((group) => {
+                        const latest = group.latest;
+                        const isExpanded = expandedModelGroups.includes(group.key);
+                        return [
+                          <tr key={`${group.key}_row`}>
                             <td>
-                              <span className="wizard-model-name" title={m.name || m.id}>
-                                {m.name || m.id}
-                              </span>
+                              <div className="wizard-model-name" title={group.label}>
+                                {group.label}
+                              </div>
+                              <div style={{ fontSize: 12, opacity: 0.7 }}>Verzie: {group.items.length}</div>
                             </td>
-                          <td>{m.process_meta?.version || "–"}</td>
-                          <td>{formatDateTime(m.created_at)}</td>
-                            <td>{formatDateTime(m.updated_at)}</td>
+                            <td>{latest?.process_meta?.version || "–"}</td>
+                            <td>{formatDateTime(latest?.created_at)}</td>
+                            <td>{formatDateTime(latest?.updated_at)}</td>
                             <td>
                               <div className="wizard-models-actions">
                                 <button
-                                  className="btn btn--small btn-primary"
+                                  className={`btn btn--small btn-versions-toggle ${isExpanded ? "is-active" : ""}`}
                                   type="button"
-                                  onClick={() => loadModelFromList(m.id)}
-                                  disabled={loadLoading || modelsActionLoading}
+                                  onClick={() => toggleModelGroup(group.key)}
                                 >
-                                  Otvoriť
+                                  {isExpanded ? "Skryť verzie" : "Verzie"}
                                 </button>
-                                <button
-                                  className="btn btn--small btn-link"
-                                  type="button"
-                                  onClick={() => handleRenameModel(m.id, m.name || m.id)}
-                                  disabled={modelsLoading || modelsActionLoading}
-                                >
-                                  Premenovať
-                                </button>
-                                <button
-                                  className="btn btn--small btn-danger"
-                                  type="button"
-                                  onClick={() => handleDeleteModel(m.id, m.name || m.id)}
-                                  disabled={modelsLoading || modelsActionLoading}
-                                >
-                                  Zmazať
-                                </button>
+                                {latest ? (
+                                  <button
+                                    className="btn btn--small btn-primary"
+                                    type="button"
+                                    onClick={() => loadModelFromList(latest.id)}
+                                    disabled={loadLoading || modelsActionLoading}
+                                  >
+                                    Otvoriť poslednú
+                                  </button>
+                                ) : null}
                               </div>
                             </td>
-                          </tr>
-                        ))
+                          </tr>,
+                          isExpanded ? (
+                            <tr key={`${group.key}_versions`}>
+                              <td colSpan={5}>
+                                <div className="wizard-models-versions">
+                                  <table className="wizard-models-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Verzia</th>
+                                        <th>Vytvorený</th>
+                                        <th>Naposledy upravený</th>
+                                        <th>Akcie</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {group.items.map((m, index) => (
+                                        <tr key={m.id}>
+                                          <td>{m.process_meta?.version || `#${group.items.length - index}`}</td>
+                                          <td>{formatDateTime(m.created_at)}</td>
+                                          <td>{formatDateTime(m.updated_at)}</td>
+                                          <td>
+                                            <div className="wizard-models-actions">
+                                              <button
+                                                className="btn btn--small btn-primary"
+                                                type="button"
+                                                onClick={() => loadModelFromList(m.id)}
+                                                disabled={loadLoading || modelsActionLoading}
+                                              >
+                                                Otvoriť
+                                              </button>
+                                              <button
+                                                className="btn btn--small btn-link"
+                                                type="button"
+                                                onClick={() => handleRenameModel(m.id, m.name || m.id)}
+                                                disabled={modelsLoading || modelsActionLoading}
+                                              >
+                                                Premenovať
+                                              </button>
+                                              <button
+                                                className="btn btn--small btn-danger"
+                                                type="button"
+                                                onClick={() => handleDeleteModel(m.id, m.name || m.id)}
+                                                disabled={modelsLoading || modelsActionLoading}
+                                              >
+                                                Zmazať
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null,
+                        ].filter(Boolean);
+                      })
                     ) : (
                       <tr>
-                        <td colSpan={4}>Žiadne uložené modely.</td>
+                        <td colSpan={5}>Žiadne uložené modely.</td>
                       </tr>
                     )}
                   </tbody>
