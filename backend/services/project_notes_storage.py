@@ -4,7 +4,22 @@ from pathlib import Path
 from typing import Any, List
 
 _default_path = Path("data/project_notes.json")
-_file_path = Path(os.getenv("BPMN_PROJECT_NOTES_FILE", str(_default_path)))
+
+
+def _resolve_notes_path() -> Path:
+    explicit_file = os.getenv("BPMN_PROJECT_NOTES_FILE")
+    if explicit_file:
+        return Path(explicit_file)
+    explicit_dir = os.getenv("BPMN_PROJECT_NOTES_DIR")
+    if explicit_dir:
+        return Path(explicit_dir) / "project_notes.json"
+    models_dir = os.getenv("BPMN_MODELS_DIR")
+    if models_dir:
+        return Path(models_dir) / "project_notes.json"
+    return _default_path
+
+
+_file_path = _resolve_notes_path()
 
 
 def _ensure_dir(path: Path) -> None:
