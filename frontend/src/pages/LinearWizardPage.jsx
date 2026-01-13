@@ -20,6 +20,8 @@ const HELP_RULES = [
   {
     id: "task",
     title: "Bezny krok (Task)",
+    description: "Zvycajna aktivita v procese, ktoru vykona rola alebo system.",
+    iconClass: "bpmn-icon-task",
     syntax: "Lubovolny text na riadok",
     example: "Overime identitu zakaznika",
     template: "<krok>",
@@ -28,6 +30,8 @@ const HELP_RULES = [
   {
     id: "xor",
     title: "Rozhodnutie (XOR gateway)",
+    description: "Rozhodovaci bod s presne jednou vybranou vetvou.",
+    iconClass: "bpmn-icon-gateway-xor",
     syntax: "Ak/Keď/Ked <podmienka> tak <krok>, inak <krok/koniec>",
     example: "Ak zakaznik schvali ponuku tak priprav zmluvu, inak koniec",
     template: "Ak <podmienka> tak <krok>, inak <inak>",
@@ -40,6 +44,8 @@ const HELP_RULES = [
   {
     id: "and_strict",
     title: "Paralelne kroky (AND) - presny zapis",
+    description: "Viac krokov prebieha naraz (paralelne).",
+    iconClass: "bpmn-icon-gateway-parallel",
     syntax: "Paralelne: <krok>; <krok>; <krok>",
     example: "Paralelne: priprav zmluvu; over identitu; nastav splatky",
     template: "Paralelne: <krok1>; <krok2>; <krok3>",
@@ -52,6 +58,8 @@ const HELP_RULES = [
   {
     id: "and_free",
     title: "Paralelne kroky (AND) - volny text",
+    description: "Paralelne vykonavane kroky zapisane prirodzene.",
+    iconClass: "bpmn-icon-gateway-parallel",
     syntax: "Zaroven/Sucasne <krok>, <krok> a <krok>",
     example: "Zaroven priprav zmluvu, over identitu a nastav splatky",
     template: "Zaroven <krok1>, <krok2> a <krok3>",
@@ -62,6 +70,61 @@ const HELP_RULES = [
     ],
   },
 ];
+
+
+const LANE_SHAPE_OPTIONS = [
+  {
+    id: "task",
+    label: "Uloha",
+    bpmnType: "bpmn:Task",
+    nameLabel: "Nazov tasku",
+    namePlaceholder: "napr. Skontrolovat ziadost",
+    helper: "Pomenuj slovesom + predmetom (napr. Skontrolovat fakturu).",
+    nameRequired: true,
+  },
+  {
+    id: "xor",
+    label: "XOR brana",
+    bpmnType: "bpmn:ExclusiveGateway",
+    nameLabel: "Rozhodnutie (otazka)",
+    namePlaceholder: "napr. Je ziadost kompletna?",
+    helper: "Pouzi otazku, aby bolo jasne, o com sa rozhoduje.",
+    nameRequired: true,
+  },
+  {
+    id: "parallel",
+    label: "Paralelna brana",
+    bpmnType: "bpmn:ParallelGateway",
+    nameLabel: "Nazov paralelnej casti",
+    namePlaceholder: "napr. Spustit paralelne kroky",
+    helper: "Nazov je volitelny, ale pomoze pri citatelnosti.",
+    nameRequired: false,
+  },
+  {
+    id: "start",
+    label: "Start",
+    bpmnType: "bpmn:StartEvent",
+    nameLabel: "Nazov start eventu",
+    namePlaceholder: "napr. Prijata ziadost",
+    helper: "Ak nechces, nechaj prazdne.",
+    nameRequired: false,
+  },
+  {
+    id: "end",
+    label: "Koniec",
+    bpmnType: "bpmn:EndEvent",
+    nameLabel: "Nazov end eventu",
+    namePlaceholder: "napr. Proces ukonceny",
+    helper: "Ak nechces, nechaj prazdne.",
+    nameRequired: false,
+  },
+];
+
+const createLaneInsertInputs = () =>
+  LANE_SHAPE_OPTIONS.reduce((acc, shape) => {
+    acc[shape.id] = "";
+    return acc;
+  }, {});
 
 function formatDateTime(isoString) {
   if (!isoString) return "";
@@ -130,6 +193,9 @@ export default function LinearWizardPage() {
   const [info, setInfo] = useState(null);
   const [selectedLane, setSelectedLane] = useState(null);
   const [laneDescription, setLaneDescription] = useState("");
+  const [laneInsertOpen, setLaneInsertOpen] = useState(false);
+  const [laneInsertType, setLaneInsertType] = useState("task");
+  const [laneInsertInputs, setLaneInsertInputs] = useState(() => createLaneInsertInputs());
   const [loadId, setLoadId] = useState("");
   const modelerRef = useRef(null);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -189,6 +255,14 @@ export default function LinearWizardPage() {
       return acc;
     }, {}),
   );
+  const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
+  const [helpMode, setHelpMode] = useState("inline");
+
+  useEffect(() => {
+    if (!selectedLane) {
+      setLaneInsertOpen(false);
+    }
+  }, [selectedLane]);
 
   const updateGeneratorInput = (field, value) =>
     setProcessCard((prev) => ({
@@ -230,6 +304,46 @@ export default function LinearWizardPage() {
       output = output.replace(`<${field.token}>`, value || `<${field.token}>`);
     });
     return output;
+  };
+
+  const buildHelpTemplateSegments = (rule) => {
+    const template = rule?.template || "";
+    const segments = [];
+    const tokenRegex = /<([^>]+)>/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = tokenRegex.exec(template))) {
+      if (match.index > lastIndex) {
+        segments.push({ type: "text", value: template.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: "field", token: match[1] });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < template.length) {
+      segments.push({ type: "text", value: template.slice(lastIndex) });
+    }
+    return segments;
+  };
+
+  const updateHelpInput = (ruleId, key, value) => {
+    setHelpInputs((prev) => ({
+      ...prev,
+      [ruleId]: { ...(prev[ruleId] || {}), [key]: value },
+    }));
+  };
+
+  const clearHelpInputs = (rule) => {
+    setHelpInputs((prev) => ({
+      ...prev,
+      [rule.id]: (rule.fields || []).reduce((acc, field) => {
+        acc[field.key] = "";
+        return acc;
+      }, {}),
+    }));
+  };
+
+  const activateHelpRule = (rule) => {
+    setHelpActiveRuleId(rule.id);
   };
 
   useEffect(() => {
@@ -652,6 +766,116 @@ export default function LinearWizardPage() {
       xml,
     ],
   );
+
+
+  const laneShapeOptions = useMemo(() => LANE_SHAPE_OPTIONS, []);
+  const activeLaneShape = useMemo(
+    () => laneShapeOptions.find((shape) => shape.id === laneInsertType) || laneShapeOptions[0],
+    [laneInsertType, laneShapeOptions],
+  );
+  const laneInsertName = laneInsertInputs[laneInsertType] || "";
+  const canCreateLaneShape =
+    Boolean(selectedLane) &&
+    activeLaneShape &&
+    (!activeLaneShape.nameRequired || laneInsertName.trim());
+
+  const updateLaneInsertName = (value) => {
+    setLaneInsertInputs((prev) => ({ ...prev, [laneInsertType]: value }));
+  };
+
+  const collectLaneFlowNodes = (laneElement, elementRegistry) => {
+    if (!laneElement || !elementRegistry) return [];
+    return elementRegistry.getAll().filter((el) => {
+      if (!el || el.type === "label") return false;
+      const bo = el.businessObject;
+      if (!bo?.$instanceOf?.("bpmn:FlowNode")) return false;
+      let parent = el.parent;
+      while (parent) {
+        if (parent.id === laneElement.id) return true;
+        parent = parent.parent;
+      }
+      return false;
+    });
+  };
+
+  const computeLaneInsertPosition = (laneElement, shape, mode, firstNode, lastNode) => {
+    const paddingX = 60;
+    const paddingY = 30;
+    const laneLeft = laneElement.x + paddingX;
+    const laneRight = laneElement.x + laneElement.width - shape.width - paddingX;
+    const laneTop = laneElement.y + paddingY;
+    const laneBottom = laneElement.y + laneElement.height - shape.height - paddingY;
+    const centeredY = laneElement.y + (laneElement.height - shape.height) / 2;
+    const y = Math.min(laneBottom, Math.max(laneTop, centeredY));
+    let x = laneLeft;
+
+    if (mode === "start" && firstNode) {
+      x = firstNode.x - shape.width - 60;
+    } else if (lastNode) {
+      x = lastNode.x + lastNode.width + 60;
+    }
+
+    x = Math.min(laneRight, Math.max(laneLeft, x));
+    return { x, y };
+  };
+
+  const handleLaneShapeCreate = () => {
+    if (!activeLaneShape) return;
+    if (!selectedLane) {
+      setError("Vyber lane.");
+      return;
+    }
+    if (!modelerRef.current) {
+      setError("Modeler nie je pripraveny.");
+      return;
+    }
+    const name = laneInsertName.trim();
+    if (activeLaneShape.nameRequired && !name) {
+      setError("Dopln nazov.");
+      return;
+    }
+
+    const modeler = modelerRef.current;
+    const elementRegistry = modeler.get("elementRegistry");
+    const modeling = modeler.get("modeling");
+    const elementFactory = modeler.get("elementFactory");
+    const selection = modeler.get("selection");
+    const canvas = modeler.get("canvas");
+    const laneElement = elementRegistry?.get(selectedLane.id);
+
+    if (!laneElement || !modeling || !elementFactory) {
+      setError("Lane sa nepodarilo najst.");
+      return;
+    }
+
+    const laneNodes = collectLaneFlowNodes(laneElement, elementRegistry);
+    const orderedNodes = [...laneNodes].sort((a, b) => (a.x || 0) - (b.x || 0));
+    const firstNode = orderedNodes[0];
+    const lastNode = orderedNodes[orderedNodes.length - 1];
+    const shape = elementFactory.createShape({ type: activeLaneShape.bpmnType });
+    const position = computeLaneInsertPosition(laneElement, shape, activeLaneShape.id, firstNode, lastNode);
+    const created = modeling.createShape(shape, position, laneElement);
+
+    if (name) {
+      modeling.updateProperties(created, { name });
+    }
+
+    if (activeLaneShape.id === "start") {
+      if (firstNode) {
+        modeling.connect(created, firstNode);
+      }
+    } else if (lastNode) {
+      modeling.connect(lastNode, created);
+    }
+
+    selection?.select(created);
+    if (typeof canvas?.scrollToElement === "function") {
+      canvas.scrollToElement(created);
+    }
+
+    setLaneInsertOpen(false);
+    setError(null);
+  };
 
   const handleAppendToLane = async () => {
     if (!selectedLane || !laneDescription.trim()) {
@@ -1254,12 +1478,12 @@ export default function LinearWizardPage() {
             display: "flex",
             flexDirection: "column",
             gap: 12,
-            width: "100%",
-            maxWidth: 820,
-            minWidth: 540,
-            flex: "0 0 640px",
+            width: "auto",
+            maxWidth: "none",
+            minWidth: 0,
+            flex: "0 0 auto",
             overflow: "auto",
-            paddingRight: 16,
+            paddingRight: 0,
           }}
         >
           {drawerOpen ? (
@@ -1330,7 +1554,7 @@ export default function LinearWizardPage() {
                     <textarea
                       value={generatorInput.mainSteps}
                       onChange={(e) => updateGeneratorInput("mainSteps", e.target.value)}
-                      rows={6}
+                      rows={4}
                       placeholder={"Krok 1\nKrok 2\nKrok 3"}
                     />
                   </label>
@@ -1507,73 +1731,132 @@ export default function LinearWizardPage() {
               </div>
               <div className="process-card-body">
                 <div className="wizard-help-list">
-                  {HELP_RULES.map((rule) => (
-                    <div key={rule.title} className="wizard-help-item">
-                      <div className="wizard-help-head">
-                        <strong>{rule.title}</strong>
-                      </div>
+                  {HELP_RULES.map((rule) => {
+                    const segments = buildHelpTemplateSegments(rule);
+                    const fieldsByToken = (rule.fields || []).reduce((acc, field) => {
+                      acc[field.token] = field;
+                      return acc;
+                    }, {});
+                    const isActive = helpActiveRuleId === rule.id;
+                    return (
+                      <div key={rule.title} className="wizard-help-item">
+                        <div className="wizard-help-head">
+                          <div className="wizard-help-head__title">
+                            <strong>{rule.title}</strong>
+                          </div>
+                          <div className="wizard-help-head__icon">
+                            {rule.iconClass ? (
+                              <span className={`wizard-help-icon ${rule.iconClass}`} aria-hidden="true" />
+                            ) : null}
+                          </div>
+                        </div>
                       <div className="wizard-help-body">
-                        <div className="wizard-help-line">
-                          <span className="wizard-help-label">Syntax:</span>{" "}
-                          <code>{rule.syntax}</code>
-                        </div>
-                        <div className="wizard-help-line">
-                          <span className="wizard-help-label">Priklad:</span>{" "}
-                          <button
-                            type="button"
-                            className="btn btn--small btn-link"
-                            onClick={() => insertHelpExample(rule.example)}
-                          >
-                            {rule.example}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn--small btn-primary"
-                            onClick={() => insertHelpExample(rule.example)}
-                          >
-                            Vlozit
-                          </button>
-                        </div>
-                        {rule.fields?.length ? (
-                          <div className="wizard-help-template">
-                            <div className="wizard-help-line">
-                              <span className="wizard-help-label">Vlastny text:</span>
-                            </div>
-                            <div className="wizard-help-inputs">
-                              {rule.fields.map((field) => (
-                                <label key={`${rule.id}-${field.key}`} className="wizard-help-input">
-                                  <span>{field.label}</span>
-                                  <input
-                                    type="text"
-                                    value={helpInputs[rule.id]?.[field.key] || ""}
-                                    placeholder={field.placeholder}
-                                    onChange={(e) =>
-                                      setHelpInputs((prev) => ({
-                                        ...prev,
-                                        [rule.id]: { ...prev[rule.id], [field.key]: e.target.value },
-                                      }))
-                                    }
-                                  />
-                                </label>
-                              ))}
-                            </div>
-                            <div className="wizard-help-line">
-                              <span className="wizard-help-label">Veta:</span>{" "}
-                              <code>{buildHelpTemplate(rule)}</code>
-                              <button
-                                type="button"
-                                className="btn btn--small btn-primary"
-                                onClick={() => insertHelpExample(buildHelpTemplate(rule))}
-                              >
-                                Vlozit
-                              </button>
-                            </div>
+                        {rule.description ? (
+                          <div className="wizard-help-line wizard-help-line--desc">
+                            {rule.description}
                           </div>
                         ) : null}
-
+                        <div className="wizard-help-line">
+                          <span className="wizard-help-label">Priklad:</span>{" "}
+                            <button
+                              type="button"
+                              className="btn btn--small btn-link wizard-help-example-btn"
+                              onClick={() =>
+                                setHelpActiveRuleId((prev) => (prev === rule.id ? null : rule.id))
+                              }
+                            >
+                              <span>{rule.example}</span>
+                              <span className="wizard-help-example-hint">pridaj vlastne</span>
+                            </button>
+                          </div>
+                          <div className="wizard-help-line wizard-help-line--syntax">
+                            <span className="wizard-help-label">Syntax:</span>{" "}
+                            <code>{rule.syntax}</code>
+                          </div>
+                          {isActive ? (
+                            <div className="wizard-help-builder">
+                              <div className="wizard-help-tabs">
+                                <button
+                                  type="button"
+                                  className={`btn btn--small ${helpMode === "slots" ? "btn-primary" : "btn-link"}`}
+                                  onClick={() => setHelpMode("slots")}
+                                >
+                                  Sloty
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`btn btn--small ${helpMode === "inline" ? "btn-primary" : "btn-link"}`}
+                                  onClick={() => setHelpMode("inline")}
+                                >
+                                  Riadok
+                                </button>
+                              </div>
+                              {helpMode === "slots" ? (
+                                <div className="wizard-help-inputs">
+                                  {(rule.fields || []).length ? (
+                                    (rule.fields || []).map((field) => (
+                                      <label key={`${rule.id}-${field.key}`} className="wizard-help-input">
+                                        <span>{field.label}</span>
+                                        <input
+                                          type="text"
+                                          value={helpInputs[rule.id]?.[field.key] || ""}
+                                          placeholder={field.placeholder}
+                                          onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
+                                        />
+                                      </label>
+                                    ))
+                                  ) : (
+                                    <div className="wizard-help-empty">Tento vzor nema polia na doplnenie.</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="wizard-help-inline">
+                                  {segments.map((segment, idx) => {
+                                    if (segment.type === "text") {
+                                      return (
+                                        <span key={`${rule.id}-text-${idx}`} className="wizard-help-inline__text">
+                                          {segment.value}
+                                        </span>
+                                      );
+                                    }
+                                    const field = fieldsByToken[segment.token];
+                                    const fieldKey = field?.key || segment.token;
+                                    const placeholder = field?.placeholder || segment.token;
+                                    return (
+                                      <input
+                                        key={`${rule.id}-field-${idx}`}
+                                        type="text"
+                                        className="wizard-help-inline__input"
+                                        value={helpInputs[rule.id]?.[fieldKey] || ""}
+                                        placeholder={placeholder}
+                                        onChange={(e) => updateHelpInput(rule.id, fieldKey, e.target.value)}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <div className="wizard-help-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn--small btn-primary"
+                                  onClick={() => insertHelpExample(buildHelpTemplate(rule))}
+                                >
+                                  Vlozit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn--small btn-link"
+                                  onClick={() => clearHelpInputs(rule)}
+                                >
+                                  Vycistit
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1759,6 +2042,13 @@ export default function LinearWizardPage() {
                   </button>
                   <button
                     type="button"
+                    className="btn btn--small btn-primary"
+                    onClick={() => setLaneInsertOpen(true)}
+                  >
+                    Pridat tvar
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn--small btn-link"
                     onClick={() => {
                       setHelpOpen(true);
@@ -1776,7 +2066,14 @@ export default function LinearWizardPage() {
               <div className="wizard-lane-panel__hint">
                 Vybraná lane. Môžeš pridať kroky, použiť POMOC alebo posunúť lane vyššie/nižšie.
               </div>
-              <label className="wizard-field">
+
+              
+
+              
+              <div className="wizard-lane-panel__content">
+                <div className="wizard-lane-panel__right">
+                  <div className="wizard-lane-panel__section-title">Popis lane</div>
+<label className="wizard-field">
                 <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
                 <textarea
                   value={laneDescription}
@@ -1788,9 +2085,111 @@ export default function LinearWizardPage() {
               <button className="btn btn-primary" type="button" onClick={handleAppendToLane} disabled={isLoading}>
                 {isLoading ? "Pridávam..." : "Vytvoriť kroky v tejto lane"}
               </button>
+                </div>
+                <div className="wizard-lane-panel__left">
+<div className="wizard-lane-insert">
+                <div className="wizard-lane-insert__title">Pridat tvar</div>
+                <div className="wizard-shape-body">
+                  <div className="wizard-shape-list">
+                    {laneShapeOptions.map((shape) => (
+                      <button
+                        key={shape.id}
+                        type="button"
+                        className={`wizard-shape-item${laneInsertType === shape.id ? " is-active" : ""}`}
+                        onClick={() => setLaneInsertType(shape.id)}
+                      >
+                        {shape.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="wizard-shape-form">
+                    <label className="wizard-field">
+                      <span>{activeLaneShape?.nameLabel || "Nazov"}</span>
+                      <input
+                        type="text"
+                        value={laneInsertName}
+                        onChange={(e) => updateLaneInsertName(e.target.value)}
+                        placeholder={activeLaneShape?.namePlaceholder || ""}
+                      />
+                    </label>
+                    {activeLaneShape?.helper ? (
+                      <div className="wizard-shape-helper">{activeLaneShape.helper}</div>
+                    ) : null}
+                    <div className="wizard-shape-actions">
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={handleLaneShapeCreate}
+                        disabled={!canCreateLaneShape}
+                      >
+                        Pridat tvar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+                </div>
+              </div>
+
             </div>
           ) : null}
         </div>
+
+        {laneInsertOpen && selectedLane ? (
+          <div className="wizard-models-modal" onClick={() => setLaneInsertOpen(false)}>
+            <div className="wizard-models-panel wizard-shape-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Pridat tvar do lane</h3>
+                <button className="btn btn--small" type="button" onClick={() => setLaneInsertOpen(false)}>
+                  Zavriet
+                </button>
+              </div>
+              <div className="wizard-shape-meta">Lane: {selectedLane.name || selectedLane.id}</div>
+              <div className="wizard-shape-body">
+                <div className="wizard-shape-list">
+                  {laneShapeOptions.map((shape) => (
+                    <button
+                      key={shape.id}
+                      type="button"
+                      className={`wizard-shape-item${laneInsertType === shape.id ? " is-active" : ""}`}
+                      onClick={() => setLaneInsertType(shape.id)}
+                    >
+                      {shape.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="wizard-shape-form">
+                  <label className="wizard-field">
+                    <span>{activeLaneShape?.nameLabel || "Nazov"}</span>
+                    <input
+                      type="text"
+                      value={laneInsertName}
+                      onChange={(e) => updateLaneInsertName(e.target.value)}
+                      placeholder={activeLaneShape?.namePlaceholder || ""}
+                    />
+                  </label>
+                  {activeLaneShape?.helper ? (
+                    <div className="wizard-shape-helper">{activeLaneShape.helper}</div>
+                  ) : null}
+                  <div className="wizard-shape-actions">
+                    <button className="btn" type="button" onClick={() => setLaneInsertOpen(false)}>
+                      Zrusit
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      onClick={handleLaneShapeCreate}
+                      disabled={!canCreateLaneShape}
+                    >
+                      Pridat tvar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
 
         {modelsOpen ? (
           <div className="wizard-models-modal" onClick={() => setModelsOpen(false)}>
