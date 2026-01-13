@@ -138,6 +138,28 @@ export async function renameWizardModel(modelId, name) {
   return response.json();
 }
 
+export async function getProjectNotes() {
+  const response = await fetch(`${API_BASE}/wizard/project-notes`);
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export async function saveProjectNotes(notes) {
+  const response = await fetch(`${API_BASE}/wizard/project-notes`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return response.json();
+}
+
 export async function mentorReview(payload) {
   const response = await fetch(`${API_BASE}/mentor/review`, {
     method: "POST",

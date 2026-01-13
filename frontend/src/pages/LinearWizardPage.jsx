@@ -10,6 +10,8 @@ import {
   listWizardModels,
   deleteWizardModel,
   renameWizardModel,
+  getProjectNotes,
+  saveProjectNotes,
   mentorReview,
   mentorApply,
 } from "../api/wizard";
@@ -158,6 +160,9 @@ export default function LinearWizardPage() {
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const pendingOpenActionRef = useRef(null);
   const [projectNotes, setProjectNotes] = useState([]);
+  const [projectNotesLoading, setProjectNotesLoading] = useState(false);
+  const [projectNotesSaving, setProjectNotesSaving] = useState(false);
+  const [projectNotesError, setProjectNotesError] = useState(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteDraftFlags, setNoteDraftFlags] = useState({
     riziko: false,
@@ -237,6 +242,12 @@ export default function LinearWizardPage() {
       setHelpInsertTarget({ type: "process" });
     }
   }, [selectedLane]);
+
+  useEffect(() => {
+    if (notesOpen) {
+      void fetchProjectNotes();
+    }
+  }, [notesOpen]);
 
   useEffect(() => {
     if (!isResizingSidebar) return;
@@ -519,7 +530,40 @@ export default function LinearWizardPage() {
   const previewVersion = (processCard.processMeta?.version || "").trim();
   const previewVersionLabel = previewVersion ? `Verzia: ${previewVersion}` : "";
 
-  const addProjectNote = () => {
+  const fetchProjectNotes = async () => {
+    setProjectNotesLoading(true);
+    setProjectNotesError(null);
+    try {
+      const resp = await getProjectNotes();
+      setProjectNotes(resp?.notes || []);
+      setEditingNoteId(null);
+      setEditingNoteText("");
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa nacitat poznamky.";
+      setProjectNotesError(message);
+    } finally {
+      setProjectNotesLoading(false);
+    }
+  };
+
+  const persistProjectNotes = async (nextNotes) => {
+    setProjectNotes(nextNotes);
+    setProjectNotesSaving(true);
+    setProjectNotesError(null);
+    try {
+      const resp = await saveProjectNotes(nextNotes);
+      if (Array.isArray(resp?.notes)) {
+        setProjectNotes(resp.notes);
+      }
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa ulozit poznamky.";
+      setProjectNotesError(message);
+    } finally {
+      setProjectNotesSaving(false);
+    }
+  };
+
+  const addProjectNote = async () => {
     const text = noteDraft.trim();
     if (!text) return;
     const id = `note_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -530,7 +574,7 @@ export default function LinearWizardPage() {
       flags: { ...noteDraftFlags },
       createdAt: new Date().toISOString(),
     };
-    setProjectNotes((prev) => [next, ...prev]);
+    await persistProjectNotes([next, ...projectNotes]);
     setNoteDraft("");
     setNoteDraftFlags({ riziko: false, blokuje: false, doplnit: false });
   };
@@ -553,29 +597,28 @@ export default function LinearWizardPage() {
   };
 
   const updateProjectNote = (id, updates) => {
-    setProjectNotes((prev) =>
-      prev.map((note) => (note.id === id ? { ...note, ...updates } : note)),
-    );
+    const next = projectNotes.map((note) => (note.id === id ? { ...note, ...updates } : note));
+    void persistProjectNotes(next);
   };
 
   const toggleProjectNoteFlag = (id, flag, value) => {
-    setProjectNotes((prev) =>
-      prev.map((note) =>
-        note.id === id
-          ? {
-              ...note,
-              flags: {
-                ...note.flags,
-                [flag]: value,
-              },
-            }
-          : note,
-      ),
+    const next = projectNotes.map((note) =>
+      note.id === id
+        ? {
+            ...note,
+            flags: {
+              ...note.flags,
+              [flag]: value,
+            },
+          }
+        : note,
     );
+    void persistProjectNotes(next);
   };
 
   const removeProjectNote = (id) => {
-    setProjectNotes((prev) => prev.filter((note) => note.id !== id));
+    const next = projectNotes.filter((note) => note.id !== id);
+    void persistProjectNotes(next);
   };
 
   const viewerProps = useMemo(
@@ -1863,6 +1906,7 @@ export default function LinearWizardPage() {
                 </button>
               </div>
               <div className="project-notes-body">
+                {projectNotesError ? <div className="wizard-error">{projectNotesError}</div> : null}
                 <label className="wizard-field">
                   <span>Nová poznámka</span>
                   <textarea
@@ -1909,10 +1953,13 @@ export default function LinearWizardPage() {
                   <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
                     Pridať poznámku
                   </button>
+                  {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladám...</div> : null}
                 </div>
 
                 <div className="project-notes-list">
-                  {projectNotes.length === 0 ? (
+                  {projectNotesLoading ? (
+                    <div className="project-notes-empty">Načítavam poznámky...</div>
+                  ) : projectNotes.length === 0 ? (
                     <div className="project-notes-empty">
                       Zatiaľ žiadne poznámky. Pridaj prvú vyššie.
                     </div>

@@ -11,6 +11,10 @@ from services.model_storage import (
     load_model as storage_load_model,
     save_model as storage_save_model,
 )
+try:
+    from services.project_notes_storage import load_project_notes, save_project_notes
+except ModuleNotFoundError:
+    from backend.services.project_notes_storage import load_project_notes, save_project_notes
 from schemas.nl import NLProcess
 from routers.nl_router import simple_to_engine
 from schemas.engine import validate_payload, validate_xml
@@ -196,6 +200,21 @@ def rename_wizard_model(model_id: str, payload: dict = Body(...)):
         process_meta=existing.get("process_meta"),
     )
     return updated
+
+
+@router.get("/wizard/project-notes")
+def get_project_notes():
+    notes = load_project_notes()
+    return {"notes": notes}
+
+
+@router.put("/wizard/project-notes")
+def put_project_notes(payload: dict = Body(...)):
+    notes = payload.get("notes") if isinstance(payload, dict) else None
+    if not isinstance(notes, list):
+        raise HTTPException(status_code=400, detail="notes je povinne a musi byt list.")
+    saved = save_project_notes(notes)
+    return {"notes": saved}
 
 
 @router.post("/generate")
