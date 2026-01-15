@@ -399,6 +399,14 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
         idx for idx, node in enumerate(nodes) if node.get("laneId") == target_lane_id
     ]
     lane_nodes = [nodes[idx] for idx in lane_node_indices]
+    last_created_lane_id = None
+    for node in reversed(nodes):
+        node_id = node.get("id")
+        node_type = node.get("type")
+        if node_id and node_type:
+            last_created_lane_id = node.get("laneId")
+            break
+    align_global_x = bool(last_created_lane_id) and last_created_lane_id != target_lane_id
     end_node_id = None
     end_flow_id = None
     gateway_types = {
@@ -476,6 +484,9 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             include_lane_in_flow=False,
         )
         if new_nodes:
+            if align_global_x:
+                for node in new_nodes:
+                    node["_align_global_x"] = True
             nodes.extend(new_nodes)
             flows.extend(new_flows)
             prev_id = new_prev or prev_id
@@ -491,6 +502,9 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             include_lane_in_flow=False,
         )
         if new_nodes:
+            if align_global_x:
+                for node in new_nodes:
+                    node["_align_global_x"] = True
             nodes.extend(new_nodes)
             flows.extend(new_flows)
             prev_id = new_prev or prev_id
@@ -503,6 +517,8 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             "name": step,
             "laneId": target_lane_id,
         }
+        if align_global_x:
+            node_payload["_align_global_x"] = True
 
         nodes.append(node_payload)
         if prev_id:
@@ -870,6 +886,92 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         min_level = max(levels.get(pid, 0) + 1 for pid in preds if pid in levels)
         if min_level > levels[nid]:
             levels[nid] = min_level
+
+    align_nodes = [nid for nid, node in nodes_by_id.items() if node.get("_align_global_x")]
+    if align_nodes and levels:
+        neighbors: Dict[str, set[str]] = defaultdict(set)
+        for flow in flows:
+            src = _resolve_edge_endpoint(flow, ("source", "sourceRef", "sourceId"))
+            tgt = _resolve_edge_endpoint(flow, ("target", "targetRef", "targetId"))
+            if not src or not tgt:
+                continue
+            if src not in nodes_by_id or tgt not in nodes_by_id:
+                continue
+            neighbors[src].add(tgt)
+            neighbors[tgt].add(src)
+
+        component_id: Dict[str, int] = {}
+        components: List[set[str]] = []
+        for node_id in nodes_by_id:
+            if node_id in component_id:
+                continue
+            stack = [node_id]
+            component_nodes: set[str] = set()
+            while stack:
+                current = stack.pop()
+                if current in component_nodes:
+                    continue
+                component_nodes.add(current)
+                for nxt in neighbors.get(current, set()):
+                    if nxt not in component_nodes:
+                        stack.append(nxt)
+            comp_index = len(components)
+            for nid in component_nodes:
+                component_id[nid] = comp_index
+            components.append(component_nodes)
+
+        align_components = {component_id[nid] for nid in align_nodes if nid in component_id}
+        if align_components:
+            base_levels = [
+                lvl
+                for nid, lvl in levels.items()
+                if component_id.get(nid) not in align_components
+            ]
+            last_created_id = None
+            last_created_order = -1
+            for nid, order in node_order.items():
+                if component_id.get(nid) in align_components:
+                    continue
+                if order > last_created_order:
+                    last_created_order = order
+                    last_created_id = nid
+
+            for comp_index in align_components:
+                comp_nodes = components[comp_index]
+                base_max_level = (
+                    levels.get(last_created_id)
+                    if last_created_id and last_created_id in levels
+                    else None
+                )
+
+                if base_max_level is None and base_levels:
+                    base_max_level = max(base_levels)
+
+                if base_max_level is None:
+                    continue
+
+                target_start = base_max_level
+                min_level = min((levels.get(nid, 0) for nid in comp_nodes), default=0)
+                shift = target_start - min_level
+                if shift > 0:
+                    for nid in comp_nodes:
+                        levels[nid] = levels.get(nid, 0) + shift
+
+    if levels:
+        ordered_nodes = sorted(nodes_by_id, key=lambda nid: node_order.get(nid, 0))
+        running_max = None
+        for nid in ordered_nodes:
+            lvl = levels.get(nid, 0)
+            if running_max is None:
+                running_max = lvl
+            is_isolated = not incoming.get(nid) and not adjacency.get(nid)
+            if is_isolated and running_max is not None and lvl < running_max:
+                levels[nid] = running_max
+                lvl = running_max
+            if running_max is None:
+                running_max = lvl
+            else:
+                running_max = max(running_max, lvl)
 
     lane_offsets = {
         lane_id: float(BASE_LANE_X + LANE_CONTENT_PAD) for lane_id in ordered_lanes

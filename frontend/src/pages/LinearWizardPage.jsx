@@ -913,7 +913,38 @@ export default function LinearWizardPage() {
     });
   };
 
-  const computeLaneInsertPosition = (laneElement, shape, mode, firstNode, lastNode) => {
+  const getLastCreatedElement = (elementRegistry, engineJson) => {
+    const nodes = engineJson?.nodes || [];
+    for (let i = nodes.length - 1; i >= 0; i -= 1) {
+      const nodeId = nodes[i]?.id;
+      if (!nodeId) continue;
+      const element = elementRegistry?.get(nodeId);
+      if (element?.businessObject?.$instanceOf?.("bpmn:FlowNode")) {
+        return element;
+      }
+    }
+    return null;
+  };
+
+  const computeGlobalRightmost = (elementRegistry) => {
+    if (!elementRegistry) return null;
+    const allNodes = elementRegistry.getAll().filter((el) => {
+      if (!el || el.type === "label") return false;
+      const bo = el.businessObject;
+      return Boolean(bo?.$instanceOf?.("bpmn:FlowNode"));
+    });
+    if (!allNodes.length) return null;
+    return allNodes.reduce((max, node) => Math.max(max, node.x || 0), 0);
+  };
+
+  const computeLaneInsertPosition = (
+    laneElement,
+    shape,
+    mode,
+    firstNode,
+    lastNode,
+    globalRightmost,
+  ) => {
     const paddingX = 60;
     const paddingY = 30;
     const laneLeft = laneElement.x + paddingX;
@@ -928,6 +959,8 @@ export default function LinearWizardPage() {
       x = firstNode.x - shape.width - 60;
     } else if (lastNode) {
       x = lastNode.x + lastNode.width + 60;
+    } else if (typeof globalRightmost === "number") {
+      x = globalRightmost;
     }
 
     x = Math.min(laneRight, Math.max(laneLeft, x));
@@ -968,7 +1001,19 @@ export default function LinearWizardPage() {
     const firstNode = orderedNodes[0];
     const lastNode = orderedNodes[orderedNodes.length - 1];
     const shape = elementFactory.createShape({ type: activeLaneShape.bpmnType });
-    const position = computeLaneInsertPosition(laneElement, shape, activeLaneShape.id, firstNode, lastNode);
+    const lastCreatedElement = getLastCreatedElement(elementRegistry, engineJson);
+    const globalRightmost =
+      typeof lastCreatedElement?.x === "number"
+        ? lastCreatedElement.x
+        : computeGlobalRightmost(elementRegistry);
+    const position = computeLaneInsertPosition(
+      laneElement,
+      shape,
+      activeLaneShape.id,
+      firstNode,
+      lastNode,
+      globalRightmost,
+    );
     const created = modeling.createShape(shape, position, laneElement);
 
     if (name) {
