@@ -20,6 +20,7 @@ from .rule_seqflow_pool import check as rule_seqflow_pool
 from .rule_seqflow_subprocess import check as rule_seqflow_subprocess
 from .rule_subprocess_start_event import check as rule_subprocess_start_event
 from .rule_rightmost_end_event import check as rule_rightmost_end_event
+from .rule_text_annotation_empty import check as rule_text_annotation_empty
 
 RuleFunc = Callable[[Dict[str, object], object], List[object]]
 
@@ -38,6 +39,7 @@ RULES = [
     rule_lane_disconnected,
     rule_lane_missing_name,
     rule_rightmost_end_event,
+    rule_text_annotation_empty,
     rule_xor_outgoing_flow_names,
     rule_activity_is_isolated,
     rule_activity_name,

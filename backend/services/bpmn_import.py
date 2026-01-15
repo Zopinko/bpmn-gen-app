@@ -54,6 +54,7 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         "exclusiveGateway": "exclusiveGateway",
         "parallelGateway": "parallelGateway",
         "inclusiveGateway": "inclusiveGateway",
+        "textAnnotation": "textAnnotation",
     }
 
     for child in process_el:
@@ -67,6 +68,11 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         node_name = child.get("name") or node_id
 
         meta: Dict[str, Any] | None = None
+        if tag == "textAnnotation":
+            text_el = child.find(".//{*}text")
+            text_value = (text_el.text or "").strip() if text_el is not None else ""
+            node_name = text_value
+            meta = {"note": "textAnnotation"}
         if node_type is None:
             node_type = "task"
             meta = {"original_tag": tag, "note": "unsupported element converted to task"}
@@ -80,6 +86,24 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         if meta:
             node_payload["meta"] = meta
 
+        nodes.append(node_payload)
+        nodes_by_id[node_id] = node_payload
+
+    for child in root.iter():
+        if _local(child.tag) != "textAnnotation":
+            continue
+        node_id = child.get("id")
+        if not node_id or node_id in nodes_by_id:
+            continue
+        text_el = child.find(".//{*}text")
+        text_value = (text_el.text or "").strip() if text_el is not None else ""
+        node_payload = {
+            "id": node_id,
+            "type": "textAnnotation",
+            "name": text_value,
+            "laneId": "",
+            "meta": {"note": "textAnnotation"},
+        }
         nodes.append(node_payload)
         nodes_by_id[node_id] = node_payload
 

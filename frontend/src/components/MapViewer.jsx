@@ -110,6 +110,8 @@ export default function MapViewer({
     let laneHandleOverlayIds = [];
     let contextPadOverlayId = null;
     let contextPadElement = null;
+    let contextPadContainer = null;
+    let contextPadSuppressed = false;
 
     const clearLaneHandles = () => {
       if (!overlays) return;
@@ -173,9 +175,23 @@ export default function MapViewer({
       );
     };
 
+    const suppressContextPad = () => {
+      contextPadSuppressed = true;
+      contextPadContainer?.classList.add("custom-context-pad--hidden");
+    };
+
+    const releaseContextPad = () => {
+      contextPadSuppressed = false;
+      contextPadContainer?.classList.remove("custom-context-pad--hidden");
+    };
+
     const updateContextPad = (element) => {
       if (!shouldShowContextPad(element)) {
         clearContextPad();
+        return;
+      }
+      if (contextPadElement === element && contextPadContainer) {
+        if (!contextPadSuppressed) releaseContextPad();
         return;
       }
       createContextPad(element);
@@ -186,13 +202,22 @@ export default function MapViewer({
       overlays.remove(contextPadOverlayId);
       contextPadOverlayId = null;
       contextPadElement = null;
+      contextPadContainer = null;
+      contextPadSuppressed = false;
     };
 
     const shouldShowContextPad = (element) => {
       if (!element || element.type === "label") return false;
       const boType = element.businessObject?.$type || "";
       if (!boType) return false;
-      if (boType === "bpmn:Process" || boType === "bpmn:Collaboration") return false;
+      if (
+        boType === "bpmn:Process" ||
+        boType === "bpmn:Collaboration" ||
+        boType === "bpmn:Participant" ||
+        boType === "bpmn:SequenceFlow"
+      ) {
+        return false;
+      }
       if (element === modeler.get("canvas")?.getRootElement()) return false;
       return true;
     };
@@ -208,7 +233,10 @@ export default function MapViewer({
       const boType = element.businessObject?.$type || "";
       const isLane = boType === "bpmn:Lane" || boType === "bpmn:Participant";
 
-      const makeButton = (title, iconClass, { onClick, onStart, className }) => {
+      contextPadContainer = container;
+      contextPadSuppressed = false;
+
+      const makeButton = (title, iconClass, { onClick, onStart, className, hideOnAction }) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = `custom-context-pad__btn${className ? ` ${className}` : ""}`;
@@ -217,18 +245,18 @@ export default function MapViewer({
         const icon = document.createElement("span");
         icon.className = `custom-context-pad__icon ${iconClass}`;
         btn.appendChild(icon);
-        if (onStart) {
-          btn.addEventListener("mousedown", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
+        const handlePointerDown = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (hideOnAction && onStart) {
+            suppressContextPad();
+          }
+          if (onStart) {
             onStart(event);
-          });
-          btn.addEventListener("touchstart", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onStart(event);
-          });
-        }
+          }
+        };
+        btn.addEventListener("mousedown", handlePointerDown);
+        btn.addEventListener("touchstart", handlePointerDown);
         if (onClick) {
           btn.addEventListener("click", (event) => {
             event.preventDefault();
@@ -273,23 +301,27 @@ export default function MapViewer({
         container.appendChild(
           makeButton("Add lane above", "bpmn-icon-lane-insert-above", {
             onClick: () => modeling.addLane(element, "top"),
+            hideOnAction: false,
           }),
         );
         container.appendChild(
           makeButton("Add lane below", "bpmn-icon-lane-insert-below", {
             onClick: () => modeling.addLane(element, "bottom"),
+            hideOnAction: false,
           }),
         );
         container.appendChild(
           makeButton("Potiahni pre presun", "bpmn-icon-hand-tool", {
             onStart: (event) => startLaneDrag?.(event),
             className: "custom-context-pad__btn--drag",
+            hideOnAction: true,
           }),
         );
       } else {
         container.appendChild(
           makeButton("Connect", "bpmn-icon-connection-multi", {
             onStart: (event) => connect.start(event, element),
+            hideOnAction: true,
           }),
         );
 
@@ -306,6 +338,7 @@ export default function MapViewer({
               const y = (element.y || 0) + ((element.height || 0) / 2) - 39;
               modeling.createShape(shape, { x, y }, parent);
             },
+            hideOnAction: false,
           }),
         );
 
@@ -315,12 +348,14 @@ export default function MapViewer({
               const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
               create.start(event, shape, { source: element });
             },
+            hideOnAction: true,
           }),
         );
 
         container.appendChild(
           makeButton("Delete", "bpmn-icon-trash", {
             onClick: () => modeling.removeElements([element]),
+            hideOnAction: false,
           }),
         );
       }
@@ -515,6 +550,14 @@ export default function MapViewer({
       eventBus.on("shape.move.end", stopGhostStyling);
       eventBus.on("shape.move.cancel", stopGhostStyling);
       eventBus.on("shape.move.end", handleLaneMoveEnd);
+      eventBus.on("connect.start", suppressContextPad);
+      eventBus.on("connect.end", releaseContextPad);
+      eventBus.on("connect.cancel", releaseContextPad);
+      eventBus.on("connect.cleanup", releaseContextPad);
+      eventBus.on("create.start", suppressContextPad);
+      eventBus.on("create.end", releaseContextPad);
+      eventBus.on("create.cancel", releaseContextPad);
+      eventBus.on("create.cleanup", releaseContextPad);
       eventBus.on("shape.resize.start", startGhostStyling);
       eventBus.on("shape.resize.move", startGhostStyling);
       eventBus.on("shape.resize.end", stopGhostStyling);
@@ -535,6 +578,14 @@ export default function MapViewer({
         eventBus.off("shape.move.end", stopGhostStyling);
         eventBus.off("shape.move.cancel", stopGhostStyling);
         eventBus.off("shape.move.end", handleLaneMoveEnd);
+        eventBus.off("connect.start", suppressContextPad);
+        eventBus.off("connect.end", releaseContextPad);
+        eventBus.off("connect.cancel", releaseContextPad);
+        eventBus.off("connect.cleanup", releaseContextPad);
+        eventBus.off("create.start", suppressContextPad);
+        eventBus.off("create.end", releaseContextPad);
+        eventBus.off("create.cancel", releaseContextPad);
+        eventBus.off("create.cleanup", releaseContextPad);
         eventBus.off("shape.resize.start", startGhostStyling);
         eventBus.off("shape.resize.move", startGhostStyling);
         eventBus.off("shape.resize.end", stopGhostStyling);

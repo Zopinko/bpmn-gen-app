@@ -24,34 +24,47 @@ SCHEMA = {
         "nodes": {
             "type": "array",
             "items": {
-                "type": "object",
-                "required": ["id", "type", "laneId", "name"],
-                "properties": {
-                    "id": {"type": "string", "minLength": 1},
-                    # podporíme aj generický "gateway" + gatewayType,
-                    # aj priame BPMN typy pre spätnú kompatibilitu
-                    "type": {
-                        "type": "string",
-                        "enum": [
-                            "startEvent",
-                            "endEvent",
-                            "task",
-                            "userTask",
-                            "serviceTask",
-                            "gateway",  # nový generický
-                            "exclusiveGateway",
-                            "parallelGateway",
-                            "inclusiveGateway",  # priame typy
-                        ],
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "required": ["id", "type", "laneId", "name"],
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "startEvent",
+                                    "endEvent",
+                                    "task",
+                                    "userTask",
+                                    "serviceTask",
+                                    "gateway",
+                                    "exclusiveGateway",
+                                    "parallelGateway",
+                                    "inclusiveGateway",
+                                ],
+                            },
+                            "gatewayType": {
+                                "type": "string",
+                                "enum": ["exclusive", "parallel", "inclusive"],
+                            },
+                            "laneId": {"type": "string", "minLength": 1},
+                            "name": {"type": "string", "minLength": 1},
+                        },
+                        "additionalProperties": True,
                     },
-                    "gatewayType": {
-                        "type": "string",
-                        "enum": ["exclusive", "parallel", "inclusive"],
+                    {
+                        "type": "object",
+                        "required": ["id", "type", "laneId", "name"],
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "type": {"type": "string", "enum": ["textAnnotation"]},
+                            "laneId": {"type": "string", "minLength": 1},
+                            "name": {"type": "string"},
+                        },
+                        "additionalProperties": True,
                     },
-                    "laneId": {"type": "string", "minLength": 1},
-                    "name": {"type": "string", "minLength": 1},
-                },
-                "additionalProperties": True,
+                ],
             },
         },
         "flows": {

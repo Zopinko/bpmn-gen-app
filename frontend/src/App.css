@@ -648,6 +648,13 @@ body {
   background: rgba(17, 24, 39, 0.92);
   border: 1px solid rgba(51, 65, 85, 0.8);
   box-shadow: 0 10px 18px rgba(0, 0, 0, 0.3);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.custom-context-pad--hidden {
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
 }
 
 .custom-context-pad__btn {

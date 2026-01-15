@@ -728,6 +728,14 @@ export default function LinearWizardPage() {
   const handleGenerate = async () => {
     setError(null);
     setInfo(null);
+    if (engineJson) {
+      const proceed = window.confirm(
+        "Model uz mas vytvoreny. Chces ho naozaj vygenerovat znova?",
+      );
+      if (!proceed) {
+        return;
+      }
+    }
     setIsLoading(true);
     try {
       if (engineJson && xml && !undoInProgressRef.current) {
@@ -1372,9 +1380,28 @@ export default function LinearWizardPage() {
     setMentorError(null);
     setMentorStatus(null);
     try {
+      let currentEngine = engineJson;
+      const modeler = modelerRef.current;
+      if (modeler?.saveXML) {
+        try {
+          const { xml: diagramXml } = await modeler.saveXML({ format: true });
+          if (diagramXml && diagramXml.trim()) {
+            const file = new File([diagramXml], "diagram.bpmn", {
+              type: "application/bpmn+xml",
+            });
+            const importResp = await importBpmn(file);
+            const importedEngine = importResp?.engine_json || importResp;
+            if (importedEngine) {
+              currentEngine = importedEngine;
+            }
+          }
+        } catch {
+          // Keep current engine_json if sync fails.
+        }
+      }
       const payload = {
         text: buildMentorText(),
-        engine_json: engineJson,
+        engine_json: currentEngine,
         kb_version: null,
         telemetry: null,
         telemetry_id: null,
@@ -1385,7 +1412,7 @@ export default function LinearWizardPage() {
       setMentorDoneIds([]);
       setMentorAppliedIds([]);
       setMentorLastRunAt(Date.now());
-      mentorReviewedEngineRef.current = engineJson;
+      mentorReviewedEngineRef.current = currentEngine;
       setMentorStale(false);
       const meta = response?.meta || {};
       const nodes = meta?.node_count ?? "?";
