@@ -394,17 +394,7 @@ export default function LinearWizardPage() {
   };
 
   const insertHelpExample = (text) => {
-    if (helpInsertTarget?.type === "lane") {
-      setLaneDescription((prev) => appendLine(prev, text));
-    } else {
-      setProcessCard((prev) => ({
-        ...prev,
-        generatorInput: {
-          ...prev.generatorInput,
-          mainSteps: appendLine(prev.generatorInput.mainSteps, text),
-        },
-      }));
-    }
+    setLaneDescription((prev) => appendLine(prev, text));
   };
 
   const buildHelpTemplate = (rule) => {
@@ -1364,8 +1354,6 @@ export default function LinearWizardPage() {
 
   const buildMentorText = () => {
     const parts = [];
-    const mainSteps = processCard.generatorInput.mainSteps?.trim();
-    if (mainSteps) parts.push(mainSteps);
     const laneText = laneDescription.trim();
     if (laneText) parts.push(laneText);
     return parts.join("\n");
@@ -1737,15 +1725,6 @@ export default function LinearWizardPage() {
                       onChange={(e) => updateGeneratorInput("input", e.target.value)}
                       rows={2}
                       placeholder="Zoznam vstupov pre proces"
-                    />
-                  </label>
-                  <label className="wizard-field">
-                    <span>Hlavné kroky procesu</span>
-                    <textarea
-                      value={generatorInput.mainSteps}
-                      onChange={(e) => updateGeneratorInput("mainSteps", e.target.value)}
-                      rows={4}
-                      placeholder={"Krok 1\nKrok 2\nKrok 3"}
                     />
                   </label>
                   <label className="wizard-field">

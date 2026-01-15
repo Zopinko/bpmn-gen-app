@@ -1699,7 +1699,7 @@ body {
 
 .wizard-lane-panel__content {
   display: grid;
-  grid-template-columns: minmax(0, 65fr) minmax(0, 35fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
