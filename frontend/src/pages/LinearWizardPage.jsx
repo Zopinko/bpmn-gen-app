@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapViewer from "../components/MapViewer";
+import { useHeaderStepper } from "../components/HeaderStepperContext";
 import {
   appendLaneFromDescription,
   generateLinearWizardDiagram,
@@ -164,6 +165,81 @@ const splitLines = (text) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+const normalizeAscii = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const analyzeLaneLine = (lineText) => {
+  const raw = String(lineText || "");
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const ascii = normalizeAscii(trimmed);
+  const isXor = /^(ak|ked)\b/.test(ascii);
+  const isAnd = /^(paralelne|zaroven|sucasne)\b/.test(ascii);
+  const hasTak = /\btak\b/.test(ascii);
+  const hasInak = /\binak\b/.test(ascii);
+
+  if (isXor) {
+    let warning = "";
+    if (!hasTak || !hasInak) {
+      warning = "Dopln format: 'tak' aj 'inak'.";
+    }
+    return {
+      type: "xor",
+      badge: "XOR",
+      hint: "XOR gateway: Ak <podmienka> tak <krok>, inak <krok/koniec>.",
+      warning,
+    };
+  }
+
+  if (isAnd) {
+    const parts = ascii.replace(/^paralelne:?/, "").replace(/^zaroven/, "").replace(/^sucasne/, "");
+    let stepCount = 0;
+    if (ascii.startsWith("paralelne")) {
+      stepCount = parts
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean).length;
+    } else {
+      stepCount = parts
+        .split(/,|\ba\b/)
+        .map((part) => part.trim())
+        .filter(Boolean).length;
+    }
+    const warning = stepCount < 2 ? "Pridaj aspon 2 kroky (oddelenie ; alebo , a ...)." : "";
+    return {
+      type: "and",
+      badge: "AND",
+      hint: "AND gateway: Paralelne: <krok>; <krok> alebo Zaroven <krok>, <krok> a <krok>.",
+      warning,
+    };
+  }
+
+  return {
+    type: "task",
+    badge: "TASK",
+    hint: "Toto bude aktivita (task) v lane.",
+    warning: "",
+  };
+};
+
+const analyzeLaneLines = (text) =>
+  (text || "")
+    .split(/\r?\n/)
+    .map((line, idx) => {
+      const analysis = analyzeLaneLine(line);
+      if (!analysis) return null;
+      return {
+        id: `${idx}-${line.length}`,
+        lineNumber: idx + 1,
+        text: line.trim(),
+        ...analysis,
+      };
+    })
+    .filter(Boolean);
+
 const mapGeneratorInputToPayload = (generatorInput) => {
   const roles = splitLines(generatorInput.roles);
   const steps = splitLines(generatorInput.mainSteps);
@@ -180,6 +256,7 @@ const mapGeneratorInputToPayload = (generatorInput) => {
 
 export default function LinearWizardPage() {
   const fileInputRef = useRef(null);
+  const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [engineJson, setEngineJson] = useState(null);
@@ -222,6 +299,7 @@ export default function LinearWizardPage() {
   const [mentorApplyingId, setMentorApplyingId] = useState(null);
   const [mentorStatus, setMentorStatus] = useState(null);
   const [mentorStale, setMentorStale] = useState(false);
+  const [mentorLastRunAt, setMentorLastRunAt] = useState(null);
   const mentorHighlightRef = useRef(null);
   const mentorReviewedEngineRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
@@ -236,6 +314,8 @@ export default function LinearWizardPage() {
     blokuje: false,
     doplnit: false,
   });
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [lastExportedAt, setLastExportedAt] = useState(null);
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingNoteText, setEditingNoteText] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
@@ -257,12 +337,44 @@ export default function LinearWizardPage() {
   );
   const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
   const [helpMode, setHelpMode] = useState("inline");
+  const laneHelperItems = useMemo(() => analyzeLaneLines(laneDescription), [laneDescription]);
 
   useEffect(() => {
     if (!selectedLane) {
       setLaneInsertOpen(false);
     }
   }, [selectedLane]);
+
+  const headerStepperState = useMemo(
+    () => ({
+      processName:
+        (processCard.generatorInput.processName || "").trim() ||
+        engineJson?.processName ||
+        engineJson?.name ||
+        "",
+      lanes: engineJson?.lanes || [],
+      nodes: engineJson?.nodes || [],
+      flows: engineJson?.flows || [],
+      mentorNotes,
+      mentorLastRunAt,
+      lastSavedAt,
+      lastExportedAt,
+    }),
+    [
+      engineJson,
+      lastExportedAt,
+      lastSavedAt,
+      mentorLastRunAt,
+      mentorNotes,
+      processCard.generatorInput.processName,
+    ],
+  );
+
+  useEffect(() => {
+    setHeaderStepperState(headerStepperState);
+  }, [headerStepperState, setHeaderStepperState]);
+
+  useEffect(() => () => setHeaderStepperState(null), [setHeaderStepperState]);
 
   const updateGeneratorInput = (field, value) =>
     setProcessCard((prev) => ({
@@ -432,6 +544,9 @@ export default function LinearWizardPage() {
     setMentorError(null);
     setMentorApplyingId(null);
     setMentorStatus(null);
+    setMentorLastRunAt(null);
+    setLastSavedAt(null);
+    setLastExportedAt(null);
     historyRef.current = [];
     setHistoryCount(0);
   };
@@ -938,6 +1053,7 @@ export default function LinearWizardPage() {
         process_meta: processCard.processMeta,
       };
       await saveWizardModel(payload);
+      setLastSavedAt(Date.now());
       setInfo("Model bol zmazany.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa zmazat model.";
@@ -1136,6 +1252,7 @@ export default function LinearWizardPage() {
         generator_input: processCard.generatorInput,
         process_meta: processCard.processMeta,
       });
+      setLastExportedAt(Date.now());
 
       const safeName = (name || "process").replace(/[^\w.-]+/g, "_").replace(/_+/g, "_");
       const filename = `${safeName || "process"}.bpmn`;
@@ -1222,6 +1339,7 @@ export default function LinearWizardPage() {
       setMentorNotes(findings);
       setMentorDoneIds([]);
       setMentorAppliedIds([]);
+      setMentorLastRunAt(Date.now());
       mentorReviewedEngineRef.current = engineJson;
       setMentorStale(false);
       const meta = response?.meta || {};
@@ -2087,47 +2205,30 @@ export default function LinearWizardPage() {
               </button>
                 </div>
                 <div className="wizard-lane-panel__left">
-<div className="wizard-lane-insert">
-                <div className="wizard-lane-insert__title">Pridat tvar</div>
-                <div className="wizard-shape-body">
-                  <div className="wizard-shape-list">
-                    {laneShapeOptions.map((shape) => (
-                      <button
-                        key={shape.id}
-                        type="button"
-                        className={`wizard-shape-item${laneInsertType === shape.id ? " is-active" : ""}`}
-                        onClick={() => setLaneInsertType(shape.id)}
-                      >
-                        {shape.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="wizard-shape-form">
-                    <label className="wizard-field">
-                      <span>{activeLaneShape?.nameLabel || "Nazov"}</span>
-                      <input
-                        type="text"
-                        value={laneInsertName}
-                        onChange={(e) => updateLaneInsertName(e.target.value)}
-                        placeholder={activeLaneShape?.namePlaceholder || ""}
-                      />
-                    </label>
-                    {activeLaneShape?.helper ? (
-                      <div className="wizard-shape-helper">{activeLaneShape.helper}</div>
-                    ) : null}
-                    <div className="wizard-shape-actions">
-                      <button
-                        className="btn btn-primary"
-                        type="button"
-                        onClick={handleLaneShapeCreate}
-                        disabled={!canCreateLaneShape}
-                      >
-                        Pridat tvar
-                      </button>
+                  {laneHelperItems.length ? (
+                    <div className="lane-helper">
+                      <div className="lane-helper__title">Pomocnik pri zadavani</div>
+                      <div className="lane-helper__list">
+                        {laneHelperItems.map((item) => (
+                          <div key={item.id} className={`lane-helper__row lane-helper__row--${item.type}`}>
+                            <div className="lane-helper__badge">{item.badge}</div>
+                            <div className="lane-helper__content">
+                              <div className="lane-helper__line">
+                                <span className="lane-helper__label">Riadok {item.lineNumber}:</span> {item.text}
+                              </div>
+                              <div className="lane-helper__hint">{item.hint}</div>
+                              {item.warning ? <div className="lane-helper__warning">{item.warning}</div> : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </div>
+                  ) : (
+                    <div className="lane-helper">
+                      <div className="lane-helper__title">Pomocnik pri zadavani</div>
+                      <div className="lane-helper__hint">Napis krok a ja ti ukazem, ci to bude task alebo gateway.</div>
+                    </div>
+                  )}
                 </div>
               </div>
 

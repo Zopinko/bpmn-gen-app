@@ -3,9 +3,12 @@ import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
 import AiModeSwitch from "./components/AiModeSwitch";
 import OverlayLegend from "./components/OverlayLegend";
 import MapViewer from "./components/MapViewer";
+import HeaderStepper from "./components/HeaderStepper";
+import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { useDualMap } from "./hooks/useDualMap";
 import LinearWizardPage from "./pages/LinearWizardPage";
 import "./App.css";
+import flowmateLogo from "./assets/LOGO1short1.svg";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const DEFAULT_TEXT =
@@ -325,9 +328,15 @@ function GeneratorPage() {
 function App() {
   return (
     <BrowserRouter>
+      <HeaderStepperProvider>
       <div className="app-shell">
         <header className="app-nav">
-          <div className="app-nav__brand">BPMN.GEN</div>
+          <div className="app-nav__left">
+          <div className="app-nav__brand">
+            <img src={flowmateLogo} alt="Flowmate" className="app-nav__logo" />
+          </div>
+          <HeaderStepper />
+          </div>
           <nav className="app-nav__links">
             <Link to="/text" className="app-nav__link">
               Text → mapa
@@ -346,8 +355,11 @@ function App() {
           </Routes>
         </main>
       </div>
+      </HeaderStepperProvider>
     </BrowserRouter>
   );
 }
 
 export default App;
+
+

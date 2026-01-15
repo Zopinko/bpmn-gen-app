@@ -12,6 +12,7 @@ from .rule_gateway_is_redundant import check as rule_gateway_is_redundant
 from .rule_gateway_mixed import check as rule_gateway_mixed
 from .rule_gateway_requires_incoming import check as rule_gateway_requires_incoming
 from .rule_lane_empty import check as rule_lane_empty
+from .rule_lane_missing_name import check as rule_lane_missing_name
 from .rule_xor_outgoing_flow_names import check as rule_xor_outgoing_flow_names
 from .rule_message_flow_pools import check as rule_message_flow_pools
 from .rule_seqflow_pool import check as rule_seqflow_pool
@@ -32,6 +33,7 @@ RULES = [
     rule_gateway_is_redundant,
     rule_gateway_requires_incoming,
     rule_lane_empty,
+    rule_lane_missing_name,
     rule_xor_outgoing_flow_names,
     rule_activity_is_isolated,
     rule_activity_name,

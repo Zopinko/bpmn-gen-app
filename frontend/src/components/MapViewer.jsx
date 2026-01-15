@@ -51,6 +51,7 @@ export default function MapViewer({
   const skipDiagramChangeRef = useRef(false);
   const laneHandleOverlayIdsRef = useRef([]);
   const laneHandleMapRef = useRef(new Map());
+  const laneDragStartMapRef = useRef(new Map());
   const annotationOverlayIdsRef = useRef([]);
   const laneDragStateRef = useRef({
     active: false,
@@ -88,6 +89,8 @@ export default function MapViewer({
   useEffect(() => {
     const modeler = new BpmnModeler({
       container: containerRef.current,
+      palette: { enabled: false },
+      contextPad: { enabled: false },
     });
     modelerRef.current = modeler;
 
@@ -97,8 +100,16 @@ export default function MapViewer({
 
     const eventBus = modeler.get("eventBus");
     const overlays = modeler.get("overlays");
+    const elementRegistry = modeler.get("elementRegistry");
+    const modeling = modeler.get("modeling");
+    const connect = modeler.get("connect");
+    const create = modeler.get("create");
+    const elementFactory = modeler.get("elementFactory");
+    const autoPlace = modeler.get("autoPlace", false);
 
     let laneHandleOverlayIds = [];
+    let contextPadOverlayId = null;
+    let contextPadElement = null;
 
     const clearLaneHandles = () => {
       if (!overlays) return;
@@ -162,6 +173,165 @@ export default function MapViewer({
       );
     };
 
+    const updateContextPad = (element) => {
+      if (!shouldShowContextPad(element)) {
+        clearContextPad();
+        return;
+      }
+      createContextPad(element);
+    };
+
+    const clearContextPad = () => {
+      if (!overlays || contextPadOverlayId === null) return;
+      overlays.remove(contextPadOverlayId);
+      contextPadOverlayId = null;
+      contextPadElement = null;
+    };
+
+    const shouldShowContextPad = (element) => {
+      if (!element || element.type === "label") return false;
+      const boType = element.businessObject?.$type || "";
+      if (!boType) return false;
+      if (boType === "bpmn:Process" || boType === "bpmn:Collaboration") return false;
+      if (element === modeler.get("canvas")?.getRootElement()) return false;
+      return true;
+    };
+
+    const createContextPad = (element) => {
+      if (!overlays || !element) return;
+      if (contextPadElement === element) return;
+
+      clearContextPad();
+
+      const container = document.createElement("div");
+      container.className = "custom-context-pad";
+      const boType = element.businessObject?.$type || "";
+      const isLane = boType === "bpmn:Lane" || boType === "bpmn:Participant";
+
+      const makeButton = (title, iconClass, { onClick, onStart, className }) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `custom-context-pad__btn${className ? ` ${className}` : ""}`;
+        btn.title = title;
+        btn.setAttribute("aria-label", title);
+        const icon = document.createElement("span");
+        icon.className = `custom-context-pad__icon ${iconClass}`;
+        btn.appendChild(icon);
+        if (onStart) {
+          btn.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStart(event);
+          });
+          btn.addEventListener("touchstart", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onStart(event);
+          });
+        }
+        if (onClick) {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick(event);
+          });
+        }
+        return btn;
+      };
+
+      if (isLane) {
+        const laneName = element.businessObject?.name || element.businessObject?.id || "";
+        const startLaneDrag = laneDragStartMapRef.current.get(element.id);
+
+        const moveLane = (delta) => {
+          if (!elementRegistry || !laneName) return;
+          const handler = laneOrderChangeRef.current;
+          if (typeof handler !== "function") return;
+          const lanes = elementRegistry
+            .getAll()
+            .filter((el) => el.businessObject?.$type === "bpmn:Lane");
+          if (!lanes.length) return;
+          const ordered = lanes
+            .map((lane) => ({
+              name: lane.businessObject?.name || lane.businessObject?.id || "",
+              y: typeof lane.y === "number" ? lane.y : 0,
+            }))
+            .filter((entry) => entry.name)
+            .sort((a, b) => a.y - b.y);
+          const names = ordered.map((entry) => entry.name);
+          const index = names.findIndex((name) => name === laneName);
+          const nextIndex = index + delta;
+          if (index < 0 || nextIndex < 0 || nextIndex >= names.length) return;
+          const next = [...names];
+          [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+          const key = next.join("|");
+          if (key === lastLaneOrderRef.current) return;
+          lastLaneOrderRef.current = key;
+          handler(next);
+        };
+
+        container.appendChild(
+          makeButton("Add lane above", "bpmn-icon-lane-insert-above", {
+            onClick: () => modeling.addLane(element, "top"),
+          }),
+        );
+        container.appendChild(
+          makeButton("Add lane below", "bpmn-icon-lane-insert-below", {
+            onClick: () => modeling.addLane(element, "bottom"),
+          }),
+        );
+        container.appendChild(
+          makeButton("Potiahni pre presun", "bpmn-icon-hand-tool", {
+            onStart: (event) => startLaneDrag?.(event),
+            className: "custom-context-pad__btn--drag",
+          }),
+        );
+      } else {
+        container.appendChild(
+          makeButton("Connect", "bpmn-icon-connection-multi", {
+            onStart: (event) => connect.start(event, element),
+          }),
+        );
+
+        container.appendChild(
+          makeButton("Task", "bpmn-icon-task", {
+            onClick: () => {
+              const shape = elementFactory.createShape({ type: "bpmn:Task", width: 190, height: 78 });
+              if (autoPlace && typeof autoPlace.append === "function") {
+                autoPlace.append(element, shape);
+                return;
+              }
+              const parent = element.parent || element;
+              const x = (element.x || 0) + (element.width || 0) + 80;
+              const y = (element.y || 0) + ((element.height || 0) / 2) - 39;
+              modeling.createShape(shape, { x, y }, parent);
+            },
+          }),
+        );
+
+        container.appendChild(
+          makeButton("Text annotation", "bpmn-icon-text-annotation", {
+            onStart: (event) => {
+              const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
+              create.start(event, shape, { source: element });
+            },
+          }),
+        );
+
+        container.appendChild(
+          makeButton("Delete", "bpmn-icon-trash", {
+            onClick: () => modeling.removeElements([element]),
+          }),
+        );
+      }
+
+      contextPadOverlayId = overlays.add(element, "custom-context-pad", {
+        position: { top: isLane ? 6 : -8, right: isLane ? 6 : -8 },
+        html: container,
+      });
+      contextPadElement = element;
+    };
+
     const hideLaneHandles = () => {
       laneHandleMapRef.current.forEach((handle) => {
         handle.style.display = "none";
@@ -181,6 +351,7 @@ export default function MapViewer({
 
       // always remove previous handles
       clearLaneHandles();
+      updateContextPad(element);
 
       const boType = element.businessObject && element.businessObject.$type;
       if (boType === "bpmn:Lane" || boType === "bpmn:Participant") {
@@ -200,6 +371,7 @@ export default function MapViewer({
 
     const handleCanvasClick = () => {
       clearLaneHandles();
+      clearContextPad();
       if (typeof onLaneSelect === "function") {
         onLaneSelect(null);
       }
@@ -373,6 +545,7 @@ export default function MapViewer({
         eventBus.off("commandStack.changed", handleDiagramChanged);
       }
       clearLaneHandles();
+      clearContextPad();
       stopGhostStyling();
       hideLaneHandles();
       if (changeTimerRef.current) {
@@ -435,6 +608,7 @@ export default function MapViewer({
         laneHandleOverlayIdsRef.current.forEach((id) => overlays.remove(id));
         laneHandleOverlayIdsRef.current = [];
         laneHandleMapRef.current.clear();
+        laneDragStartMapRef.current.clear();
       }
       return;
     }
@@ -600,13 +774,15 @@ export default function MapViewer({
           hint.textContent = "Potiahni pre presun";
           handle.appendChild(title);
           handle.appendChild(hint);
-          handle.addEventListener("mousedown", beginLaneDrag(laneName));
+          const dragStart = beginLaneDrag(laneName);
+          handle.addEventListener("mousedown", dragStart);
           const id = overlays.add(lane, {
             position: { top: 6, left: 6 },
             html: handle,
           });
           laneHandleOverlayIdsRef.current.push(id);
           laneHandleMapRef.current.set(laneId, handle);
+          laneDragStartMapRef.current.set(laneId, dragStart);
         });
         if (!lanes.length && laneHandleOverlayIdsRef.current.length) {
           cleanupDrag();
