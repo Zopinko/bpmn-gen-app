@@ -1,28 +1,33 @@
 const STEPS = [
   {
     id: "basic",
-    label: "Základ",
-    tooltip: "Názov procesu, lanes a spúšťač.",
+    label: "Zaklad",
+    tooltip: "Nazov procesu, lanes a spustac.",
   },
   {
     id: "flow",
     label: "Tok procesu",
-    tooltip: "Vytvor základný tok, aby mapa mala kostru.",
+    tooltip: "Vytvor zakladny tok, aby mapa mala kostru.",
   },
   {
     id: "activities",
     label: "Aktivity",
-    tooltip: "Doplň úlohy a rozhodnutia do lanes.",
+    tooltip: "Dopln ulohy a rozhodnutia do lanes.",
   },
   {
     id: "review",
     label: "Kontrola",
-    tooltip: "Spusti mentora a oprav zistené problémy.",
+    tooltip: "Spusti mentora a oprav zistene problemy.",
+  },
+  {
+    id: "story",
+    label: "Kontrola pribehu",
+    tooltip: "Skontroluj pribeh procesu v ludskej reci.",
   },
   {
     id: "done",
     label: "Hotovo",
-    tooltip: "Ulož alebo exportuj hotový model.",
+    tooltip: "Uloz alebo exportuj hotovy model.",
   },
 ];
 
@@ -51,9 +56,10 @@ export function computeHeaderStepperSteps(appState) {
   const step2Done = (hasStartNode(nodes) && flows.length > 0) || nodes.length > 0;
   const step3Done = countTasks(nodes) >= 2;
   const step4Done = mentorRun || (!hasHardFindings && mentorNotes.length > 0);
-  const step5Done = Boolean(state.lastSavedAt || state.lastExportedAt || state.validationPassed);
+  const step5Done = Boolean(state.storyGeneratedAt || state.storyCheckedAt);
+  const step6Done = Boolean(state.lastSavedAt || state.lastExportedAt || state.validationPassed);
 
-  const doneFlags = [step1Done, step2Done, step3Done, step4Done, step5Done];
+  const doneFlags = [step1Done, step2Done, step3Done, step4Done, step5Done, step6Done];
   let activeIndex = doneFlags.findIndex((done) => !done);
   if (activeIndex === -1) {
     activeIndex = doneFlags.length - 1;

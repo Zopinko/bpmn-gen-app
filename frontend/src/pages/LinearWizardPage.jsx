@@ -16,6 +16,7 @@ import {
   mentorReview,
   mentorApply,
 } from "../api/wizard";
+import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
 
 const HELP_RULES = [
   {
@@ -285,6 +286,11 @@ export default function LinearWizardPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
   const [mentorOpen, setMentorOpen] = useState(false);
+  const [storyOpen, setStoryOpen] = useState(false);
+  const [storyOptions, setStoryOptions] = useState(() => createDefaultProcessStoryOptions());
+  const [storyDoc, setStoryDoc] = useState(null);
+  const [storyStale, setStoryStale] = useState(false);
+  const [storyGeneratedAt, setStoryGeneratedAt] = useState(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
   const [sidebarWidth, setSidebarWidth] = useState(640);
@@ -302,6 +308,7 @@ export default function LinearWizardPage() {
   const [mentorLastRunAt, setMentorLastRunAt] = useState(null);
   const mentorHighlightRef = useRef(null);
   const mentorReviewedEngineRef = useRef(null);
+  const storyEngineRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const pendingOpenActionRef = useRef(null);
   const [projectNotes, setProjectNotes] = useState([]);
@@ -340,6 +347,15 @@ export default function LinearWizardPage() {
   const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
   const [helpMode, setHelpMode] = useState("inline");
   const laneHelperItems = useMemo(() => analyzeLaneLines(laneDescription), [laneDescription]);
+  const startOptions = useMemo(() => {
+    const nodes = engineJson?.nodes || [];
+    const starts = nodes.filter((node) => String(node?.type || "").toLowerCase().includes("start"));
+    const sorted = [...starts].sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || "")));
+    return sorted.map((node, idx) => ({
+      id: node.id,
+      label: (String(node?.name || "").trim() || `Start ${idx + 1}`),
+    }));
+  }, [engineJson]);
 
   useEffect(() => {
     if (!selectedLane) {
@@ -361,11 +377,13 @@ export default function LinearWizardPage() {
       mentorLastRunAt,
       lastSavedAt,
       lastExportedAt,
+      storyGeneratedAt,
     }),
     [
       engineJson,
       lastExportedAt,
       lastSavedAt,
+      storyGeneratedAt,
       mentorLastRunAt,
       mentorNotes,
       processCard.generatorInput.processName,
@@ -377,6 +395,150 @@ export default function LinearWizardPage() {
   }, [headerStepperState, setHeaderStepperState]);
 
   useEffect(() => () => setHeaderStepperState(null), [setHeaderStepperState]);
+
+  const updateStoryOption = (key, value) =>
+    setStoryOptions((prev) => {
+      const next = { ...prev, [key]: value };
+      if (storyOpen && engineJson) {
+        const doc = generateProcessStory(engineJson, next);
+        setStoryDoc(doc);
+        setStoryGeneratedAt(new Date().toISOString());
+        setStoryStale(false);
+        storyEngineRef.current = engineJson;
+      }
+      return next;
+    });
+
+  const regenerateStory = useCallback(() => {
+    if (!engineJson) {
+      setStoryDoc(null);
+      setStoryGeneratedAt(null);
+      setStoryStale(false);
+      storyEngineRef.current = null;
+      return;
+    }
+    const doc = generateProcessStory(engineJson, storyOptions);
+    setStoryDoc(doc);
+    setStoryGeneratedAt(new Date().toISOString());
+    setStoryStale(false);
+    storyEngineRef.current = engineJson;
+  }, [engineJson, storyOptions]);
+
+  useEffect(() => {
+    if (storyOpen && engineJson && !storyDoc) {
+      regenerateStory();
+    }
+  }, [engineJson, regenerateStory, storyDoc, storyOpen]);
+
+  useEffect(() => {
+    if (!engineJson || startOptions.length === 0) return;
+    const selected = storyOptions.selectedStartId;
+    const exists = startOptions.some((opt) => opt.id === selected);
+    if (!exists) {
+      setStoryOptions((prev) => ({
+        ...prev,
+        selectedStartId: startOptions[0].id,
+      }));
+    }
+  }, [engineJson, startOptions, storyOptions.selectedStartId]);
+
+  useEffect(() => {
+    if (engineJson) return;
+    setStoryDoc(null);
+    setStoryGeneratedAt(null);
+    setStoryStale(false);
+    storyEngineRef.current = null;
+  }, [engineJson]);
+
+  useEffect(() => {
+    if (!storyOpen || !storyDoc) return;
+    if (storyEngineRef.current && storyEngineRef.current !== engineJson) {
+      setStoryStale(true);
+    }
+  }, [engineJson, storyDoc, storyOpen]);
+
+  const buildStoryText = (doc) => {
+    if (!doc) return "";
+    const lines = [];
+    if (doc.summary?.length) {
+      lines.push("Kratke zhrnutie");
+      doc.summary.forEach((line) => lines.push(line));
+      lines.push("");
+    }
+    if (doc.mainFlow?.length) {
+      lines.push("Hlavny priebeh");
+      doc.mainFlow.forEach((line, idx) => lines.push(`${idx + 1}. ${line.text}`));
+      lines.push("");
+    }
+    if (doc.decisions?.length) {
+      lines.push("Rozhodnutia");
+      doc.decisions.forEach((decision) => {
+        lines.push(decision.title);
+        (decision.branches || []).forEach((branch) => {
+          lines.push(`- ${branch.intro}`);
+          (branch.steps || []).forEach((step) => lines.push(`  - ${step.text}`));
+        });
+      });
+      lines.push("");
+    }
+    if (doc.parallels?.length) {
+      lines.push("Paralely");
+      doc.parallels.forEach((parallel) => {
+        lines.push(parallel.title);
+        (parallel.branches || []).forEach((branch) => {
+          lines.push(`- ${branch.label}`);
+          (branch.steps || []).forEach((step) => lines.push(`  - ${step.text}`));
+          if (branch.truncated) lines.push("  - ...");
+        });
+        if (parallel.outro) lines.push(parallel.outro);
+      });
+      lines.push("");
+    }
+    if (doc.notes?.length) {
+      lines.push("Poznamky");
+      doc.notes.forEach((note) => lines.push(`- ${note.text}`));
+    }
+    return lines.join("\n").trim();
+  };
+
+  const formatDecisionStepText = (value) => {
+    const raw = String(value || "").trim().replace(/^\s*-\s*/, "");
+    if (!raw) return "";
+    const match = raw.match(/^\(Nasleduje rozhodnutie\)\s+(.+)$/);
+    if (match) {
+      const name = match[1].trim();
+      return `V tejto vetve sa nasledne rozhoduje, ci ${name}.`;
+    }
+    return raw;
+  };
+
+  const buildBranchParagraph = (branch) => {
+    const label = String(branch?.label || "").trim() || "moznost";
+    const steps = (branch?.steps || [])
+      .map((step) => formatDecisionStepText(step?.text))
+      .filter(Boolean);
+    if (!steps.length) {
+      return `Ak ${label}, potom pokracuje dalsia cast procesu.`;
+    }
+    return `Ak ${label}, potom ${steps.join(" ")}`;
+  };
+
+  const handleCopyStory = async () => {
+    const text = buildStoryText(storyDoc);
+    if (!text) {
+      window.alert("Nie je co kopirovat.");
+      return;
+    }
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        window.prompt("Skopiruj text:", text);
+      }
+    } catch (err) {
+      window.prompt("Skopiruj text:", text);
+    }
+  };
 
   const updateGeneratorInput = (field, value) =>
     setProcessCard((prev) => ({
@@ -1965,6 +2127,23 @@ export default function LinearWizardPage() {
           </button>
           <button
             type="button"
+            className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
+            style={
+              storyOpen
+                ? {
+                    backgroundColor: "#1b3a6b",
+                    color: "#fff",
+                    borderColor: "#2f5ca0",
+                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                  }
+                : undefined
+            }
+            onClick={() => setStoryOpen((prev) => !prev)}
+          >
+            {storyOpen ? "Skryt pribeh" : "Pribeh procesu"}
+          </button>
+          <button
+            type="button"
             className="process-card-toggle process-card-toggle--new-model"
             onClick={handleNewModel}
           >
@@ -2037,7 +2216,7 @@ export default function LinearWizardPage() {
         </div>
       </div>
 
-      {drawerOpen || metaOpen || helpOpen || mentorOpen ? (
+      {drawerOpen || metaOpen || helpOpen || mentorOpen || storyOpen ? (
         <div
           style={{
             display: "flex",
@@ -2291,7 +2470,214 @@ export default function LinearWizardPage() {
             </div>
           ) : null}
 
-          {helpOpen && mentorOpen ? (
+          
+
+          {storyOpen ? (
+            <div className="process-card-drawer is-open process-card-story">
+              <div className="process-card-header">
+                <div>
+                  <div className="process-card-label">Pribeh procesu</div>
+                  <div className="process-card-description">
+                    Zhrnutie procesu v ludskej reci podla aktualnej mapy.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="process-card-close"
+                  aria-label="Zavriet pribeh procesu"
+                  onClick={() => setStoryOpen(false)}
+                >
+                  x
+                </button>
+              </div>
+              <div className="process-card-body">
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Nastavenia</h2>
+                    <span className="process-card-pill process-card-pill--muted">Vystup</span>
+                  </div>
+                  {startOptions.length > 1 ? (
+                    <label className="wizard-field">
+                      <span>Start</span>
+                      <select
+                        value={storyOptions.selectedStartId || startOptions[0]?.id || ""}
+                        onChange={(e) => updateStoryOption("selectedStartId", e.target.value)}
+                      >
+                        {startOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <div className="process-story-options">
+                    <label className="process-story-toggle">
+                      <input
+                        type="checkbox"
+                        checked={storyOptions.useLanes}
+                        onChange={(e) => updateStoryOption("useLanes", e.target.checked)}
+                      />
+                      <span>Pouzit roly (lanes)</span>
+                    </label>
+                    <label className="process-story-toggle">
+                      <input
+                        type="checkbox"
+                        checked={storyOptions.summarizeParallels}
+                        onChange={(e) => updateStoryOption("summarizeParallels", e.target.checked)}
+                      />
+                      <span>Zhrnut paralely</span>
+                    </label>
+                    <label className="process-story-toggle">
+                      <input
+                        type="checkbox"
+                        checked={storyOptions.showBranchEnds}
+                        onChange={(e) => updateStoryOption("showBranchEnds", e.target.checked)}
+                      />
+                      <span>Zobrazit konce vetiev</span>
+                    </label>
+                    <label className="process-story-toggle">
+                      <input
+                        type="checkbox"
+                        checked={storyOptions.moreDetails}
+                        onChange={(e) => updateStoryOption("moreDetails", e.target.checked)}
+                      />
+                      <span>Viac detailov</span>
+                    </label>
+                  </div>
+                  <div className="process-story-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={regenerateStory}
+                      disabled={!engineJson}
+                    >
+                      Prepocitat
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleCopyStory}
+                      disabled={!storyDoc}
+                    >
+                      Kopirovat text
+                    </button>
+                  </div>
+                  {storyStale ? (
+                    <div className="process-story-stale">
+                      Mapa sa zmenila. Klikni na Prepocitat pre novy pribeh.
+                    </div>
+                  ) : null}
+                  {storyGeneratedAt ? (
+                    <div className="process-story-meta">Naposledy generovane: {formatDateTime(storyGeneratedAt)}</div>
+                  ) : null}
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Kratke zhrnutie</h2>
+                  </div>
+                  {storyDoc?.summary?.length ? (
+                    storyDoc.summary.map((line, idx) => (
+                      <p key={`story-summary-${idx}`} className="process-story-paragraph">
+                        {line}
+                      </p>
+                    ))
+                  ) : (
+                    <div className="process-story-empty">
+                      {engineJson ? "Klikni na Prepocitat pre zhrnutie." : "Najprv nacitaj alebo vytvor mapu."}
+                    </div>
+                  )}
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Hlavny priebeh</h2>
+                  </div>
+                  {storyDoc?.mainFlow?.length ? (
+                    <ol className="process-story-list">
+                      {storyDoc.mainFlow.map((line, idx) => (
+                        <li key={`story-main-${idx}`}>{line.text}</li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="process-story-empty">Zatial ziadne kroky.</div>
+                  )}
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Rozhodnutia</h2>
+                  </div>
+                  {storyDoc?.decisions?.length ? (
+                    <div className="process-story-paragraphs">
+                      {storyDoc.decisions.map((decision, idx) => (
+                        <div key={`story-decision-${idx}`}>
+                          <p className="process-story-paragraph">
+                            <strong>{decision.title}</strong>
+                          </p>
+                          {decision.branches.map((branch, branchIdx) => (
+                            <p key={`story-decision-${idx}-branch-${branchIdx}`} className="process-story-paragraph">
+                              {buildBranchParagraph(branch)}
+                            </p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="process-story-empty">Ziadne rozhodnutia.</div>
+                  )}
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Paralely</h2>
+                  </div>
+                  {storyDoc?.parallels?.length ? (
+                    <div className="process-story-blocks">
+                      {storyDoc.parallels.map((parallel, idx) => (
+                        <div key={`story-parallel-${idx}`} className="process-story-block">
+                          <div className="process-story-block__title">{parallel.title}</div>
+                          {parallel.branches.map((branch, branchIdx) => (
+                            <div key={`story-parallel-${idx}-branch-${branchIdx}`} className="process-story-branch">
+                              <div className="process-story-branch__label">{branch.label}</div>
+                              <ul>
+                                {branch.steps.map((step, stepIdx) => (
+                                  <li key={`story-parallel-${idx}-branch-${branchIdx}-step-${stepIdx}`}>{step.text}</li>
+                                ))}
+                                {branch.truncated ? <li>...</li> : null}
+                              </ul>
+                            </div>
+                          ))}
+                          {parallel.outro ? <div className="process-story-block__outro">{parallel.outro}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="process-story-empty">Ziadne paralely.</div>
+                  )}
+                </section>
+
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Poznamky</h2>
+                  </div>
+                  {storyDoc?.notes?.length ? (
+                    <ul className="process-story-notes">
+                      {storyDoc.notes.map((note, idx) => (
+                        <li key={`story-note-${idx}`} className={`process-story-note process-story-note--${note.severity}`}>
+                          {note.text}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="process-story-empty">Bez poznamok.</div>
+                  )}
+                </section>
+              </div>
+            </div>
+          ) : null}
+{helpOpen && mentorOpen ? (
             <div
               style={{
                 height: 1,
