@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import BpmnModeler from "bpmn-js/lib/Modeler";
 import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
@@ -34,11 +34,13 @@ export default function MapViewer({
   onUndo,
   canUndo = false,
   onModelerReady,
+  onInsertBlock,
 }) {
   const containerRef = useRef(null);
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const [blocksOpen, setBlocksOpen] = useState(false);
   const hasSubtitle = Boolean(subtitle || subtitleMeta);
   const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
@@ -318,6 +320,24 @@ export default function MapViewer({
           }),
         );
       } else {
+        const appendShape = (type, width, height) => {
+          const shape = elementFactory.createShape({ type });
+          if (typeof width === "number" && typeof height === "number") {
+            shape.width = width;
+            shape.height = height;
+          }
+          const shapeWidth = shape.width || width || 0;
+          const shapeHeight = shape.height || height || 0;
+          if (autoPlace && typeof autoPlace.append === "function") {
+            autoPlace.append(element, shape);
+            return;
+          }
+          const parent = element.parent || element;
+          const x = (element.x || 0) + (element.width || 0) + 80;
+          const y = (element.y || 0) + ((element.height || 0) / 2) - (shapeHeight / 2);
+          modeling.createShape(shape, { x, y }, parent);
+        };
+
         container.appendChild(
           makeButton("Connect", "bpmn-icon-connection-multi", {
             onStart: (event) => connect.start(event, element),
@@ -325,22 +345,92 @@ export default function MapViewer({
           }),
         );
 
-        container.appendChild(
+        const addMenu = document.createElement("div");
+        addMenu.className = "custom-context-pad__add-menu";
+
+        const addButton = document.createElement("button");
+        addButton.type = "button";
+        addButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
+        addButton.setAttribute("aria-label", "Add object");
+        addButton.title = "Add object";
+        addButton.textContent = "+";
+        addMenu.appendChild(addButton);
+
+        const menu = document.createElement("div");
+        menu.className = "custom-context-pad__menu";
+
+        menu.appendChild(
           makeButton("Task", "bpmn-icon-task", {
-            onClick: () => {
-              const shape = elementFactory.createShape({ type: "bpmn:Task", width: 190, height: 78 });
-              if (autoPlace && typeof autoPlace.append === "function") {
-                autoPlace.append(element, shape);
-                return;
-              }
-              const parent = element.parent || element;
-              const x = (element.x || 0) + (element.width || 0) + 80;
-              const y = (element.y || 0) + ((element.height || 0) / 2) - 39;
-              modeling.createShape(shape, { x, y }, parent);
-            },
+            onClick: () => appendShape("bpmn:Task", 190, 78),
             hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
           }),
         );
+
+        menu.appendChild(
+          makeButton("Gateway", "bpmn-icon-gateway-xor", {
+            onClick: () => appendShape("bpmn:ExclusiveGateway"),
+            hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
+          }),
+        );
+
+        menu.appendChild(
+          makeButton("Start event", "bpmn-icon-start-event-none", {
+            onClick: () => appendShape("bpmn:StartEvent"),
+            hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
+          }),
+        );
+
+        menu.appendChild(
+          makeButton("End event", "bpmn-icon-end-event-none", {
+            onClick: () => appendShape("bpmn:EndEvent"),
+            hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
+          }),
+        );
+
+        addMenu.appendChild(menu);
+        container.appendChild(addMenu);
+
+        const blockMenu = document.createElement("div");
+        blockMenu.className = "custom-context-pad__add-menu";
+
+        const blockButton = document.createElement("button");
+        blockButton.type = "button";
+        blockButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
+        blockButton.setAttribute("aria-label", "Block");
+        blockButton.title = "Block";
+        blockButton.textContent = "B";
+        blockMenu.appendChild(blockButton);
+
+        const blockList = document.createElement("div");
+        blockList.className = "custom-context-pad__menu";
+        blockList.appendChild(
+          makeButton("XOR blok", "bpmn-icon-gateway-xor", {
+            onClick: () => {
+              if (typeof onInsertBlock === "function") {
+                onInsertBlock("xor");
+              }
+            },
+            hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
+          }),
+        );
+        blockList.appendChild(
+          makeButton("AND blok", "bpmn-icon-gateway-parallel", {
+            onClick: () => {
+              if (typeof onInsertBlock === "function") {
+                onInsertBlock("and");
+              }
+            },
+            hideOnAction: false,
+            className: "custom-context-pad__btn--menu",
+          }),
+        );
+        blockMenu.appendChild(blockList);
+        container.appendChild(blockMenu);
 
         container.appendChild(
           makeButton("Text annotation", "bpmn-icon-text-annotation", {
@@ -903,6 +993,12 @@ export default function MapViewer({
   }, [annotations, xml]);
 
   const displayError = error || importError;
+  const handleInsertBlock = (type) => {
+    if (typeof onInsertBlock === "function") {
+      onInsertBlock(type);
+    }
+    setBlocksOpen(false);
+  };
 
   return (
     <div className="map-viewer">
@@ -928,41 +1024,64 @@ export default function MapViewer({
         ) : null}
       </div>
       <div className="map-viewer__body">
-        <div className={`map-toolbar ${toolbarCollapsed ? "is-collapsed" : ""}`}>
-          <button
-            className="map-toolbar__toggle"
-            type="button"
-            onClick={() => setToolbarCollapsed((prev) => !prev)}
-            title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
-          >
-            {toolbarCollapsed ? "Nástroje" : "Skryť"}
-          </button>
-          {!toolbarCollapsed ? (
-            <div className="map-toolbar__group">
-              <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
-                +
-              </button>
-              <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
-                -
-              </button>
-              <button className="map-toolbar__btn" type="button" onClick={zoomFit} title="Prispôsobiť">
-                Fit
-              </button>
-              {onUndo ? (
-                <button
-                  className="map-toolbar__btn map-toolbar__btn--undo"
-                  type="button"
-                  onClick={onUndo}
-                  title="Spat"
-                  disabled={!canUndo}
-                >
-                  Spat
+        <div className="map-toolbar-stack">
+          <div className={`map-toolbar ${toolbarCollapsed ? "is-collapsed" : ""}`}>
+            <button
+              className="map-toolbar__toggle map-toolbar__toggle--primary"
+              type="button"
+              onClick={() => setToolbarCollapsed((prev) => !prev)}
+              title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
+            >
+              {toolbarCollapsed ? "Nástroje" : "Skryť"}
+            </button>
+            {!toolbarCollapsed ? (
+              <div className="map-toolbar__group">
+                <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
+                  +
                 </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <div ref={containerRef} className="map-viewer__canvas" />
+                <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
+                  -
+                </button>
+                <button className="map-toolbar__btn" type="button" onClick={zoomFit} title="Prispôsobiť">
+                  Fit
+                </button>
+                {onUndo ? (
+                  <button
+                    className="map-toolbar__btn map-toolbar__btn--undo"
+                    type="button"
+                    onClick={onUndo}
+                    title="Späť"
+                    disabled={!canUndo}
+                  >
+                    Späť
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="map-toolbar__blocks-panel">
+            <button
+              className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--blocks"
+              type="button"
+              onClick={() => setBlocksOpen((prev) => !prev)}
+              title="Vložiť blok"
+            >
+              Bloky
+            </button>
+            {blocksOpen ? (
+              <div className="map-toolbar__blocks-menu">
+                <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("xor")}>
+                  <span className="map-toolbar__btn-icon bpmn-icon-gateway-xor" aria-hidden="true" />
+                  Rozhodnutie
+                </button>
+                <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("and")}>
+                  <span className="map-toolbar__btn-icon bpmn-icon-gateway-parallel" aria-hidden="true" />
+                  Paralela
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div><div ref={containerRef} className="map-viewer__canvas" />
         {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
         {annotations?.length ? (
@@ -993,3 +1112,5 @@ export default function MapViewer({
     </div>
   );
 }
+
+
