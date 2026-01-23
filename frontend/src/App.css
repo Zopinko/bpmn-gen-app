@@ -1826,14 +1826,18 @@ body {
   gap: 10px;
 }
 
-.project-note-item--working {
-  border-color: rgba(59, 130, 246, 0.4);
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2) inset;
+.project-note-item--new {
+  border-color: rgba(148, 163, 184, 0.35);
 }
 
-.project-note-item--done {
+.project-note-item--reviewed {
   border-color: rgba(34, 197, 94, 0.35);
   background: rgba(15, 70, 45, 0.2);
+}
+
+.project-note-item--agreed {
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2) inset;
 }
 
 .project-note-header {
@@ -1913,6 +1917,62 @@ body {
 .project-note-edit__actions {
   display: flex;
   gap: 8px;
+}
+
+.project-note-replies {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.project-note-reply {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 12px;
+}
+
+.btn-accent {
+  background: rgba(14, 165, 233, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  color: #e0f2fe;
+}
+
+.btn-accent:hover {
+  border-color: rgba(56, 189, 248, 0.85);
+  background: rgba(14, 165, 233, 0.32);
+}
+
+.project-note-reply-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-note-reply-text {
+  flex: 1;
+}
+
+.project-note-reply-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.project-note-reply-edit {
+  display: grid;
+  gap: 6px;
+}
+
+.project-note-reply-form {
+  display: flex;
+  gap: 6px;
+}
+
+.project-note-reply-form input {
+  flex: 1;
+  min-width: 0;
 }
 
 .wizard-models-header {

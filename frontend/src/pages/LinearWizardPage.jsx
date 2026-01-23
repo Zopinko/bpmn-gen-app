@@ -316,11 +316,10 @@ export default function LinearWizardPage() {
   const [projectNotesSaving, setProjectNotesSaving] = useState(false);
   const [projectNotesError, setProjectNotesError] = useState(null);
   const [noteDraft, setNoteDraft] = useState("");
-  const [noteDraftFlags, setNoteDraftFlags] = useState({
-    riziko: false,
-    blokuje: false,
-    doplnit: false,
-  });
+  const [replyDrafts, setReplyDrafts] = useState({});
+  const [replyOpenById, setReplyOpenById] = useState({});
+
+  const [replyEditing, setReplyEditing] = useState({ noteId: null, replyId: null, text: "" });
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [lastExportedAt, setLastExportedAt] = useState(null);
   const [editingNoteId, setEditingNoteId] = useState(null);
@@ -1053,12 +1052,29 @@ export default function LinearWizardPage() {
   const previewVersion = (processCard.processMeta?.version || "").trim();
   const previewVersionLabel = previewVersion ? `Verzia: ${previewVersion}` : "";
 
+  const normalizeNoteStatus = (value) => {
+    const raw = String(value || "").toLowerCase();
+    if (raw === "reviewed" || raw === "skontrolovane") return "reviewed";
+    if (raw === "agreed" || raw === "dohodnute") return "agreed";
+    return "new";
+  };
+
+  const normalizeNote = (note) => {
+    if (!note || typeof note !== "object") return note;
+    return {
+      ...note,
+      status: normalizeNoteStatus(note.status),
+      replies: Array.isArray(note.replies) ? note.replies : [],
+    };
+  };
+
   const fetchProjectNotes = async () => {
     setProjectNotesLoading(true);
     setProjectNotesError(null);
     try {
       const resp = await getProjectNotes();
-      setProjectNotes(resp?.notes || []);
+      const incoming = Array.isArray(resp?.notes) ? resp.notes.map(normalizeNote) : [];
+      setProjectNotes(incoming);
       setEditingNoteId(null);
       setEditingNoteText("");
     } catch (e) {
@@ -1070,13 +1086,14 @@ export default function LinearWizardPage() {
   };
 
   const persistProjectNotes = async (nextNotes) => {
-    setProjectNotes(nextNotes);
+    const normalized = (nextNotes || []).map(normalizeNote);
+    setProjectNotes(normalized);
     setProjectNotesSaving(true);
     setProjectNotesError(null);
     try {
-      const resp = await saveProjectNotes(nextNotes);
+      const resp = await saveProjectNotes(normalized);
       if (Array.isArray(resp?.notes)) {
-        setProjectNotes(resp.notes);
+        setProjectNotes(resp.notes.map(normalizeNote));
       }
     } catch (e) {
       const message = e?.message || "Nepodarilo sa ulozit poznamky.";
@@ -1093,13 +1110,12 @@ export default function LinearWizardPage() {
     const next = {
       id,
       text,
-      status: "working",
-      flags: { ...noteDraftFlags },
+      status: "new",
+      replies: [],
       createdAt: new Date().toISOString(),
     };
     await persistProjectNotes([next, ...projectNotes]);
     setNoteDraft("");
-    setNoteDraftFlags({ riziko: false, blokuje: false, doplnit: false });
   };
 
   const startEditProjectNote = (note) => {
@@ -1124,18 +1140,55 @@ export default function LinearWizardPage() {
     void persistProjectNotes(next);
   };
 
-  const toggleProjectNoteFlag = (id, flag, value) => {
+  const addProjectNoteReply = (id) => {
+    const text = String(replyDrafts[id] || "").trim();
+    if (!text) return;
+    const reply = {
+      id: `reply_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      text,
+      createdAt: new Date().toISOString(),
+    };
     const next = projectNotes.map((note) =>
       note.id === id
         ? {
             ...note,
-            flags: {
-              ...note.flags,
-              [flag]: value,
-            },
+            replies: [...(note.replies || []), reply],
           }
         : note,
     );
+    setReplyDrafts((prev) => ({ ...prev, [id]: "" }));
+    setReplyOpenById((prev) => ({ ...prev, [id]: false }));
+    void persistProjectNotes(next);
+  };
+
+
+  const startEditReply = (noteId, reply) => {
+    setReplyEditing({ noteId, replyId: reply.id, text: reply.text || "" });
+  };
+
+  const cancelEditReply = () => {
+    setReplyEditing({ noteId: null, replyId: null, text: "" });
+  };
+
+  const saveEditReply = () => {
+    const { noteId, replyId, text } = replyEditing;
+    const nextText = String(text || "").trim();
+    if (!noteId || !replyId || !nextText) return;
+    const next = projectNotes.map((note) => {
+      if (note.id != noteId) return note;
+      const replies = (note.replies || []).map((r) => (r.id === replyId ? { ...r, text: nextText } : r));
+      return { ...note, replies };
+    });
+    void persistProjectNotes(next);
+    cancelEditReply();
+  };
+
+  const removeReply = (noteId, replyId) => {
+    const next = projectNotes.map((note) => {
+      if (note.id != noteId) return note;
+      const replies = (note.replies || []).filter((r) => r.id !== replyId);
+      return { ...note, replies };
+    });
     void persistProjectNotes(next);
   };
 
@@ -3154,42 +3207,10 @@ export default function LinearWizardPage() {
                   />
                 </label>
                 <div className="project-notes-actions">
-                  <div className="project-notes-flags">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={noteDraftFlags.riziko}
-                        onChange={(e) =>
-                          setNoteDraftFlags((prev) => ({ ...prev, riziko: e.target.checked }))
-                        }
-                      />
-                      <span>Riziko</span>
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={noteDraftFlags.blokuje}
-                        onChange={(e) =>
-                          setNoteDraftFlags((prev) => ({ ...prev, blokuje: e.target.checked }))
-                        }
-                      />
-                      <span>Blokuje</span>
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={noteDraftFlags.doplnit}
-                        onChange={(e) =>
-                          setNoteDraftFlags((prev) => ({ ...prev, doplnit: e.target.checked }))
-                        }
-                      />
-                      <span>Treba doplniť</span>
-                    </label>
-                  </div>
                   <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
-                    Pridať poznámku
+                    Pridat poznamku
                   </button>
-                  {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladám...</div> : null}
+                  {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladam...</div> : null}
                 </div>
 
                 <div className="project-notes-list">
@@ -3207,34 +3228,35 @@ export default function LinearWizardPage() {
                       >
                         <div className="project-note-header">
                           <select
-                            value={note.status}
+                            value={normalizeNoteStatus(note.status)}
                             onChange={(e) => updateProjectNote(note.id, { status: e.target.value })}
                           >
-                            <option value="working">Pracuje sa</option>
-                            <option value="done">Vyriešené</option>
+                            <option value="new">Nove</option>
+                            <option value="reviewed">Skontrolovane</option>
+                            <option value="agreed">Dohodnute</option>
                           </select>
-                          <div className="project-note-badges">
-                            {note.flags?.riziko ? <span className="project-note-badge is-risk">Riziko</span> : null}
-                            {note.flags?.blokuje ? <span className="project-note-badge is-blocker">Blokuje</span> : null}
-                            {note.flags?.doplnit ? (
-                              <span className="project-note-badge is-todo">Treba doplniť</span>
-                            ) : null}
-                          </div>
                           <div className="project-note-actions">
+                            <button
+                              type="button"
+                              className="btn btn--small btn-accent"
+                              onClick={() => setReplyOpenById((prev) => ({ ...prev, [note.id]: true }))}
+                            >
+                              Pridat odpoved
+                            </button>
                             <button
                               type="button"
                               className="btn btn--small"
                               onClick={() => startEditProjectNote(note)}
                               disabled={editingNoteId === note.id}
                             >
-                              Upraviť
+                              Upravit
                             </button>
                             <button
                               type="button"
                               className="btn btn--small btn-danger"
                               onClick={() => removeProjectNote(note.id)}
                             >
-                              Zmazať
+                              Zmazat
                             </button>
                           </div>
                         </div>
@@ -3253,41 +3275,93 @@ export default function LinearWizardPage() {
                                 onClick={() => saveEditProjectNote(note.id)}
                                 disabled={!editingNoteText.trim()}
                               >
-                                Uložiť
+                                Ulozit
                               </button>
                               <button type="button" className="btn btn--small" onClick={cancelEditProjectNote}>
-                                Zrušiť
+                                Zrusit
                               </button>
                             </div>
                           </div>
                         ) : (
                           <div className="project-note-text">{note.text}</div>
                         )}
-                        <div className="project-notes-flags">
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={note.flags?.riziko}
-                              onChange={(e) => toggleProjectNoteFlag(note.id, "riziko", e.target.checked)}
-                            />
-                            <span>Riziko</span>
-                          </label>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={note.flags?.blokuje}
-                              onChange={(e) => toggleProjectNoteFlag(note.id, "blokuje", e.target.checked)}
-                            />
-                            <span>Blokuje</span>
-                          </label>
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={note.flags?.doplnit}
-                              onChange={(e) => toggleProjectNoteFlag(note.id, "doplnit", e.target.checked)}
-                            />
-                            <span>Treba doplniť</span>
-                          </label>
+                        <div className="project-note-replies">
+                          {(note.replies || []).map((reply) => (
+                            <div key={reply.id} className="project-note-reply">
+                              {replyEditing.replyId === reply.id && replyEditing.noteId === note.id ? (
+                                <div className="project-note-reply-edit">
+                                  <input
+                                    type="text"
+                                    value={replyEditing.text}
+                                    onChange={(e) => setReplyEditing((prev) => ({ ...prev, text: e.target.value }))}
+                                  />
+                                  <div className="project-note-reply-actions">
+                                    <button
+                                      type="button"
+                                      className="btn btn--small btn-primary"
+                                      onClick={saveEditReply}
+                                      disabled={!String(replyEditing.text || "").trim()}
+                                    >
+                                      Ulozit
+                                    </button>
+                                    <button type="button" className="btn btn--small" onClick={cancelEditReply}>
+                                      Zrusit
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="project-note-reply-row">
+                                  <div className="project-note-reply-text">{reply.text}</div>
+                                  <div className="project-note-reply-actions">
+                                    <button
+                                      type="button"
+                                      className="btn btn--small"
+                                      onClick={() => startEditReply(note.id, reply)}
+                                    >
+                                      Upravit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn--small btn-danger"
+                                      onClick={() => removeReply(note.id, reply.id)}
+                                    >
+                                      Zmazat
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {replyOpenById[note.id] ? (
+                            <div className="project-note-reply-form">
+                              <input
+                                type="text"
+                                value={replyDrafts[note.id] || ""}
+                                onChange={(e) =>
+                                  setReplyDrafts((prev) => ({ ...prev, [note.id]: e.target.value }))
+                                }
+                                placeholder="Napis odpoved..."
+                              />
+                              <button
+                                type="button"
+                                className="btn btn--small"
+                                onClick={() => addProjectNoteReply(note.id)}
+                                disabled={!String(replyDrafts[note.id] || "").trim()}
+                              >
+                                Ulozit odpoved
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn--small"
+                                onClick={() => {
+                                  setReplyDrafts((prev) => ({ ...prev, [note.id]: "" }));
+                                  setReplyOpenById((prev) => ({ ...prev, [note.id]: false }));
+                                }}
+                              >
+                                Zrusit
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     ))
