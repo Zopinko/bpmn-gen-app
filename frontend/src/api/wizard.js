@@ -1,6 +1,8 @@
 const defaultApiBase =
   typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    ? ["localhost", "127.0.0.1"].includes(window.location.hostname)
+      ? `${window.location.protocol}//${window.location.hostname}:8000`
+      : ""
     : "http://localhost:8000";
 
 const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase;

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import AiModeSwitch from "./components/AiModeSwitch";
 import OverlayLegend from "./components/OverlayLegend";
 import MapViewer from "./components/MapViewer";
@@ -340,28 +340,28 @@ function App() {
 
 function AppLayout() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [authState, setAuthState] = useState({ user: null, loading: true });
 
+  const refreshAuthState = useCallback(async () => {
+    setAuthState((prev) => ({ ...prev, loading: true }));
+    try {
+      const result = await getMe();
+      setAuthState({ user: result?.user || null, loading: false });
+      return result?.user || null;
+    } catch {
+      setAuthState({ user: null, loading: false });
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
-    let active = true;
-    getMe()
-      .then((result) => {
-        if (!active) return;
-        setAuthState({ user: result?.user || null, loading: false });
-      })
-      .catch(() => {
-        if (!active) return;
-        setAuthState({ user: null, loading: false });
-      });
-    return () => {
-      active = false;
-    };
-  }, [location.pathname]);
+    void refreshAuthState();
+  }, [refreshAuthState]);
 
   const handleLogout = async () => {
     try {
       await logoutAuth();
+      await refreshAuthState();
     } finally {
       setAuthState({ user: null, loading: false });
       navigate("/login", { replace: true });
@@ -370,7 +370,7 @@ function AppLayout() {
 
   const renderProtected = (element) => {
     if (authState.loading) {
-      return null;
+      return <div style={{ padding: 16 }}>Načítavam...</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -380,7 +380,7 @@ function AppLayout() {
 
   const renderPublicOnly = (element) => {
     if (authState.loading) {
-      return null;
+      return <div style={{ padding: 16 }}>Načítavam...</div>;
     }
     if (authState.user) {
       return <Navigate to="/" replace />;
@@ -422,7 +422,10 @@ function AppLayout() {
             <Route path="/" element={renderProtected(<LinearWizardPage />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route path="/text" element={renderProtected(<GeneratorPage />)} />
-            <Route path="/login" element={renderPublicOnly(<LoginPage />)} />
+            <Route
+              path="/login"
+              element={renderPublicOnly(<LoginPage onLoginSuccess={refreshAuthState} />)}
+            />
             <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
             <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

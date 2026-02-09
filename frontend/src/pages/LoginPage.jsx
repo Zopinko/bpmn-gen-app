@@ -1,31 +1,22 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { getMe, loginAuth } from "../api/auth";
+import { loginAuth } from "../api/auth";
 
-function LoginPage() {
+function LoginPage({ onLoginSuccess }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState({ loading: false, error: "" });
-
-  useEffect(() => {
-    let mounted = true;
-    getMe()
-      .then(() => {
-        if (mounted) navigate("/", { replace: true });
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [navigate]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setStatus({ loading: true, error: "" });
     try {
       await loginAuth({ email, password });
+      if (typeof onLoginSuccess === "function") {
+        await onLoginSuccess();
+      }
       navigate("/", { replace: true });
     } catch (error) {
       setStatus({ loading: false, error: error.message });
