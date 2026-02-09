@@ -49,9 +49,14 @@ export function renameOrgNode(nodeId, name) {
 }
 
 export function moveOrgNode(payload) {
+  // Move payload contract: source process node and target folder.
+  const body = {
+    nodeId: payload?.nodeId,
+    targetParentId: payload?.targetParentId,
+  };
   return request("/api/org-model/move", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 }
 

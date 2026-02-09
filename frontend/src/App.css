@@ -249,6 +249,10 @@ body {
   color: #f87171;
 }
 
+.org-sidebar__hint--success {
+  color: #86efac;
+}
+
 .org-tree {
   display: flex;
   flex-direction: column;
@@ -277,6 +281,54 @@ body {
 .org-tree-node.is-selected {
   border-color: rgba(96, 165, 250, 0.8);
   background: rgba(30, 64, 120, 0.28);
+}
+
+.org-tree-process-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.org-tree-process-row .org-tree-node {
+  flex: 1;
+  min-width: 0;
+}
+
+.org-tree-menu-btn {
+  border: 1px solid var(--border-subtle);
+  background: rgba(15, 22, 35, 0.75);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  line-height: 1;
+}
+
+.org-tree-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  min-width: 140px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: #0f1623;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.org-tree-menu__item {
+  width: 100%;
+  border: 0;
+  text-align: left;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.org-tree-menu__item:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .app {

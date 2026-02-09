@@ -65,13 +65,13 @@ def rename_org_node(node_id: str, payload: dict = Body(...)):
 @router.post("/move")
 def move_org_node(payload: dict = Body(...)):
     node_id = payload.get("nodeId")
-    new_parent_id = payload.get("newParentId")
+    target_parent_id = payload.get("targetParentId")
     if not isinstance(node_id, str) or not node_id.strip():
         raise HTTPException(status_code=400, detail="nodeId je povinny.")
-    if not isinstance(new_parent_id, str) or not new_parent_id.strip():
-        raise HTTPException(status_code=400, detail="newParentId je povinny.")
+    if not isinstance(target_parent_id, str) or not target_parent_id.strip():
+        raise HTTPException(status_code=400, detail="targetParentId je povinny.")
     try:
-        node = move_node(node_id=node_id.strip(), new_parent_id=new_parent_id.strip())
+        node = move_node(node_id=node_id.strip(), new_parent_id=target_parent_id.strip())
         return {"node": node, "tree": get_tree()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

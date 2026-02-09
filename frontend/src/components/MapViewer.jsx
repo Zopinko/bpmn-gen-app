@@ -931,7 +931,11 @@ export default function MapViewer({
       })
       .catch((err) => {
         if (cancelled) return;
-        const message = err?.message || String(err);
+        const rawMessage = err?.message || String(err);
+        const normalizedMessage = String(rawMessage).toLowerCase();
+        const message = normalizedMessage.includes("no diagram to display")
+          ? "Zatiaľ nie je vytvorený diagram."
+          : rawMessage;
         setImportError(message);
       })
       .finally(() => {

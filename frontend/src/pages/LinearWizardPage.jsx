@@ -17,7 +17,7 @@ import {
   mentorReview,
   mentorApply,
 } from "../api/wizard";
-import { createOrgFolder, createOrgProcess, getOrgModel } from "../api/orgModel";
+import { createOrgFolder, createOrgProcess, getOrgModel, moveOrgNode } from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
 
 const HELP_RULES = [
@@ -302,6 +302,15 @@ export default function LinearWizardPage() {
   const [orgError, setOrgError] = useState(null);
   const [selectedOrgFolderId, setSelectedOrgFolderId] = useState("root");
   const [expandedOrgFolders, setExpandedOrgFolders] = useState({ root: true });
+  const [orgMenuNodeId, setOrgMenuNodeId] = useState(null);
+  const [orgMoveModalOpen, setOrgMoveModalOpen] = useState(false);
+  const [orgMoveNode, setOrgMoveNode] = useState(null);
+  const [orgMoveTargetFolderId, setOrgMoveTargetFolderId] = useState("root");
+  const [orgMoveCurrentParentId, setOrgMoveCurrentParentId] = useState("root");
+  const [orgMoveLoading, setOrgMoveLoading] = useState(false);
+  const [orgMoveError, setOrgMoveError] = useState(null);
+  const [orgToast, setOrgToast] = useState("");
+  const orgToastTimerRef = useRef(null);
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
   const [sidebarWidth, setSidebarWidth] = useState(640);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -1823,6 +1832,89 @@ export default function LinearWizardPage() {
     }
   };
 
+  const findParentFolderInfo = (rootNode, processNodeId, currentFolder = null) => {
+    if (!rootNode) return null;
+    if (rootNode.type === "process" && rootNode.id === processNodeId) {
+      return currentFolder ? { id: currentFolder.id, name: currentFolder.name } : null;
+    }
+    const children = rootNode.children || [];
+    for (const child of children) {
+      const result = findParentFolderInfo(
+        child,
+        processNodeId,
+        rootNode.type === "folder" ? rootNode : currentFolder,
+      );
+      if (result) return result;
+    }
+    return null;
+  };
+
+  const openMoveProcessModal = (node) => {
+    if (!node || node.type !== "process") return;
+    const parentInfo = findParentFolderInfo(orgTree, node.id);
+    setOrgMenuNodeId(null);
+    setOrgMoveNode(node);
+    setOrgMoveCurrentParentId(parentInfo?.id || "root");
+    setOrgMoveTargetFolderId(parentInfo?.id || "root");
+    setOrgMoveError(null);
+    setOrgMoveModalOpen(true);
+  };
+
+  const handleConfirmMoveProcess = async () => {
+    if (!orgMoveNode?.id || !orgMoveTargetFolderId) return;
+    setOrgMoveLoading(true);
+    setOrgMoveError(null);
+    try {
+      const response = await moveOrgNode({
+        nodeId: orgMoveNode.id,
+        targetParentId: orgMoveTargetFolderId,
+      });
+      setOrgTree(response?.tree || null);
+      setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgMoveTargetFolderId]: true }));
+      const targetInfo = findParentFolderInfo(response?.tree || orgTree, orgMoveNode.id);
+      setOrgToast(`✅ Presunute do ${targetInfo?.name || "priecinka"}`);
+      if (orgToastTimerRef.current) {
+        window.clearTimeout(orgToastTimerRef.current);
+      }
+      orgToastTimerRef.current = window.setTimeout(() => {
+        setOrgToast("");
+        orgToastTimerRef.current = null;
+      }, 2000);
+      setOrgMoveModalOpen(false);
+      setOrgMoveNode(null);
+    } catch (e) {
+      setOrgMoveError(e?.message || "Nepodarilo sa presunut proces.");
+    } finally {
+      setOrgMoveLoading(false);
+    }
+  };
+
+  const renderOrgFolderPickerNode = (node, depth = 0) => {
+    if (!node || node.type !== "folder") return null;
+    const expanded = Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
+    return (
+      <div key={`picker-${node.id}`}>
+        <button
+          type="button"
+          className={`org-tree-node org-tree-node--folder ${orgMoveTargetFolderId === node.id ? "is-selected" : ""}`}
+          style={{ paddingLeft: 10 + depth * 14 }}
+          onClick={() => {
+            setOrgMoveTargetFolderId(node.id);
+            toggleOrgFolder(node.id);
+          }}
+        >
+          <span>{expanded ? "?" : "?"}</span>
+          <span>{node.name}</span>
+        </button>
+        {expanded
+          ? (node.children || [])
+              .filter((child) => child?.type === "folder")
+              .map((child) => renderOrgFolderPickerNode(child, depth + 1))
+          : null}
+      </div>
+    );
+  };
+
   const renderOrgTreeNode = (node, depth = 0) => {
     if (!node) return null;
     if (node.type === "folder") {
@@ -1840,7 +1932,7 @@ export default function LinearWizardPage() {
               toggleOrgFolder(node.id);
             }}
           >
-            <span>{expanded ? "▾" : "▸"}</span>
+            <span>{expanded ? "?" : "?"}</span>
             <span>{node.name}</span>
           </button>
           {expanded ? (node.children || []).map((child) => renderOrgTreeNode(child, depth + 1)) : null}
@@ -1849,21 +1941,37 @@ export default function LinearWizardPage() {
     }
     const modelId = node?.processRef?.modelId;
     return (
-      <button
-        key={node.id}
-        type="button"
-        className="org-tree-node org-tree-node--process"
-        style={{ paddingLeft: 10 + depth * 14 }}
-        onClick={() => {
-          if (!modelId) return;
-          requestOpenWithSave(() => {
-            navigate(`/model/${modelId}`);
-          });
-        }}
-      >
-        <span>•</span>
-        <span>{node.name}</span>
-      </button>
+      <div key={node.id} className="org-tree-process-row" style={{ paddingLeft: 10 + depth * 14 }}>
+        <button
+          type="button"
+          className="org-tree-node org-tree-node--process"
+          style={{ paddingLeft: 0 }}
+          onClick={() => {
+            if (!modelId) return;
+            requestOpenWithSave(() => {
+              navigate(`/model/${modelId}`);
+            });
+          }}
+        >
+          <span>?</span>
+          <span>{node.name}</span>
+        </button>
+        <button
+          type="button"
+          className="org-tree-menu-btn"
+          aria-label="Menu procesu"
+          onClick={() => setOrgMenuNodeId((prev) => (prev === node.id ? null : node.id))}
+        >
+          ?
+        </button>
+        {orgMenuNodeId === node.id ? (
+          <div className="org-tree-menu">
+            <button type="button" className="org-tree-menu__item" onClick={() => openMoveProcessModal(node)}>
+              Presunut do...
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   };
 
@@ -1878,6 +1986,15 @@ export default function LinearWizardPage() {
     if (!orgOpen) return;
     void refreshOrgTree();
   }, [orgOpen]);
+
+  useEffect(
+    () => () => {
+      if (orgToastTimerRef.current) {
+        window.clearTimeout(orgToastTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const handleLoadModel = async () => {
     const trimmed = loadId.trim();
@@ -2629,6 +2746,7 @@ export default function LinearWizardPage() {
                     Obnovit
                   </button>
                 </div>
+                {orgToast ? <div className="org-sidebar__hint org-sidebar__hint--success">{orgToast}</div> : null}
                 {orgLoading ? <div className="org-sidebar__hint">Nacitavam strom...</div> : null}
                 {orgError ? <div className="org-sidebar__hint org-sidebar__hint--error">{orgError}</div> : null}
                 <div className="org-tree">{renderOrgTreeNode(orgTree)}</div>
@@ -3360,6 +3478,42 @@ export default function LinearWizardPage() {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn" type="button" onClick={() => setModelsOpen(false)}>
                   Zavrieť
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgMoveModalOpen ? (
+          <div className="wizard-models-modal" onClick={() => setOrgMoveModalOpen(false)}>
+            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Presunut do...</h3>
+                <button className="btn btn--small" type="button" onClick={() => setOrgMoveModalOpen(false)}>
+                  Zavriet
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
+                Proces: <strong>{orgMoveNode?.name || "-"}</strong>
+              </div>
+              {orgMoveError ? <div className="wizard-error">{orgMoveError}</div> : null}
+              {orgMoveTargetFolderId === orgMoveCurrentParentId ? (
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+                  Proces uz je v tomto priecinku.
+                </div>
+              ) : null}
+              <div className="org-tree">{renderOrgFolderPickerNode(orgTree)}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn" type="button" onClick={() => setOrgMoveModalOpen(false)} disabled={orgMoveLoading}>
+                  Zrusit
+                </button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={handleConfirmMoveProcess}
+                  disabled={orgMoveLoading || orgMoveTargetFolderId === orgMoveCurrentParentId}
+                >
+                  {orgMoveLoading ? "Presuvam..." : "Presunut sem"}
                 </button>
               </div>
             </div>
