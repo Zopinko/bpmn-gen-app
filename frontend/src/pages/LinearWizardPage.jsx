@@ -311,6 +311,11 @@ export default function LinearWizardPage() {
   const [orgMoveError, setOrgMoveError] = useState(null);
   const [orgToast, setOrgToast] = useState("");
   const orgToastTimerRef = useRef(null);
+  const orgTreeRef = useRef(null);
+  const [orgPulseTargetId, setOrgPulseTargetId] = useState(null);
+  const [orgMoveHighlightFolderId, setOrgMoveHighlightFolderId] = useState(null);
+  const [processStatusByModelId, setProcessStatusByModelId] = useState(() => new Map());
+  const [orgSearchQuery, setOrgSearchQuery] = useState("");
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
   const [sidebarWidth, setSidebarWidth] = useState(640);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -1849,6 +1854,20 @@ export default function LinearWizardPage() {
     return null;
   };
 
+  const findProcessPathByModelId = (node, modelId, path = []) => {
+    if (!node || !modelId) return null;
+    const nextPath = [...path, node];
+    if (node.type === "process" && String(node?.processRef?.modelId || "") === String(modelId)) {
+      return nextPath;
+    }
+    const children = node.children || [];
+    for (const child of children) {
+      const result = findProcessPathByModelId(child, modelId, nextPath);
+      if (result) return result;
+    }
+    return null;
+  };
+
   const openMoveProcessModal = (node) => {
     if (!node || node.type !== "process") return;
     const parentInfo = findParentFolderInfo(orgTree, node.id);
@@ -1872,6 +1891,8 @@ export default function LinearWizardPage() {
       setOrgTree(response?.tree || null);
       setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgMoveTargetFolderId]: true }));
       const targetInfo = findParentFolderInfo(response?.tree || orgTree, orgMoveNode.id);
+      setOrgMoveHighlightFolderId(orgMoveTargetFolderId);
+      window.setTimeout(() => setOrgMoveHighlightFolderId(null), 700);
       setOrgToast(`✅ Presunute do ${targetInfo?.name || "priecinka"}`);
       if (orgToastTimerRef.current) {
         window.clearTimeout(orgToastTimerRef.current);
@@ -1893,19 +1914,34 @@ export default function LinearWizardPage() {
     if (!node || node.type !== "folder") return null;
     const expanded = Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
     return (
-      <div key={`picker-${node.id}`}>
-        <button
-          type="button"
-          className={`org-tree-node org-tree-node--folder ${orgMoveTargetFolderId === node.id ? "is-selected" : ""}`}
-          style={{ paddingLeft: 10 + depth * 14 }}
-          onClick={() => {
-            setOrgMoveTargetFolderId(node.id);
-            toggleOrgFolder(node.id);
-          }}
-        >
-          <span>{expanded ? "?" : "?"}</span>
-          <span>{node.name}</span>
-        </button>
+      <div
+        key={`picker-${node.id}`}
+        className="org-tree-entry"
+        data-depth={depth}
+        style={{ "--org-depth": depth }}
+      >
+        <div className="org-tree-row">
+          <button
+            type="button"
+            className={`org-tree-node org-tree-node--folder ${orgMoveTargetFolderId === node.id ? "is-selected" : ""}`}
+            onClick={() => setOrgMoveTargetFolderId(node.id)}
+          >
+            <span className="org-tree-icon org-tree-icon--folder" aria-hidden>
+              {expanded ? "[F*]" : "[F]"}
+            </span>
+            <span className="org-tree-label">{node.name}</span>
+          </button>
+          <button
+            type="button"
+            className="org-tree-chev-btn"
+            aria-label={expanded ? "Zbaliť" : "Rozbaliť"}
+            onClick={() => toggleOrgFolder(node.id)}
+          >
+            <span className={`org-tree-icon org-tree-icon--chev ${expanded ? "is-open" : ""}`} aria-hidden>
+              {expanded ? "v" : ">"}
+            </span>
+          </button>
+        </div>
         {expanded
           ? (node.children || [])
               .filter((child) => child?.type === "folder")
@@ -1919,42 +1955,126 @@ export default function LinearWizardPage() {
     if (!node) return null;
     if (node.type === "folder") {
       const expanded = Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
+      const isActivePath = activeOrgFolderIds.has(node.id);
+      const processCount = orgProcessCountMap.get(node.id) || 0;
+      const prefixDepth = Math.max(depth, 0);
       return (
-        <div key={node.id}>
-          <button
-            type="button"
-            className={`org-tree-node org-tree-node--folder ${
-              selectedOrgFolderId === node.id ? "is-selected" : ""
-            }`}
-            style={{ paddingLeft: 10 + depth * 14 }}
+        <div key={node.id} className="org-tree-entry" data-depth={depth} style={{ "--org-depth": depth }}>
+          <div
+            className="org-tree-row"
+            data-folder-id={node.id}
+            role="button"
+            tabIndex={0}
             onClick={() => {
               setSelectedOrgFolderId(node.id);
               toggleOrgFolder(node.id);
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setSelectedOrgFolderId(node.id);
+                toggleOrgFolder(node.id);
+              }
+            }}
           >
-            <span>{expanded ? "?" : "?"}</span>
-            <span>{node.name}</span>
-          </button>
-          {expanded ? (node.children || []).map((child) => renderOrgTreeNode(child, depth + 1)) : null}
+            <div className="org-tree-prefix" aria-hidden>
+              {Array.from({ length: prefixDepth }).map((_, idx) => (
+                <span key={`${node.id}-p-${idx}`} className="org-tree-prefix-col">
+                  <span className="org-tree-prefix-vert" />
+                </span>
+              ))}
+              {prefixDepth > 0 ? <span className="org-tree-prefix-connector" /> : null}
+            </div>
+            <div
+              className={`org-tree-node org-tree-node--folder ${
+                selectedOrgFolderId === node.id ? "is-selected" : ""
+              } ${isActivePath ? "is-path" : ""} ${orgMoveHighlightFolderId === node.id ? "is-move-highlight" : ""}`}
+            >
+              <span className="org-tree-level-slot">
+                <span
+                className={`org-tree-level ${depth >= 1 ? `org-tree-level--l${depth}` : ""}`}
+                title={
+                  depth === 1
+                    ? "L1 – Najvyššia procesná úroveň (doména / divízia)"
+                    : depth === 2
+                      ? "L2 – Procesná oblasť"
+                      : depth === 3
+                        ? "L3 – Podprocesná skupina"
+                        : depth === 4
+                          ? "L4 – Konkrétny proces (BPMN model)"
+                          : undefined
+                }
+                aria-hidden
+              >
+                {depth === 0 ? "ROOT" : `L${depth}`}
+                </span>
+              </span>
+              <span className={`org-tree-label ${isActivePath ? "is-path" : ""}`}>{node.name}</span>
+              {processCount > 0 ? <span className="org-tree-badge">{processCount}</span> : null}
+            </div>
+            <button
+              type="button"
+              className="org-tree-chev-btn"
+              aria-label={expanded ? "Zbaliť" : "Rozbaliť"}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleOrgFolder(node.id);
+              }}
+            >
+              <span className={`org-tree-icon org-tree-icon--chev ${expanded ? "is-open" : ""}`} aria-hidden>
+                {expanded ? "v" : ">"}
+              </span>
+            </button>
+          </div>
+          <div className={`org-tree-children ${expanded ? "is-open" : ""}`}>
+            {(node.children || []).map((child) => renderOrgTreeNode(child, depth + 1))}
+          </div>
         </div>
       );
     }
     const modelId = node?.processRef?.modelId;
+    const isActive = modelId && routeModelId && String(modelId) === String(routeModelId);
+    const pulse = isActive && orgPulseTargetId === node.id;
+    const status = getProcessStatus(modelId);
+    const prefixDepth = Math.max(depth - 1, 0);
     return (
-      <div key={node.id} className="org-tree-process-row" style={{ paddingLeft: 10 + depth * 14 }}>
+      <div
+        key={node.id}
+        className={`org-tree-entry org-tree-entry--process org-tree-process-row ${pulse ? "is-pulse" : ""}`}
+        data-depth={depth}
+        data-process-id={node.id}
+        data-active={isActive ? "true" : "false"}
+        style={{ "--org-depth": prefixDepth }}
+      >
         <button
           type="button"
-          className="org-tree-node org-tree-node--process"
-          style={{ paddingLeft: 0 }}
+          className={`org-tree-node org-tree-node--process ${isActive ? "is-active" : ""}`}
           onClick={() => {
             if (!modelId) return;
+            const confirmed = window.confirm("Chceš otvoriť tento proces?");
+            if (!confirmed) return;
             requestOpenWithSave(() => {
               navigate(`/model/${modelId}`);
             });
           }}
         >
-          <span>?</span>
-          <span>{node.name}</span>
+          <div className="org-tree-prefix" aria-hidden>
+            {Array.from({ length: prefixDepth }).map((_, idx) => (
+              <span key={`${node.id}-pp-${idx}`} className="org-tree-prefix-col">
+                <span className="org-tree-prefix-vert" />
+              </span>
+            ))}
+            {prefixDepth > 0 ? <span className="org-tree-prefix-connector" /> : null}
+          </div>
+          <span className="org-tree-process-slot" aria-hidden>
+            <span
+              className={`org-tree-process-dot ${getProcessStatusClass(status)}`}
+              title={getProcessStatusLabel(status)}
+              aria-hidden
+            />
+            <span className="org-tree-process-badge">P</span>
+          </span>
+          <span className={`org-tree-label ${isActive ? "is-path" : ""}`}>{node.name}</span>
         </button>
         <button
           type="button"
@@ -1962,7 +2082,7 @@ export default function LinearWizardPage() {
           aria-label="Menu procesu"
           onClick={() => setOrgMenuNodeId((prev) => (prev === node.id ? null : node.id))}
         >
-          ?
+          ...
         </button>
         {orgMenuNodeId === node.id ? (
           <div className="org-tree-menu">
@@ -1986,6 +2106,179 @@ export default function LinearWizardPage() {
     if (!orgOpen) return;
     void refreshOrgTree();
   }, [orgOpen]);
+
+  const activeOrgPath = useMemo(() => {
+    if (!orgTree || !routeModelId) return null;
+    return findProcessPathByModelId(orgTree, routeModelId, []);
+  }, [orgTree, routeModelId]);
+
+  const activeOrgFolderIds = useMemo(() => {
+    if (!activeOrgPath?.length) return new Set();
+    const ids = new Set();
+    activeOrgPath.forEach((node) => {
+      if (node.type === "folder") {
+        ids.add(node.id);
+      }
+    });
+    return ids;
+  }, [activeOrgPath]);
+
+  const orgProcessCountMap = useMemo(() => {
+    if (!orgTree) return new Map();
+    const map = new Map();
+    const countProcesses = (node) => {
+      if (!node) return 0;
+      if (node.type === "process") return 1;
+      const children = node.children || [];
+      let total = 0;
+      children.forEach((child) => {
+        total += countProcesses(child);
+      });
+      map.set(node.id, total);
+      return total;
+    };
+    countProcesses(orgTree);
+    return map;
+  }, [orgTree]);
+
+  useEffect(() => {
+    if (!routeModelId) return;
+    const status = processCard?.processMeta?.status || "Approved";
+    setProcessStatusByModelId((prev) => {
+      const next = new Map(prev);
+      next.set(String(routeModelId), status);
+      return next;
+    });
+  }, [routeModelId, processCard?.processMeta?.status]);
+
+  const getProcessStatus = (modelId) =>
+    processStatusByModelId.get(String(modelId)) || "Approved";
+
+  const getProcessStatusClass = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (normalized === "draft") return "org-tree-process-dot--draft";
+    if (normalized === "review") return "org-tree-process-dot--review";
+    if (normalized === "deprecated") return "org-tree-process-dot--deprecated";
+    return "org-tree-process-dot--approved";
+  };
+
+  const getProcessStatusLabel = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (normalized === "draft") return "Koncept";
+    if (normalized === "review") return "Na posúdenie";
+    if (normalized === "approved") return "Schválený";
+    if (normalized === "deprecated") return "Zastaraný";
+    return status || "";
+  };
+
+  const filteredOrgTree = useMemo(() => {
+    if (!orgTree) return null;
+    const query = orgSearchQuery.trim().toLowerCase();
+    if (!query) return orgTree;
+    const filterNode = (node) => {
+      if (!node) return null;
+      if (node.type === "process") {
+        const name = String(node.name || "").toLowerCase();
+        return name.includes(query) ? { ...node } : null;
+      }
+      if (node.type === "folder") {
+        const children = (node.children || []).map(filterNode).filter(Boolean);
+        if (children.length) {
+          return { ...node, children };
+        }
+      }
+      return null;
+    };
+    return filterNode(orgTree) || orgTree;
+  }, [orgTree, orgSearchQuery]);
+
+  const filteredOrgExpandedMap = useMemo(() => {
+    if (!filteredOrgTree) return {};
+    const map = {};
+    const visit = (node) => {
+      if (!node) return;
+      if (node.type === "folder") {
+        map[node.id] = true;
+        (node.children || []).forEach(visit);
+      }
+    };
+    visit(filteredOrgTree);
+    return map;
+  }, [filteredOrgTree]);
+
+  useEffect(() => {
+    if (!orgOpen || !orgTree || !routeModelId) return;
+    const path = activeOrgPath;
+    if (!path?.length) return;
+    setExpandedOrgFolders((prev) => {
+      const next = { ...prev, root: true };
+      path.forEach((node) => {
+        if (node.type === "folder") {
+          next[node.id] = true;
+        }
+      });
+      return next;
+    });
+    const lastFolder = [...path].reverse().find((node) => node.type === "folder");
+    if (lastFolder) {
+      setSelectedOrgFolderId(lastFolder.id);
+    }
+  }, [orgOpen, orgTree, routeModelId, activeOrgPath]);
+
+  useEffect(() => {
+    if (!orgOpen || !orgTreeRef.current || !orgTree) return;
+    const container = orgTreeRef.current;
+    const activeProcess = container.querySelector('.org-tree-process-row[data-active="true"]');
+    const activeFolder =
+      activeOrgPath?.length
+        ? container.querySelector(
+            `.org-tree-row[data-folder-id="${activeOrgPath[activeOrgPath.length - 2]?.id || ""}"]`,
+          )
+        : null;
+    const scrollTarget = activeProcess || activeFolder;
+    if (scrollTarget && typeof scrollTarget.scrollIntoView === "function") {
+      scrollTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+
+    if (activeProcess) {
+      const id = activeProcess.getAttribute("data-process-id");
+      if (id) {
+        setOrgPulseTargetId(id);
+        window.setTimeout(() => {
+          setOrgPulseTargetId(null);
+        }, 650);
+      }
+    }
+  }, [orgOpen, orgTree, activeOrgPath]);
+
+  useEffect(() => {
+    const query = orgSearchQuery.trim();
+    if (!query) return;
+    setExpandedOrgFolders((prev) => ({ ...prev, root: true, ...filteredOrgExpandedMap }));
+  }, [orgSearchQuery, filteredOrgExpandedMap]);
+
+  const orgBreadcrumbItems = useMemo(() => {
+    if (!orgTree) return [];
+    const path = activeOrgPath && activeOrgPath.length ? activeOrgPath : [orgTree];
+    return path.map((node) => ({
+      id: node.id,
+      name: node.name || "Model organizacie",
+      type: node.type,
+      modelId: node?.processRef?.modelId,
+    }));
+  }, [orgTree, activeOrgPath]);
+
+  const handleOrgBreadcrumbClick = (item) => {
+    if (!item) return;
+    if (item.type === "folder") {
+      setSelectedOrgFolderId(item.id);
+      setExpandedOrgFolders((prev) => ({ ...prev, [item.id]: true, root: true }));
+    } else if (item.type === "process" && item.modelId) {
+      requestOpenWithSave(() => {
+        navigate(`/model/${item.modelId}`);
+      });
+    }
+  };
 
   useEffect(
     () => () => {
@@ -2735,6 +3028,31 @@ export default function LinearWizardPage() {
                 </button>
               </div>
               <div className="process-card-body">
+                {orgBreadcrumbItems.length ? (
+                  <div className="org-breadcrumb">
+                    {orgBreadcrumbItems.map((item, idx) => {
+                      const isLast = idx === orgBreadcrumbItems.length - 1;
+                      const isFolder = item.type === "folder";
+                      const isDisabled = item.type === "process" && isLast;
+                      return (
+                        <span key={`${item.id}-${idx}`} className="org-breadcrumb__item-wrap">
+                          <button
+                            type="button"
+                            className={`org-breadcrumb__item ${isFolder ? "is-folder" : "is-process"} ${
+                              isLast ? "is-current" : ""
+                            }`}
+                            onClick={() => handleOrgBreadcrumbClick(item)}
+                            disabled={isDisabled}
+                            title={item.name}
+                          >
+                            {item.name}
+                          </button>
+                          {!isLast ? <span className="org-breadcrumb__sep">/</span> : null}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <div className="org-sidebar__actions">
                   <button type="button" className="btn btn--small" onClick={handleCreateOrgFolder}>
                     + Folder
@@ -2746,10 +3064,21 @@ export default function LinearWizardPage() {
                     Obnovit
                   </button>
                 </div>
+                <div className="org-sidebar__search">
+                  <input
+                    type="search"
+                    className="org-search-input"
+                    placeholder="Hľadať proces..."
+                    value={orgSearchQuery}
+                    onChange={(e) => setOrgSearchQuery(e.target.value)}
+                  />
+                </div>
                 {orgToast ? <div className="org-sidebar__hint org-sidebar__hint--success">{orgToast}</div> : null}
                 {orgLoading ? <div className="org-sidebar__hint">Nacitavam strom...</div> : null}
                 {orgError ? <div className="org-sidebar__hint org-sidebar__hint--error">{orgError}</div> : null}
-                <div className="org-tree">{renderOrgTreeNode(orgTree)}</div>
+                <div className="org-tree" ref={orgTreeRef}>
+                  {renderOrgTreeNode(filteredOrgTree)}
+                </div>
               </div>
             </div>
           ) : null}
@@ -2788,10 +3117,10 @@ export default function LinearWizardPage() {
                     <label className="wizard-field">
                       <span>Status</span>
                       <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)} >
-                        <option value="Draft">Draft</option>
-                        <option value="Review">Review</option>
-                        <option value="Approved">Approved</option>
-                        <option value="Deprecated">Deprecated</option>
+                        <option value="Draft">Koncept</option>
+                        <option value="Review">Na posúdenie</option>
+                        <option value="Approved">Schválený</option>
+                        <option value="Deprecated">Zastaraný</option>
                       </select>
                     </label>
                     <label className="wizard-field">
@@ -3522,17 +3851,17 @@ export default function LinearWizardPage() {
 
         {savePromptOpen ? (
           <div className="wizard-models-modal" onClick={handleCancelOpen}>
-            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="wizard-models-panel wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <h3 style={{ margin: 0 }}>Ulozit model?</h3>
                 <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
                   Zavriet
                 </button>
               </div>
-              <div style={{ padding: "8px 0" }}>
+              <div className="wizard-save-prompt__text">
                 Mas rozpracovany model. Chces ho ulozit pred otvorenim ineho?
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={handleOpenWithoutSave}>
                   Neulozit
                 </button>
