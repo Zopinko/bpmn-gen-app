@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import MapViewer from "../components/MapViewer";
 import { useHeaderStepper } from "../components/HeaderStepperContext";
 import {
@@ -17,6 +17,7 @@ import {
   mentorReview,
   mentorApply,
 } from "../api/wizard";
+import { createOrgFolder, createOrgProcess, getOrgModel } from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
 
 const HELP_RULES = [
@@ -258,6 +259,7 @@ const mapGeneratorInputToPayload = (generatorInput) => {
 
 export default function LinearWizardPage() {
   const navigate = useNavigate();
+  const { modelId: routeModelId } = useParams();
   const fileInputRef = useRef(null);
   const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
@@ -294,6 +296,12 @@ export default function LinearWizardPage() {
   const [storyStale, setStoryStale] = useState(false);
   const [storyGeneratedAt, setStoryGeneratedAt] = useState(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [orgTree, setOrgTree] = useState(null);
+  const [orgLoading, setOrgLoading] = useState(false);
+  const [orgError, setOrgError] = useState(null);
+  const [selectedOrgFolderId, setSelectedOrgFolderId] = useState("root");
+  const [expandedOrgFolders, setExpandedOrgFolders] = useState({ root: true });
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
   const [sidebarWidth, setSidebarWidth] = useState(640);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -335,6 +343,7 @@ export default function LinearWizardPage() {
   const pendingDiagramXmlRef = useRef("");
   const lastSyncedXmlRef = useRef("");
   const historyRef = useRef([]);
+  const lastRouteModelIdRef = useRef(null);
   const undoInProgressRef = useRef(false);
   const [helpInputs, setHelpInputs] = useState(() =>
     HELP_RULES.reduce((acc, rule) => {
@@ -348,6 +357,28 @@ export default function LinearWizardPage() {
   const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
   const [helpMode, setHelpMode] = useState("inline");
   const laneHelperItems = useMemo(() => analyzeLaneLines(laneDescription), [laneDescription]);
+  const openSingleCard = (cardKey) => {
+    setOrgOpen(cardKey === "org");
+    setDrawerOpen(cardKey === "drawer");
+    setMetaOpen(cardKey === "meta");
+    setHelpOpen(cardKey === "help");
+    setStoryOpen(cardKey === "story");
+    setMentorOpen(cardKey === "mentor");
+  };
+  const toggleSingleCard = (cardKey) => {
+    const isOpen =
+      (cardKey === "org" && orgOpen) ||
+      (cardKey === "drawer" && drawerOpen) ||
+      (cardKey === "meta" && metaOpen) ||
+      (cardKey === "help" && helpOpen) ||
+      (cardKey === "story" && storyOpen) ||
+      (cardKey === "mentor" && mentorOpen);
+    if (isOpen) {
+      openSingleCard(null);
+      return;
+    }
+    openSingleCard(cardKey);
+  };
   const startOptions = useMemo(() => {
     const nodes = engineJson?.nodes || [];
     const starts = nodes.filter((node) => String(node?.type || "").toLowerCase().includes("start"));
@@ -1746,6 +1777,108 @@ export default function LinearWizardPage() {
     }
   };
 
+  const refreshOrgTree = async () => {
+    setOrgLoading(true);
+    setOrgError(null);
+    try {
+      const tree = await getOrgModel();
+      setOrgTree(tree);
+    } catch (e) {
+      setOrgError(e?.message || "Nepodarilo sa nacitat Model organizacie.");
+    } finally {
+      setOrgLoading(false);
+    }
+  };
+
+  const toggleOrgFolder = (folderId) => {
+    setExpandedOrgFolders((prev) => ({ ...prev, [folderId]: !prev[folderId] }));
+  };
+
+  const handleCreateOrgFolder = async () => {
+    const name = window.prompt("Nazov priecinka");
+    if (!name || !name.trim()) return;
+    try {
+      const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: name.trim() });
+      setOrgTree(result?.tree || null);
+      setExpandedOrgFolders((prev) => ({ ...prev, [selectedOrgFolderId]: true }));
+    } catch (e) {
+      window.alert(e?.message || "Nepodarilo sa vytvorit priecinok.");
+    }
+  };
+
+  const handleCreateOrgProcess = async () => {
+    const name = window.prompt("Nazov procesu");
+    if (!name || !name.trim()) return;
+    try {
+      const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: name.trim() });
+      setOrgTree(result?.tree || null);
+      const modelId = result?.node?.processRef?.modelId;
+      if (modelId) {
+        requestOpenWithSave(() => {
+          navigate(`/model/${modelId}`);
+        });
+      }
+    } catch (e) {
+      window.alert(e?.message || "Nepodarilo sa vytvorit proces.");
+    }
+  };
+
+  const renderOrgTreeNode = (node, depth = 0) => {
+    if (!node) return null;
+    if (node.type === "folder") {
+      const expanded = Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
+      return (
+        <div key={node.id}>
+          <button
+            type="button"
+            className={`org-tree-node org-tree-node--folder ${
+              selectedOrgFolderId === node.id ? "is-selected" : ""
+            }`}
+            style={{ paddingLeft: 10 + depth * 14 }}
+            onClick={() => {
+              setSelectedOrgFolderId(node.id);
+              toggleOrgFolder(node.id);
+            }}
+          >
+            <span>{expanded ? "▾" : "▸"}</span>
+            <span>{node.name}</span>
+          </button>
+          {expanded ? (node.children || []).map((child) => renderOrgTreeNode(child, depth + 1)) : null}
+        </div>
+      );
+    }
+    const modelId = node?.processRef?.modelId;
+    return (
+      <button
+        key={node.id}
+        type="button"
+        className="org-tree-node org-tree-node--process"
+        style={{ paddingLeft: 10 + depth * 14 }}
+        onClick={() => {
+          if (!modelId) return;
+          requestOpenWithSave(() => {
+            navigate(`/model/${modelId}`);
+          });
+        }}
+      >
+        <span>•</span>
+        <span>{node.name}</span>
+      </button>
+    );
+  };
+
+  useEffect(() => {
+    if (!routeModelId) return;
+    if (lastRouteModelIdRef.current === routeModelId) return;
+    lastRouteModelIdRef.current = routeModelId;
+    void doLoadModelById(routeModelId);
+  }, [routeModelId]);
+
+  useEffect(() => {
+    if (!orgOpen) return;
+    void refreshOrgTree();
+  }, [orgOpen]);
+
   const handleLoadModel = async () => {
     const trimmed = loadId.trim();
     if (!trimmed) {
@@ -2127,6 +2260,28 @@ export default function LinearWizardPage() {
     <div className="process-card-layout" ref={layoutRef}>
       <div className="process-card-rail">
         <div className="process-card-rail-group">
+          <button
+            type="button"
+            className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
+            style={
+              orgOpen
+                ? {
+                    backgroundColor: "#1b3a6b",
+                    color: "#fff",
+                    borderColor: "#2f5ca0",
+                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                  }
+                : undefined
+            }
+            onClick={() => toggleSingleCard("org")}
+          >
+            {orgOpen ? "Skryt model organizacie" : "Model organizacie"}
+          </button>
+        </div>
+
+        <div className="process-card-rail-divider" />
+
+        <div className="process-card-rail-group">
           <div className="process-card-rail-title">Proces</div>
           <button
             type="button"
@@ -2141,7 +2296,7 @@ export default function LinearWizardPage() {
                   }
                 : undefined
             }
-            onClick={() => setDrawerOpen((prev) => !prev)}
+            onClick={() => toggleSingleCard("drawer")}
           >
             {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
           </button>
@@ -2158,7 +2313,7 @@ export default function LinearWizardPage() {
                   }
                 : undefined
             }
-            onClick={() => setMetaOpen((prev) => !prev)}
+            onClick={() => toggleSingleCard("meta")}
           >
             {metaOpen ? "Skryt meta udaje" : "Meta udaje"}
           </button>
@@ -2176,7 +2331,7 @@ export default function LinearWizardPage() {
                   }
                 : undefined
             }
-            onClick={() => setHelpOpen((prev) => !prev)}
+            onClick={() => toggleSingleCard("help")}
           >
             {helpOpen ? "Skryť pomocník" : "Pomocník"}
           </button>
@@ -2193,7 +2348,7 @@ export default function LinearWizardPage() {
                   }
                 : undefined
             }
-            onClick={() => setStoryOpen((prev) => !prev)}
+            onClick={() => toggleSingleCard("story")}
           >
             {storyOpen ? "Skryt pribeh" : "Pribeh procesu"}
           </button>
@@ -2223,7 +2378,7 @@ export default function LinearWizardPage() {
                   }
                 : undefined
             }
-            onClick={() => setMentorOpen((prev) => !prev)}
+            onClick={() => toggleSingleCard("mentor")}
           >
             {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
           </button>
@@ -2231,7 +2386,7 @@ export default function LinearWizardPage() {
             type="button"
             className={`process-card-toggle process-card-toggle--mentor-review ${mentorStale ? "is-stale" : ""}`}
             onClick={() => {
-              setMentorOpen(true);
+              openSingleCard("mentor");
               runMentorReview();
             }}
             disabled={mentorLoading}
@@ -2283,7 +2438,7 @@ export default function LinearWizardPage() {
         </div>
       </div>
 
-      {drawerOpen || metaOpen || helpOpen || mentorOpen || storyOpen ? (
+      {drawerOpen || metaOpen || helpOpen || mentorOpen || storyOpen || orgOpen ? (
         <div
           style={{
             display: "flex",
@@ -2441,6 +2596,43 @@ export default function LinearWizardPage() {
                   background: "repeating-linear-gradient(90deg, rgba(255,255,255,0.45), rgba(255,255,255,0.45) 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)",
                 }}
               />
+            </div>
+          ) : null}
+
+          {orgOpen ? (
+            <div className="process-card-drawer is-open process-card-org">
+              <div className="process-card-header">
+                <div>
+                  <div className="process-card-label">Model organizacie</div>
+                  <div className="process-card-description">
+                    Strom procesov. Vyber priecinok a pridaj Folder alebo Process.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="process-card-close"
+                  aria-label="Zavriet model organizacie"
+                  onClick={() => setOrgOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="process-card-body">
+                <div className="org-sidebar__actions">
+                  <button type="button" className="btn btn--small" onClick={handleCreateOrgFolder}>
+                    + Folder
+                  </button>
+                  <button type="button" className="btn btn--small" onClick={handleCreateOrgProcess}>
+                    + Process
+                  </button>
+                  <button type="button" className="btn btn--small" onClick={refreshOrgTree} disabled={orgLoading}>
+                    Obnovit
+                  </button>
+                </div>
+                {orgLoading ? <div className="org-sidebar__hint">Nacitavam strom...</div> : null}
+                {orgError ? <div className="org-sidebar__hint org-sidebar__hint--error">{orgError}</div> : null}
+                <div className="org-tree">{renderOrgTreeNode(orgTree)}</div>
+              </div>
             </div>
           ) : null}
 
@@ -2917,16 +3109,15 @@ export default function LinearWizardPage() {
                     type="button"
                     className="btn btn--small btn-link wizard-lane-help-btn"
                     onClick={() => {
-                      setHelpOpen((prev) => {
-                        const next = !prev;
-                        if (next) {
-                          setHelpInsertTarget({
-                            type: "lane",
-                            laneId: selectedLane.id,
-                            laneName: selectedLane.name || selectedLane.id,
-                          });
-                        }
-                        return next;
+                      if (helpOpen) {
+                        openSingleCard(null);
+                        return;
+                      }
+                      openSingleCard("help");
+                      setHelpInsertTarget({
+                        type: "lane",
+                        laneId: selectedLane.id,
+                        laneName: selectedLane.name || selectedLane.id,
                       });
                     }}
                   >

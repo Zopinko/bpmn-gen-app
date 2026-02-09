@@ -4,6 +4,7 @@ from auth.db import run_auth_migrations
 from core.config import apply_cors
 from routers.auth_router import router as auth_router
 from routers.generate_router import router as generate_router
+from routers.org_model_router import router as org_model_router
 from routers.nl_router import router as nl_router
 from routers.frajer_router import router as frajer_router
 from routers.mentor_router import router as mentor_router
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
 
     # Routry
     app.include_router(auth_router)
+    app.include_router(org_model_router)
     app.include_router(generate_router)
     app.include_router(nl_router)
     app.include_router(frajer_router)

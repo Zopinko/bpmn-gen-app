@@ -368,6 +368,7 @@ function AppLayout() {
     }
   };
 
+
   const renderProtected = (element) => {
     if (authState.loading) {
       return <div style={{ padding: 16 }}>Načítavam...</div>;
@@ -420,6 +421,7 @@ function AppLayout() {
         <main className="app-shell__body">
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage />)} />
+            <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route path="/text" element={renderProtected(<GeneratorPage />)} />
             <Route
