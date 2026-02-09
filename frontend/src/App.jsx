@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import AiModeSwitch from "./components/AiModeSwitch";
 import OverlayLegend from "./components/OverlayLegend";
 import MapViewer from "./components/MapViewer";
 import HeaderStepper from "./components/HeaderStepper";
 import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { useDualMap } from "./hooks/useDualMap";
+import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
 import "./App.css";
 import flowmateLogo from "./assets/LOGO1short1.svg";
 
@@ -329,6 +332,63 @@ function App() {
   return (
     <BrowserRouter>
       <HeaderStepperProvider>
+        <AppLayout />
+      </HeaderStepperProvider>
+    </BrowserRouter>
+  );
+}
+
+function AppLayout() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [authState, setAuthState] = useState({ user: null, loading: true });
+
+  useEffect(() => {
+    let active = true;
+    getMe()
+      .then((result) => {
+        if (!active) return;
+        setAuthState({ user: result?.user || null, loading: false });
+      })
+      .catch(() => {
+        if (!active) return;
+        setAuthState({ user: null, loading: false });
+      });
+    return () => {
+      active = false;
+    };
+  }, [location.pathname]);
+
+  const handleLogout = async () => {
+    try {
+      await logoutAuth();
+    } finally {
+      setAuthState({ user: null, loading: false });
+      navigate("/login", { replace: true });
+    }
+  };
+
+  const renderProtected = (element) => {
+    if (authState.loading) {
+      return null;
+    }
+    if (!authState.user) {
+      return <Navigate to="/login" replace />;
+    }
+    return element;
+  };
+
+  const renderPublicOnly = (element) => {
+    if (authState.loading) {
+      return null;
+    }
+    if (authState.user) {
+      return <Navigate to="/" replace />;
+    }
+    return element;
+  };
+
+  return (
       <div className="app-shell">
         <header className="app-nav">
           <div className="app-nav__left">
@@ -338,25 +398,37 @@ function App() {
           <HeaderStepper />
           </div>
           <nav className="app-nav__links">
-            <Link to="/text" className="app-nav__link">
-              Text → mapa
-            </Link>
-            <Link to="/" className="app-nav__link">
-              Karta procesu
-            </Link>
+            {!authState.user ? (
+              <>
+                <Link to="/login" className="app-nav__link">
+                  Prihlasenie
+                </Link>
+                <Link to="/register" className="app-nav__link">
+                  Registracia
+                </Link>
+              </>
+            ) : (
+              <div className="app-nav__auth">
+                <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
+                <button type="button" className="btn app-nav__logout" onClick={handleLogout} disabled={authState.loading}>
+                  Odhlasit
+                </button>
+              </div>
+            )}
           </nav>
         </header>
         <main className="app-shell__body">
           <Routes>
-            <Route path="/" element={<LinearWizardPage />} />
-            <Route path="/text" element={<GeneratorPage />} />
+            <Route path="/" element={renderProtected(<LinearWizardPage />)} />
+            <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
+            <Route path="/text" element={renderProtected(<GeneratorPage />)} />
+            <Route path="/login" element={renderPublicOnly(<LoginPage />)} />
+            <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
             <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
-      </HeaderStepperProvider>
-    </BrowserRouter>
   );
 }
 

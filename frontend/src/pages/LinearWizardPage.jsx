@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import MapViewer from "../components/MapViewer";
 import { useHeaderStepper } from "../components/HeaderStepperContext";
 import {
@@ -256,6 +257,7 @@ const mapGeneratorInputToPayload = (generatorInput) => {
 };
 
 export default function LinearWizardPage() {
+  const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
@@ -2256,6 +2258,18 @@ export default function LinearWizardPage() {
         </div>
 
         <div className="process-card-rail-spacer" />
+
+        <div className="process-card-rail-group">
+          <div className="process-card-rail-title">Prostredie</div>
+          <button type="button" className="process-card-toggle" onClick={() => navigate("/")}>
+            Karta procesu
+          </button>
+          <button type="button" className="process-card-toggle" onClick={() => navigate("/text")}>
+            Text - mapa
+          </button>
+        </div>
+
+        <div className="process-card-rail-divider" />
 
         <div className="process-card-rail-group">
           <div className="process-card-rail-title">Projekt</div>

@@ -1,7 +1,10 @@
 import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+
+from core.auth_config import get_auth_config
 
 
 def get_openai_client() -> OpenAI:
@@ -11,24 +14,12 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def apply_cors(app: FastAPI):
-    # Preddefinované originy (lokálny dev + frontend na Renderi)
-    default_origins = [
-        "http://localhost:5173",
-        "https://bpmn-gen-frontend.onrender.com",
-    ]
-
-    # Ak je nastavená premenná CORS_ALLOW_ORIGINS, použijeme ju, inak default
-    origins = os.getenv("CORS_ALLOW_ORIGINS")
-    if origins:
-        allowed_origins = [o.strip() for o in origins.split(",") if o.strip()]
-    else:
-        allowed_origins = default_origins
-
+def apply_cors(app: FastAPI) -> None:
+    cfg = get_auth_config()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_credentials=False,  # daj True len ak chceš cookies/session z prehliadača
+        allow_origins=cfg.cors_allowed_origins,
+        allow_credentials=cfg.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

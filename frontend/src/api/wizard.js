@@ -1,10 +1,16 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+const defaultApiBase =
+  typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : "http://localhost:8000";
+
+const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase;
 
 export async function generateLinearWizardDiagram(payload) {
   const response = await fetch(`${API_BASE}/wizard/linear`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -20,6 +26,7 @@ export async function renderEngineXml(engineJson) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(engineJson),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -35,6 +42,7 @@ export async function appendLaneFromDescription(payload) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -50,6 +58,7 @@ export async function exportBpmn(engineJson) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ engine_json: engineJson }),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -67,6 +76,7 @@ export async function importBpmn(file) {
   const response = await fetch(`${API_BASE}/wizard/import-bpmn`, {
     method: "POST",
     body: formData,
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -82,6 +92,7 @@ export async function saveWizardModel(payload) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -93,7 +104,9 @@ export async function saveWizardModel(payload) {
 }
 
 export async function loadWizardModel(modelId) {
-  const response = await fetch(`${API_BASE}/wizard/models/${modelId}`);
+  const response = await fetch(`${API_BASE}/wizard/models/${modelId}`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
     throw new Error(message);
@@ -106,7 +119,9 @@ export async function listWizardModels(params = {}) {
   if (params.limit) query.append("limit", params.limit);
   if (params.offset) query.append("offset", params.offset);
   if (params.search) query.append("search", params.search);
-  const response = await fetch(`${API_BASE}/wizard/models?${query.toString()}`);
+  const response = await fetch(`${API_BASE}/wizard/models?${query.toString()}`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
     throw new Error(message);
@@ -117,6 +132,7 @@ export async function listWizardModels(params = {}) {
 export async function deleteWizardModel(modelId) {
   const response = await fetch(`${API_BASE}/wizard/models/${modelId}`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
@@ -130,6 +146,7 @@ export async function renameWizardModel(modelId, name) {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
+    credentials: "include",
   });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
@@ -139,7 +156,9 @@ export async function renameWizardModel(modelId, name) {
 }
 
 export async function getProjectNotes() {
-  const response = await fetch(`${API_BASE}/wizard/project-notes`);
+  const response = await fetch(`${API_BASE}/wizard/project-notes`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
     throw new Error(message);
@@ -152,6 +171,7 @@ export async function saveProjectNotes(notes) {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ notes }),
+    credentials: "include",
   });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
@@ -165,6 +185,7 @@ export async function mentorReview(payload) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -180,6 +201,7 @@ export async function mentorApply(payload) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
