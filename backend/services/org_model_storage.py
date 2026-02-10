@@ -149,6 +149,26 @@ def create_process(org_id: str, parent_id: str, name: str) -> dict[str, Any]:
     return node
 
 
+def create_process_from_org_model(
+    org_id: str,
+    parent_id: str,
+    name: str,
+    org_model_id: str,
+) -> dict[str, Any]:
+    tree = _read_tree(org_id)
+    parent, _ = _find_node_and_parent(tree, parent_id)
+    parent = _assert_folder(parent, "Nadriadena polozka musi byt priecinok.")
+    node = {
+        "id": f"prc_{uuid4().hex[:12]}",
+        "type": "process",
+        "name": name.strip() or "Novy proces",
+        "processRef": {"modelId": org_model_id},
+    }
+    parent.setdefault("children", []).append(node)
+    _write_tree(org_id, tree)
+    return node
+
+
 def rename_node(org_id: str, node_id: str, name: str) -> dict[str, Any]:
     tree = _read_tree(org_id)
     node, _ = _find_node_and_parent(tree, node_id)

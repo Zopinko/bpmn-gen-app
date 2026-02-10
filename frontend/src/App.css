@@ -436,18 +436,22 @@ body {
 
 .org-tree-level--l1 {
   background: #4f8cff;
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.35);
 }
 
 .org-tree-level--l2 {
   background: #6aa8ff;
+  box-shadow: 0 0 0 1px rgba(106, 168, 255, 0.35);
 }
 
 .org-tree-level--l3 {
   background: #9b7cff;
+  box-shadow: 0 0 0 1px rgba(155, 124, 255, 0.35);
 }
 
 .org-tree-level--l4 {
   background: #3fb950;
+  box-shadow: 0 0 0 1px rgba(63, 185, 80, 0.35);
 }
 
 .org-tree-label.is-path {
@@ -479,6 +483,11 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  z-index: 1;
+}
+
+.org-tree-process-row.is-menu-open {
+  z-index: 10;
 }
 
 .org-tree-process-row.is-pulse .org-tree-node {
@@ -512,6 +521,26 @@ body {
   gap: 6px;
 }
 
+.org-tree-entry--process .org-tree-prefix-connector {
+  display: none;
+}
+
+.org-tree-entry[data-depth="1"] .org-tree-node--folder {
+  background: rgba(79, 140, 255, 0.06);
+}
+
+.org-tree-entry[data-depth="2"] .org-tree-node--folder {
+  background: rgba(106, 168, 255, 0.06);
+}
+
+.org-tree-entry[data-depth="3"] .org-tree-node--folder {
+  background: rgba(155, 124, 255, 0.06);
+}
+
+.org-tree-entry[data-depth="4"] .org-tree-node--folder {
+  background: rgba(63, 185, 80, 0.06);
+}
+
 .org-tree-process-dot {
   width: 8px;
   height: 8px;
@@ -539,6 +568,14 @@ body {
 .org-tree-process-dot--deprecated {
   background: #6b7280;
   box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.2);
+}
+
+.process-card-drawer.is-readonly input,
+.process-card-drawer.is-readonly textarea,
+.process-card-drawer.is-readonly select,
+.wizard-lane-panel.is-readonly textarea {
+  pointer-events: none;
+  opacity: 0.6;
 }
 
 .org-tree-process-badge {
@@ -571,10 +608,11 @@ body {
   background: rgba(15, 22, 35, 0.75);
   color: var(--text-primary);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 2px 6px;
   line-height: 1;
   opacity: 0.55;
   transition: opacity 120ms ease;
+  min-width: 26px;
 }
 
 .org-tree-process-row:hover .org-tree-menu-btn {
@@ -605,16 +643,14 @@ body {
 }
 
 .org-tree-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 10;
+  position: fixed;
+  z-index: 1000;
   min-width: 140px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: #0f1623;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-  padding: 4px;
+  padding: 6px;
 }
 
 .org-tree-menu__item {
@@ -623,8 +659,9 @@ body {
   text-align: left;
   background: transparent;
   color: var(--text-primary);
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 6px;
+  font-size: 12px;
 }
 
 .org-tree-menu__item:hover {
@@ -1696,6 +1733,7 @@ body {
 .process-card-body {
   padding: 12px 16px 16px;
   overflow-y: auto;
+  overflow-x: visible;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2018,6 +2056,14 @@ body {
   gap: 12px;
   overflow: hidden;
 
+}
+
+.wizard-models-panel--org-push {
+  width: min(672px, 90vw);
+}
+
+.wizard-models-panel--sandbox {
+  width: min(1100px, 92vw);
 }
 
 .wizard-save-prompt {

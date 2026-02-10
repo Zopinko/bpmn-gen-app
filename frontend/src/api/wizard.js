@@ -111,7 +111,9 @@ export async function loadWizardModel(modelId) {
   });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -211,5 +213,120 @@ export async function mentorApply(payload) {
     throw new Error(message);
   }
 
+  return response.json();
+}
+
+export async function pushSandboxModelToOrg(modelId, name, orgId) {
+  const payload = { model_id: modelId };
+  if (name) payload.name = name;
+  if (orgId) payload.org_id = orgId;
+  const response = await fetch(`${API_BASE}/api/orgs/push-model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.detail = detail;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function getCurrentOrg() {
+  const response = await fetch(`${API_BASE}/api/orgs/current`, {
+    credentials: "include",
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function listMyOrgs() {
+  const response = await fetch(`${API_BASE}/api/orgs/my`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function createOrg(name) {
+  const response = await fetch(`${API_BASE}/api/orgs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function loadOrgModel(modelId, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/models/${modelId}${query}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function saveOrgModel(modelId, orgId, payload) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/models/${modelId}${query}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }

@@ -68,3 +68,23 @@ def load_org_model(org_id: str, org_model_id: str) -> Dict[str, Any]:
         raise FileNotFoundError(org_model_id)
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def save_org_model(org_id: str, org_model_id: str, model: Dict[str, Any]) -> Dict[str, Any]:
+    path = org_model_path(org_id, org_model_id)
+    created_at = model.get("created_at")
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                existing = json.load(f)
+            created_at = existing.get("created_at", created_at)
+        except Exception:
+            pass
+    now = _now_iso()
+    stored = dict(model)
+    stored["id"] = org_model_id
+    stored["created_at"] = created_at or now
+    stored["updated_at"] = now
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(stored, f, ensure_ascii=False)
+    return stored

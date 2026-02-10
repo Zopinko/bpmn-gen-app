@@ -23,45 +23,59 @@ async function request(path, options = {}) {
   return data;
 }
 
-export function getOrgModel() {
-  return request("/api/org-model");
+export function getOrgModel(orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model${query}`);
 }
 
-export function createOrgFolder(payload) {
-  return request("/api/org-model/folder", {
+export function createOrgFolder(payload, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/folder${query}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export function createOrgProcess(payload) {
-  return request("/api/org-model/process", {
+export function createOrgProcess(payload, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/process${query}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export function renameOrgNode(nodeId, name) {
-  return request(`/api/org-model/node/${nodeId}`, {
+export function createOrgProcessFromOrgModel(payload, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/process-from-org-model${query}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameOrgNode(nodeId, name, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/node/${nodeId}${query}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
 }
 
-export function moveOrgNode(payload) {
+export function moveOrgNode(payload, orgId) {
   // Move payload contract: source process node and target folder.
   const body = {
     nodeId: payload?.nodeId,
     targetParentId: payload?.targetParentId,
   };
-  return request("/api/org-model/move", {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/move${query}`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export function deleteOrgNode(nodeId) {
-  return request(`/api/org-model/node/${nodeId}`, {
+export function deleteOrgNode(nodeId, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/node/${nodeId}${query}`, {
     method: "DELETE",
   });
 }

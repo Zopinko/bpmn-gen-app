@@ -35,6 +35,7 @@ export default function MapViewer({
   canUndo = false,
   onModelerReady,
   onInsertBlock,
+  readOnly = false,
 }) {
   const containerRef = useRef(null);
   const modelerRef = useRef(null);
@@ -93,6 +94,7 @@ export default function MapViewer({
       container: containerRef.current,
       palette: { enabled: false },
       contextPad: { enabled: false },
+      keyboard: readOnly ? { bindTo: null } : undefined,
     });
     modelerRef.current = modeler;
 
@@ -108,6 +110,40 @@ export default function MapViewer({
     const create = modeler.get("create");
     const elementFactory = modeler.get("elementFactory");
     const autoPlace = modeler.get("autoPlace", false);
+
+    if (readOnly) {
+      const commandStack = modeler.get("commandStack", false);
+      if (commandStack) {
+        commandStack.execute = () => {};
+        commandStack.canExecute = () => false;
+      }
+      const directEditing = modeler.get("directEditing", false);
+      if (directEditing) {
+        directEditing.activate = () => {};
+      }
+      [
+        "shape.move.start",
+        "shape.move.move",
+        "shape.move.end",
+        "create.start",
+        "create.move",
+        "create.end",
+        "connect.start",
+        "connect.move",
+        "connect.end",
+        "resize.start",
+        "resize.move",
+        "resize.end",
+        "element.dblclick",
+        "commandStack.execute",
+      ].forEach((evt) => {
+        eventBus.on(evt, 10000, (e) => {
+          if (e?.stopPropagation) e.stopPropagation();
+          if (e?.preventDefault) e.preventDefault();
+          return false;
+        });
+      });
+    }
 
     let laneHandleOverlayIds = [];
     let contextPadOverlayId = null;

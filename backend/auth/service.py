@@ -277,4 +277,18 @@ def is_user_member_of_org(user_id: str, org_id: str) -> bool:
             (user_id, org_id),
         ).fetchone()
     return row is not None
+
+
+def get_user_org_role(user_id: str, org_id: str) -> str | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT role
+            FROM organization_members
+            WHERE user_id = ? AND organization_id = ?
+            LIMIT 1
+            """,
+            (user_id, org_id),
+        ).fetchone()
+    return row["role"] if row else None
 logger = logging.getLogger(__name__)

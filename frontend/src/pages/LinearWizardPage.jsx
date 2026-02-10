@@ -12,12 +12,24 @@ import {
   listWizardModels,
   deleteWizardModel,
   renameWizardModel,
+  pushSandboxModelToOrg,
+  listMyOrgs,
+  createOrg,
+  loadOrgModel,
+  saveOrgModel,
   getProjectNotes,
   saveProjectNotes,
   mentorReview,
   mentorApply,
 } from "../api/wizard";
-import { createOrgFolder, createOrgProcess, getOrgModel, moveOrgNode } from "../api/orgModel";
+import {
+  createOrgFolder,
+  createOrgProcess,
+  createOrgProcessFromOrgModel,
+  getOrgModel,
+  moveOrgNode,
+  renameOrgNode,
+} from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
 
 const HELP_RULES = [
@@ -285,7 +297,22 @@ export default function LinearWizardPage() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
   const [modelsActionLoading, setModelsActionLoading] = useState(false);
+  const [pushModelLoadingIds, setPushModelLoadingIds] = useState(() => new Set());
+  const [myOrgsEmpty, setMyOrgsEmpty] = useState(null);
   const [modelsSearch, setModelsSearch] = useState("");
+  const [orgsModalOpen, setOrgsModalOpen] = useState(false);
+  const [myOrgs, setMyOrgs] = useState([]);
+  const [myOrgsLoading, setMyOrgsLoading] = useState(false);
+  const [myOrgsError, setMyOrgsError] = useState(null);
+  const [activeOrgId, setActiveOrgId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem("ACTIVE_ORG_ID");
+  });
+  const [activeOrgName, setActiveOrgName] = useState("");
+  const [activeOrgRole, setActiveOrgRole] = useState("");
+  const [newOrgName, setNewOrgName] = useState("");
+  const [modelSource, setModelSource] = useState({ kind: "sandbox" });
+  const [orgReadOnly, setOrgReadOnly] = useState(false);
   const [expandedModelGroups, setExpandedModelGroups] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [metaOpen, setMetaOpen] = useState(false);
@@ -303,12 +330,19 @@ export default function LinearWizardPage() {
   const [selectedOrgFolderId, setSelectedOrgFolderId] = useState("root");
   const [expandedOrgFolders, setExpandedOrgFolders] = useState({ root: true });
   const [orgMenuNodeId, setOrgMenuNodeId] = useState(null);
+  const [orgMenuAnchor, setOrgMenuAnchor] = useState(null);
   const [orgMoveModalOpen, setOrgMoveModalOpen] = useState(false);
   const [orgMoveNode, setOrgMoveNode] = useState(null);
   const [orgMoveTargetFolderId, setOrgMoveTargetFolderId] = useState("root");
   const [orgMoveCurrentParentId, setOrgMoveCurrentParentId] = useState("root");
   const [orgMoveLoading, setOrgMoveLoading] = useState(false);
   const [orgMoveError, setOrgMoveError] = useState(null);
+  const [orgPushModalOpen, setOrgPushModalOpen] = useState(false);
+  const [orgPushModel, setOrgPushModel] = useState(null);
+  const [orgPushTargetFolderId, setOrgPushTargetFolderId] = useState("root");
+  const [orgPushLoading, setOrgPushLoading] = useState(false);
+  const [orgPushError, setOrgPushError] = useState(null);
+  const [orgPushExpandedFolders, setOrgPushExpandedFolders] = useState({ root: true });
   const [orgToast, setOrgToast] = useState("");
   const orgToastTimerRef = useRef(null);
   const orgTreeRef = useRef(null);
@@ -861,6 +895,8 @@ export default function LinearWizardPage() {
     setSelectedLane(null);
     setLaneDescription("");
     setLoadId("");
+    setModelSource({ kind: "sandbox" });
+    setOrgReadOnly(false);
     setError(null);
     setInfo(null);
     setIsLoading(false);
@@ -1057,6 +1093,10 @@ export default function LinearWizardPage() {
   );
 
   const handleGenerate = async () => {
+    if (isReadOnlyMode) {
+      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      return;
+    }
     setError(null);
     setInfo(null);
     if (engineJson) {
@@ -1245,6 +1285,10 @@ export default function LinearWizardPage() {
   };
 
   const insertLaneBlock = (blockType) => {
+    if (isReadOnlyMode) {
+      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      return;
+    }
     if (!selectedLane) {
       setError("Najprv vyber lane, do ktorej chces vlozit blok.");
       return;
@@ -1342,6 +1386,8 @@ export default function LinearWizardPage() {
     setError(null);
   };
 
+  const isReadOnlyMode = modelSource?.kind === "org" && orgReadOnly;
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
@@ -1351,7 +1397,8 @@ export default function LinearWizardPage() {
       xml,
       loading: isLoading && !xml,
       error: error || "",
-      onLaneSelect: setSelectedLane,
+      readOnly: modelSource?.kind === "org" && orgReadOnly,
+      onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
       onLaneOrderChange: reorderLanesByNames,
       onDiagramChange: handleDiagramChange,
       onUndo: handleUndo,
@@ -1372,6 +1419,8 @@ export default function LinearWizardPage() {
       reorderLanesByNames,
       insertLaneBlock,
       xml,
+      modelSource,
+      orgReadOnly,
     ],
   );
 
@@ -1685,6 +1734,10 @@ export default function LinearWizardPage() {
   useEffect(() => () => clearLanePreviewOverlays(), []);
 
   const handleAppendToLane = async () => {
+    if (isReadOnlyMode) {
+      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      return;
+    }
     if (!selectedLane || !laneDescription.trim()) {
       setError("Vyber lane a doplň aspoň jeden krok.");
       return;
@@ -1729,6 +1782,15 @@ export default function LinearWizardPage() {
       setError("Nie je čo uložiť – vygeneruj alebo naimportuj diagram.");
       return;
     }
+    const canEditOrg = modelSource?.kind !== "org" || activeOrgRole === "owner";
+    if (modelSource?.kind === "org" && !canEditOrg) {
+      setInfo("Nemáš právo upravovať org model.");
+      return;
+    }
+    if (modelSource?.kind === "org" && orgReadOnly) {
+      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      return;
+    }
     setError(null);
     setInfo(null);
     setSaveLoading(true);
@@ -1744,18 +1806,27 @@ export default function LinearWizardPage() {
         generator_input: processCard.generatorInput,
         process_meta: processCard.processMeta,
       };
-      await saveWizardModel(payload);
+      if (modelSource?.kind === "org") {
+        const orgId = modelSource?.orgId;
+        const modelId = modelSource?.modelId;
+        if (!orgId || !modelId) {
+          throw new Error("Chyba: chyba org kontext.");
+        }
+        await saveOrgModel(modelId, orgId, payload);
+      } else {
+        await saveWizardModel(payload);
+      }
       setLastSavedAt(Date.now());
-      setInfo("Model bol zmazany.");
+      setInfo("Model bol ulozeny.");
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa zmazat model.";
+      const message = e?.message || "Nepodarilo sa ulozit model.";
       setError(message);
     } finally {
       setSaveLoading(false);
     }
   };
 
-  const applyLoadedModel = (resp, { closeModels = false } = {}) => {
+  const applyLoadedModel = (resp, { closeModels = false, source = null } = {}) => {
     const loadedEngine = resp?.engine_json;
     const diagram = resp?.diagram_xml;
     if (!loadedEngine || !diagram) {
@@ -1769,6 +1840,10 @@ export default function LinearWizardPage() {
     setSelectedLane(null);
     setLaneDescription("");
     hydrateProcessCard(resp);
+    if (source) {
+      setModelSource(source);
+      setOrgReadOnly(source.kind === "org");
+    }
     if (closeModels) {
       setModelsOpen(false);
     }
@@ -1777,13 +1852,26 @@ export default function LinearWizardPage() {
 
   const doLoadModelById = async (id) => {
     setError(null);
-      setInfo("Model bol nacitany.");
     setLoadLoading(true);
     try {
       const resp = await loadWizardModel(id);
-      applyLoadedModel(resp);
+      applyLoadedModel(resp, { source: { kind: "sandbox" } });
       setInfo("Model bol nacitany.");
     } catch (e) {
+      const isNotFound =
+        e?.status === 404 || (typeof e?.message === "string" && e.message.includes("HTTP 404"));
+      if (isNotFound && activeOrgId) {
+        try {
+          const orgResp = await loadOrgModel(id, activeOrgId);
+          applyLoadedModel(orgResp, { source: { kind: "org", orgId: activeOrgId, modelId: id } });
+          setInfo("Model bol nacitany.");
+          return;
+        } catch (orgErr) {
+          const message = orgErr?.message || "Nepodarilo sa nacitat model.";
+          setError(message);
+          return;
+        }
+      }
       const message = e?.message || "Nepodarilo sa nacitat model.";
       setError(message);
     } finally {
@@ -1791,11 +1879,17 @@ export default function LinearWizardPage() {
     }
   };
 
-  const refreshOrgTree = async () => {
+  const refreshOrgTree = async (orgId = activeOrgId) => {
     setOrgLoading(true);
     setOrgError(null);
+    if (!orgId) {
+      setOrgLoading(false);
+      setOrgTree(null);
+      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
     try {
-      const tree = await getOrgModel();
+      const tree = await getOrgModel(orgId);
       setOrgTree(tree);
     } catch (e) {
       setOrgError(e?.message || "Nepodarilo sa nacitat Model organizacie.");
@@ -1809,10 +1903,14 @@ export default function LinearWizardPage() {
   };
 
   const handleCreateOrgFolder = async () => {
+    if (!activeOrgId) {
+      window.alert("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
     const name = window.prompt("Nazov priecinka");
     if (!name || !name.trim()) return;
     try {
-      const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: name.trim() });
+      const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: name.trim() }, activeOrgId);
       setOrgTree(result?.tree || null);
       setExpandedOrgFolders((prev) => ({ ...prev, [selectedOrgFolderId]: true }));
     } catch (e) {
@@ -1821,10 +1919,14 @@ export default function LinearWizardPage() {
   };
 
   const handleCreateOrgProcess = async () => {
+    if (!activeOrgId) {
+      window.alert("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
     const name = window.prompt("Nazov procesu");
     if (!name || !name.trim()) return;
     try {
-      const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: name.trim() });
+      const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: name.trim() }, activeOrgId);
       setOrgTree(result?.tree || null);
       const modelId = result?.node?.processRef?.modelId;
       if (modelId) {
@@ -1879,15 +1981,155 @@ export default function LinearWizardPage() {
     setOrgMoveModalOpen(true);
   };
 
+  const handleRenameOrgProcess = async (node) => {
+    if (!node || node.type !== "process") return;
+    if (!activeOrgId) {
+      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    const newName = window.prompt("Novy nazov procesu", node.name || "");
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setOrgMenuNodeId(null);
+    try {
+      const result = await renameOrgNode(node.id, trimmed, activeOrgId);
+      setOrgTree(result?.tree || orgTree);
+    } catch (e) {
+      setOrgError(e?.message || "Nepodarilo sa premenovat proces.");
+    }
+  };
+
+  const loadOrgModelFromTree = async (modelId, treeNodeId) => {
+    if (!activeOrgId) {
+      setError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setLoadLoading(true);
+    try {
+      const resp = await loadOrgModel(modelId, activeOrgId);
+      applyLoadedModel(resp, {
+        source: { kind: "org", orgId: activeOrgId, modelId, treeNodeId },
+      });
+      lastRouteModelIdRef.current = modelId;
+      navigate(`/model/${modelId}`);
+      setInfo("Model bol nacitany.");
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa nacitat model.";
+      setError(message);
+    } finally {
+      setLoadLoading(false);
+    }
+  };
+
+  const loadOrgModelDirect = async (modelId) => {
+    if (!activeOrgId) {
+      setError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setLoadLoading(true);
+    try {
+      const resp = await loadOrgModel(modelId, activeOrgId);
+      applyLoadedModel(resp, {
+        source: { kind: "org", orgId: activeOrgId, modelId },
+      });
+      lastRouteModelIdRef.current = modelId;
+      navigate(`/model/${modelId}`);
+      setInfo("Model bol nacitany.");
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa nacitat model.";
+      setError(message);
+    } finally {
+      setLoadLoading(false);
+    }
+  };
+
+  const openPushToOrgModal = async (model) => {
+    if (!activeOrgId) {
+      setInfo("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setOrgPushModel(model);
+    setOrgPushTargetFolderId("root");
+    setOrgPushExpandedFolders({ root: true });
+    setOrgPushError(null);
+    setOrgPushModalOpen(true);
+    if (!orgTree) {
+      await refreshOrgTree(activeOrgId);
+    }
+  };
+
+  const closePushModal = () => {
+    setOrgPushModalOpen(false);
+    setOrgPushModel(null);
+    setOrgPushError(null);
+  };
+
+  const handleConfirmPushToOrg = async () => {
+    if (!orgPushModel?.id) return;
+    if (!activeOrgId) {
+      setOrgPushError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setPushLoading(orgPushModel.id, true);
+    setOrgPushLoading(true);
+    setOrgPushError(null);
+    try {
+      const pushResp = await pushSandboxModelToOrg(orgPushModel.id, orgPushModel?.name, activeOrgId);
+      const orgModelId = pushResp?.org_model_id;
+      if (!orgModelId) {
+        throw new Error("Org model ID nebol vrateny.");
+      }
+      const treeResp = await createOrgProcessFromOrgModel(
+        {
+          parentId: orgPushTargetFolderId,
+          modelId: orgModelId,
+          name: orgPushModel?.name || "Process",
+        },
+        activeOrgId,
+      );
+      setOrgTree(treeResp?.tree || orgTree);
+      setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgPushTargetFolderId]: true }));
+      setInfo("Model bol ulozeny do organizacie.");
+      await fetchModels();
+      setOrgPushModalOpen(false);
+      setOrgPushModel(null);
+    } catch (e) {
+      if (e?.status === 403) {
+        setInfo("Nemas organizaciu alebo nemas pristup.");
+      } else if (e?.status === 401) {
+        setInfo("Nie si prihlaseny.");
+      } else {
+        setOrgPushError(e?.message || "Nepodarilo sa ulozit model do organizacie.");
+      }
+    } finally {
+      setOrgPushLoading(false);
+      if (orgPushModel?.id) {
+        window.setTimeout(() => setPushLoading(orgPushModel.id, false), 400);
+      }
+    }
+  };
+
   const handleConfirmMoveProcess = async () => {
     if (!orgMoveNode?.id || !orgMoveTargetFolderId) return;
+    if (!activeOrgId) {
+      setOrgMoveError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
     setOrgMoveLoading(true);
     setOrgMoveError(null);
     try {
-      const response = await moveOrgNode({
-        nodeId: orgMoveNode.id,
-        targetParentId: orgMoveTargetFolderId,
-      });
+      const response = await moveOrgNode(
+        {
+          nodeId: orgMoveNode.id,
+          targetParentId: orgMoveTargetFolderId,
+        },
+        activeOrgId,
+      );
       setOrgTree(response?.tree || null);
       setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgMoveTargetFolderId]: true }));
       const targetInfo = findParentFolderInfo(response?.tree || orgTree, orgMoveNode.id);
@@ -1910,9 +2152,21 @@ export default function LinearWizardPage() {
     }
   };
 
-  const renderOrgFolderPickerNode = (node, depth = 0) => {
+  const renderOrgFolderPickerNode = (node, depth = 0, options = {}) => {
     if (!node || node.type !== "folder") return null;
-    const expanded = Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
+    const mode = options.mode || "move";
+    const expanded =
+      mode === "push"
+        ? Boolean((options.expandedMap || {})[node.id] ?? node.id === "root")
+        : Boolean(expandedOrgFolders[node.id] ?? node.id === "root");
+    const selectedId = mode === "push" ? options.selectedId : orgMoveTargetFolderId;
+    const setSelectedId = mode === "push" ? options.setSelectedId : setOrgMoveTargetFolderId;
+    const toggleExpanded =
+      mode === "push"
+        ? options.toggleExpanded
+        : (id) => setExpandedOrgFolders((prev) => ({ ...prev, [id]: !prev[id] }));
+    const prefixDepth = Math.max(depth, 0);
+    const processCount = orgProcessCountMap.get(node.id) || 0;
     return (
       <div
         key={`picker-${node.id}`}
@@ -1920,22 +2174,47 @@ export default function LinearWizardPage() {
         data-depth={depth}
         style={{ "--org-depth": depth }}
       >
-        <div className="org-tree-row">
-          <button
-            type="button"
-            className={`org-tree-node org-tree-node--folder ${orgMoveTargetFolderId === node.id ? "is-selected" : ""}`}
-            onClick={() => setOrgMoveTargetFolderId(node.id)}
-          >
-            <span className="org-tree-icon org-tree-icon--folder" aria-hidden>
-              {expanded ? "[F*]" : "[F]"}
+        <div
+          className="org-tree-row"
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setSelectedId(node.id);
+            toggleExpanded(node.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedId(node.id);
+              toggleExpanded(node.id);
+            }
+          }}
+        >
+          <div className="org-tree-prefix" aria-hidden>
+            {Array.from({ length: prefixDepth }).map((_, idx) => (
+              <span key={`${node.id}-pp-${idx}`} className="org-tree-prefix-col">
+                <span className="org-tree-prefix-vert" />
+              </span>
+            ))}
+            {prefixDepth > 0 ? <span className="org-tree-prefix-connector" /> : null}
+          </div>
+          <div className={`org-tree-node org-tree-node--folder ${selectedId === node.id ? "is-selected" : ""}`}>
+            <span className="org-tree-level-slot">
+              <span className={`org-tree-level ${depth >= 1 ? `org-tree-level--l${depth}` : ""}`} aria-hidden>
+                {depth === 0 ? "ROOT" : `L${depth}`}
+              </span>
             </span>
             <span className="org-tree-label">{node.name}</span>
-          </button>
+            {processCount > 0 ? <span className="org-tree-badge">{processCount}</span> : null}
+          </div>
           <button
             type="button"
             className="org-tree-chev-btn"
             aria-label={expanded ? "Zbaliť" : "Rozbaliť"}
-            onClick={() => toggleOrgFolder(node.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleExpanded(node.id);
+            }}
           >
             <span className={`org-tree-icon org-tree-icon--chev ${expanded ? "is-open" : ""}`} aria-hidden>
               {expanded ? "v" : ">"}
@@ -1945,7 +2224,7 @@ export default function LinearWizardPage() {
         {expanded
           ? (node.children || [])
               .filter((child) => child?.type === "folder")
-              .map((child) => renderOrgFolderPickerNode(child, depth + 1))
+              .map((child) => renderOrgFolderPickerNode(child, depth + 1, options))
           : null}
       </div>
     );
@@ -2037,14 +2316,21 @@ export default function LinearWizardPage() {
     const pulse = isActive && orgPulseTargetId === node.id;
     const status = getProcessStatus(modelId);
     const prefixDepth = Math.max(depth - 1, 0);
+    const isMenuOpen = orgMenuNodeId === node.id;
     return (
       <div
         key={node.id}
-        className={`org-tree-entry org-tree-entry--process org-tree-process-row ${pulse ? "is-pulse" : ""}`}
+        className={`org-tree-entry org-tree-entry--process org-tree-process-row ${pulse ? "is-pulse" : ""} ${
+          isMenuOpen ? "is-menu-open" : ""
+        }`}
         data-depth={depth}
         data-process-id={node.id}
         data-active={isActive ? "true" : "false"}
         style={{ "--org-depth": prefixDepth }}
+        onMouseLeave={() => {
+          setOrgMenuNodeId((prev) => (prev === node.id ? null : prev));
+          setOrgMenuAnchor(null);
+        }}
       >
         <button
           type="button"
@@ -2054,7 +2340,7 @@ export default function LinearWizardPage() {
             const confirmed = window.confirm("Chceš otvoriť tento proces?");
             if (!confirmed) return;
             requestOpenWithSave(() => {
-              navigate(`/model/${modelId}`);
+              void loadOrgModelFromTree(modelId, node.id);
             });
           }}
         >
@@ -2080,12 +2366,28 @@ export default function LinearWizardPage() {
           type="button"
           className="org-tree-menu-btn"
           aria-label="Menu procesu"
-          onClick={() => setOrgMenuNodeId((prev) => (prev === node.id ? null : node.id))}
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = e.currentTarget.getBoundingClientRect();
+            setOrgMenuAnchor({ x: rect.left, y: rect.top });
+            setOrgMenuNodeId((prev) => (prev === node.id ? null : node.id));
+          }}
         >
           ...
         </button>
-        {orgMenuNodeId === node.id ? (
-          <div className="org-tree-menu">
+        {isMenuOpen ? (
+          <div
+            className="org-tree-menu"
+            style={{
+              position: "fixed",
+              left: Math.max(12, (orgMenuAnchor?.x || 0) - 170),
+              top: Math.max(12, (orgMenuAnchor?.y || 0) - 6),
+              zIndex: 1000,
+            }}
+          >
+            <button type="button" className="org-tree-menu__item" onClick={() => handleRenameOrgProcess(node)}>
+              Premenovat
+            </button>
             <button type="button" className="org-tree-menu__item" onClick={() => openMoveProcessModal(node)}>
               Presunut do...
             </button>
@@ -2104,8 +2406,8 @@ export default function LinearWizardPage() {
 
   useEffect(() => {
     if (!orgOpen) return;
-    void refreshOrgTree();
-  }, [orgOpen]);
+    void refreshOrgTree(activeOrgId);
+  }, [orgOpen, activeOrgId]);
 
   const activeOrgPath = useMemo(() => {
     if (!orgTree || !routeModelId) return null;
@@ -2289,6 +2591,11 @@ export default function LinearWizardPage() {
     [],
   );
 
+  useEffect(() => {
+    void refreshMyOrgs(activeOrgId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleLoadModel = async () => {
     const trimmed = loadId.trim();
     if (!trimmed) {
@@ -2320,6 +2627,8 @@ export default function LinearWizardPage() {
 
   const openModels = async () => {
     setModelsOpen(true);
+    setMyOrgsEmpty(null);
+    await refreshMyOrgs(activeOrgId);
     await fetchModels();
   };
 
@@ -2400,12 +2709,36 @@ export default function LinearWizardPage() {
     }
   };
 
+  const setPushLoading = (id, isLoading) => {
+    setPushModelLoadingIds((prev) => {
+      const next = new Set(prev);
+      if (isLoading) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const handlePushModelToOrg = async (model) => {
+    const id = model?.id;
+    if (!id) return;
+    if (!activeOrgId) {
+      setInfo("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setModelsError(null);
+    setInfo(null);
+    await openPushToOrgModal(model);
+  };
+
   const doLoadModelFromList = async (id) => {
     setError(null);
     setInfo(null);
     try {
       const resp = await loadWizardModel(id);
-      applyLoadedModel(resp, { closeModels: true });
+      applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" } });
       setInfo("Model bol nacitany.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa nacitat model.";
@@ -2418,6 +2751,114 @@ export default function LinearWizardPage() {
       void doLoadModelFromList(id);
     });
   };
+
+  const applyActiveOrgFromList = (orgs, preferredId) => {
+    if (!orgs || orgs.length === 0) {
+      setActiveOrgId(null);
+      setActiveOrgName("");
+      setActiveOrgRole("");
+      setMyOrgsEmpty(true);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("ACTIVE_ORG_ID");
+      }
+      return;
+    }
+    const preferred = preferredId ? orgs.find((o) => String(o.id) === String(preferredId)) : null;
+    const active = preferred || orgs[0];
+    setActiveOrgId(active?.id || null);
+    setActiveOrgName(active?.name || "");
+    setActiveOrgRole(active?.role || "");
+    setMyOrgsEmpty(false);
+    if (active?.id && typeof window !== "undefined") {
+      window.localStorage.setItem("ACTIVE_ORG_ID", active.id);
+    }
+  };
+
+  const refreshMyOrgs = async (preferredId = activeOrgId) => {
+    setMyOrgsLoading(true);
+    setMyOrgsError(null);
+    try {
+      const orgs = await listMyOrgs();
+      setMyOrgs(orgs || []);
+      applyActiveOrgFromList(orgs || [], preferredId);
+    } catch (e) {
+      setMyOrgsError(e?.message || "Nepodarilo sa nacitat organizacie.");
+      setMyOrgs([]);
+      setMyOrgsEmpty(null);
+    } finally {
+      setMyOrgsLoading(false);
+    }
+  };
+
+  const handleCreateOrg = async () => {
+    const name = window.prompt("Nazov organizacie");
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setModelsError(null);
+    setInfo(null);
+    try {
+      const created = await createOrg(trimmed);
+      setInfo("Organizacia bola vytvorena.");
+      await refreshMyOrgs(created?.id || null);
+    } catch (e) {
+      setModelsError(e?.message || "Nepodarilo sa vytvorit organizaciu.");
+    }
+  };
+
+  const openOrgsModal = async () => {
+    setOrgsModalOpen(true);
+    await refreshMyOrgs(activeOrgId);
+  };
+
+  const handleEnableOrgEdit = () => {
+    if (modelSource?.kind !== "org") return;
+    if (activeOrgRole !== "owner") {
+      setInfo("Nemáš právo upravovať org model.");
+      return;
+    }
+    const confirmed = window.confirm("Prepnúť do editácie? Zmeny sa uložia do organizácie.");
+    if (!confirmed) return;
+    setOrgReadOnly(false);
+    setInfo("Režim: editácia.");
+  };
+
+  const handleSelectOrg = async (org) => {
+    if (!org?.id) return;
+    setActiveOrgId(org.id);
+    setActiveOrgName(org?.name || "");
+    setActiveOrgRole(org?.role || "");
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("ACTIVE_ORG_ID", org.id);
+    }
+    setInfo("Aktivna organizacia bola zmenena.");
+    setMyOrgsEmpty(false);
+    setOrgModelsOpen(false);
+    if (orgOpen) {
+      await refreshOrgTree(org.id);
+    }
+  };
+
+  const handleCreateOrgInline = async () => {
+    const trimmed = newOrgName.trim();
+    if (!trimmed) return;
+    setMyOrgsError(null);
+    setInfo(null);
+    try {
+      const created = await createOrg(trimmed);
+      setNewOrgName("");
+      setInfo("Organizacia bola vytvorena.");
+      await refreshMyOrgs(created?.id || null);
+      if (created?.id) {
+        setActiveOrgId(created.id);
+        setActiveOrgName(created?.name || "");
+        setActiveOrgRole("owner");
+      }
+    } catch (e) {
+      setMyOrgsError(e?.message || "Nepodarilo sa vytvorit organizaciu.");
+    }
+  };
+
 
   const handleExportBpmn = async () => {
     if (!engineJson) {
@@ -2687,6 +3128,9 @@ export default function LinearWizardPage() {
           >
             {orgOpen ? "Skryt model organizacie" : "Model organizacie"}
           </button>
+          <button type="button" className="process-card-toggle" onClick={openOrgsModal}>
+            Organizacie
+          </button>
         </div>
 
         <div className="process-card-rail-divider" />
@@ -2864,7 +3308,7 @@ export default function LinearWizardPage() {
         >
           {drawerOpen ? (
             <div
-              className={`process-card-drawer ${drawerOpen ? "is-open" : ""}`}
+              className={`process-card-drawer ${drawerOpen ? "is-open" : ""} ${isReadOnlyMode ? "is-readonly" : ""}`}
               style={{
                 height: !helpOpen && !mentorOpen ? "100%" : processPanelHeight,
                 minHeight: 320,
@@ -2935,7 +3379,12 @@ export default function LinearWizardPage() {
                     />
                   </label>
                   <div className="process-card-buttons">
-                    <button className="btn btn-primary" type="button" onClick={handleGenerate} disabled={isLoading}>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      onClick={handleGenerate}
+                      disabled={isLoading || isReadOnlyMode}
+                    >
                       {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
                     </button>
                     <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
@@ -2971,6 +3420,21 @@ export default function LinearWizardPage() {
 
                 {error ? <div className="wizard-error">{error}</div> : null}
                 {info ? <div className="wizard-toast">{info}</div> : null}
+                {modelSource?.kind === "org" ? (
+                  <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
+                    Režim: {orgReadOnly ? "Len na čítanie" : "Editácia"} (ORG)
+                    {orgReadOnly && activeOrgRole === "owner" ? (
+                      <button
+                        className="btn btn--small"
+                        style={{ marginLeft: 8 }}
+                        type="button"
+                        onClick={handleEnableOrgEdit}
+                      >
+                        Upraviť
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -3017,6 +3481,14 @@ export default function LinearWizardPage() {
                   <div className="process-card-description">
                     Strom procesov. Vyber priecinok a pridaj Folder alebo Process.
                   </div>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
+                    <span>
+                      Aktivna organizacia: {activeOrgId ? activeOrgName || activeOrgId : "Ziadna organizacia"}
+                    </span>
+                    <button className="btn btn--small" type="button" onClick={openOrgsModal}>
+                      Zmenit
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -3054,10 +3526,10 @@ export default function LinearWizardPage() {
                   </div>
                 ) : null}
                 <div className="org-sidebar__actions">
-                  <button type="button" className="btn btn--small" onClick={handleCreateOrgFolder}>
+                  <button type="button" className="btn btn--small" onClick={handleCreateOrgFolder} disabled={!activeOrgId}>
                     + Folder
                   </button>
-                  <button type="button" className="btn btn--small" onClick={handleCreateOrgProcess}>
+                  <button type="button" className="btn btn--small" onClick={handleCreateOrgProcess} disabled={!activeOrgId}>
                     + Process
                   </button>
                   <button type="button" className="btn btn--small" onClick={refreshOrgTree} disabled={orgLoading}>
@@ -3076,6 +3548,16 @@ export default function LinearWizardPage() {
                 {orgToast ? <div className="org-sidebar__hint org-sidebar__hint--success">{orgToast}</div> : null}
                 {orgLoading ? <div className="org-sidebar__hint">Nacitavam strom...</div> : null}
                 {orgError ? <div className="org-sidebar__hint org-sidebar__hint--error">{orgError}</div> : null}
+                {!activeOrgId ? (
+                  <div className="org-sidebar__hint org-sidebar__hint--error">
+                    Najprv si vyber alebo vytvor organizaciu.
+                    <div style={{ marginTop: 6 }}>
+                      <button className="btn btn--small" type="button" onClick={openOrgsModal}>
+                        Organizacie
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="org-tree" ref={orgTreeRef}>
                   {renderOrgTreeNode(filteredOrgTree)}
                 </div>
@@ -3084,7 +3566,7 @@ export default function LinearWizardPage() {
           ) : null}
 
           {metaOpen ? (
-            <div className="process-card-drawer is-open process-card-meta">
+            <div className={`process-card-drawer is-open process-card-meta ${isReadOnlyMode ? "is-readonly" : ""}`}>
               <div className="process-card-header">
                 <div>
                   <div className="process-card-label">Meta udaje o procese</div>
@@ -3530,15 +4012,46 @@ export default function LinearWizardPage() {
         </div>
       ) : null}
 
-      <div className="process-card-main">
-        <div className="wizard-viewer">
-          {xml ? (
-            <MapViewer {...viewerProps} />
+        <div className="process-card-main">
+          {isReadOnlyMode ? (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "rgba(15, 23, 42, 0.8)",
+                border: "1px solid rgba(94, 234, 212, 0.25)",
+                color: "#e2e8f0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600 }}>READ-ONLY režim</div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>
+                  Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“.
+                </div>
+              </div>
+              {activeOrgRole === "owner" ? (
+                <button className="btn btn--small" type="button" onClick={handleEnableOrgEdit}>
+                  Upraviť
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="wizard-viewer">
+            {xml ? (
+              <MapViewer
+                key={`${modelSource?.kind || "sandbox"}-${modelSource?.kind === "org" && orgReadOnly ? "ro" : "rw"}`}
+                {...viewerProps}
+              />
           ) : (
             <div className="wizard-placeholder">Vyplň Kartu procesu a klikni na Vygenerovať BPMN pre náhľad.</div>
           )}
           {selectedLane ? (
-            <div className="wizard-lane-panel">
+            <div className={`wizard-lane-panel ${isReadOnlyMode ? "is-readonly" : ""}`}>
               <div className="wizard-lane-panel__header" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                 <span>
                   Lane {selectedLaneIndex >= 0 ? `${selectedLaneIndex + 1}: ` : ""}
@@ -3549,6 +4062,7 @@ export default function LinearWizardPage() {
                     type="button"
                     className="btn btn--small btn-primary"
                     onClick={() => setLaneInsertOpen(true)}
+                    disabled={isReadOnlyMode}
                   >
                     Pridat tvar
                   </button>
@@ -3596,14 +4110,20 @@ export default function LinearWizardPage() {
                   <div className="wizard-lane-panel__section-title">Popis lane</div>
 <label className="wizard-field">
                 <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
-                <textarea
-                  value={laneDescription}
-                  onChange={(e) => setLaneDescription(e.target.value)}
-                  rows={6}
-                  placeholder={"Krok A\nKrok B\nKrok C"}
-                />
+                  <textarea
+                    value={laneDescription}
+                    onChange={(e) => setLaneDescription(e.target.value)}
+                    rows={6}
+                    placeholder={"Krok A\nKrok B\nKrok C"}
+                    disabled={isReadOnlyMode}
+                  />
               </label>
-              <button className="btn btn-primary" type="button" onClick={handleAppendToLane} disabled={isLoading}>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={handleAppendToLane}
+                disabled={isLoading || isReadOnlyMode}
+              >
                 {isLoading ? "Pridávam..." : "Vytvoriť kroky v tejto lane"}
               </button>
                 </div>
@@ -3661,9 +4181,15 @@ export default function LinearWizardPage() {
 
         {modelsOpen ? (
           <div className="wizard-models-modal" onClick={() => setModelsOpen(false)}>
-            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="wizard-models-panel wizard-models-panel--sandbox" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Uložené modely</h3>
+                <div>
+                  <h3 style={{ margin: 0 }}>Moje uložené modely (Sandbox)</h3>
+                  <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
+                    Súkromné modely viditeľné len pre teba. Tlačidlom „Push do organizácie“ ich uložíš do organizačnej
+                    knižnice.
+                  </div>
+                </div>
                 <div className="wizard-models-tools">
                   <input
                     type="text"
@@ -3686,6 +4212,18 @@ export default function LinearWizardPage() {
                 </div>
               </div>
               {modelsError ? <div className="wizard-error">{modelsError}</div> : null}
+              {myOrgsEmpty === true ? (
+                <div className="wizard-error" style={{ marginTop: 8 }}>
+                  Pouzivatel nema organizaciu.
+                </div>
+              ) : null}
+              {myOrgsEmpty === true ? (
+                <div style={{ marginTop: 8 }}>
+                  <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrg}>
+                    Vytvoriť organizáciu
+                  </button>
+                </div>
+              ) : null}
               <div style={{ overflow: "auto" }}>
                 <table className="wizard-models-table">
                   <thead>
@@ -3711,6 +4249,22 @@ export default function LinearWizardPage() {
                             <td>
                               <div className="wizard-model-name" title={group.label}>
                                 {group.label}
+                                {latest?.process_meta?.org_pushes?.length ? (
+                                  <span
+                                    style={{
+                                      marginLeft: 8,
+                                      fontSize: 10,
+                                      padding: "2px 6px",
+                                      borderRadius: 999,
+                                      border: "1px solid rgba(59,130,246,0.35)",
+                                      background: "rgba(30,58,138,0.2)",
+                                      color: "#dbeafe",
+                                    }}
+                                    title={`Ulozene v ${latest.process_meta.org_pushes.length} organizacii(ach)`}
+                                  >
+                                    ORG
+                                  </span>
+                                ) : null}
                               </div>
                               <div style={{ fontSize: 12, opacity: 0.7 }}>Verzie: {group.items.length}</div>
                             </td>
@@ -3735,6 +4289,37 @@ export default function LinearWizardPage() {
                                   >
                                     Otvoriť poslednú
                                   </button>
+                                ) : null}
+                                {latest?.process_meta?.org_pushes?.find((p) => p.org_id === activeOrgId)?.org_model_id ? (
+                                  <button
+                                    className="btn btn--small"
+                                    type="button"
+                                    onClick={() =>
+                                      loadOrgModelDirect(
+                                        latest.process_meta.org_pushes.find((p) => p.org_id === activeOrgId).org_model_id,
+                                      )
+                                    }
+                                    disabled={loadLoading || modelsActionLoading}
+                                  >
+                                    Otvoriť org verziu
+                                  </button>
+                                ) : null}
+                                {latest ? (
+                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                                    <button
+                                      className="btn btn--small"
+                                      type="button"
+                                      onClick={() => handlePushModelToOrg(latest)}
+                                      disabled={!activeOrgId || pushModelLoadingIds.has(latest.id)}
+                                    >
+                                      {pushModelLoadingIds.has(latest.id) ? "Ukladám..." : "Push do organizácie"}
+                                    </button>
+                                    {!activeOrgId ? (
+                                      <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>
+                                        Nemáš žiadnu organizáciu
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 ) : null}
                               </div>
                             </td>
@@ -3784,6 +4369,21 @@ export default function LinearWizardPage() {
                                               >
                                                 Zmazať
                                               </button>
+                                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                                                <button
+                                                  className="btn btn--small"
+                                                  type="button"
+                                                  onClick={() => handlePushModelToOrg(m)}
+                                                  disabled={!activeOrgId || pushModelLoadingIds.has(m.id)}
+                                                >
+                                                  {pushModelLoadingIds.has(m.id) ? "Ukladám..." : "Push do organizácie"}
+                                                </button>
+                                                {!activeOrgId ? (
+                                                  <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>
+                                                    Nemáš žiadnu organizáciu
+                                                  </div>
+                                                ) : null}
+                                              </div>
                                             </div>
                                           </td>
                                         </tr>
@@ -3807,6 +4407,88 @@ export default function LinearWizardPage() {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn" type="button" onClick={() => setModelsOpen(false)}>
                   Zavrieť
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgsModalOpen ? (
+          <div className="wizard-models-modal" onClick={() => setOrgsModalOpen(false)}>
+            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Organizacie</h3>
+                <div className="wizard-models-tools">
+                  <button className="btn btn--small" type="button" onClick={() => refreshMyOrgs(activeOrgId)} disabled={myOrgsLoading}>
+                    {myOrgsLoading ? "Nacitavam..." : "Obnovit"}
+                  </button>
+                </div>
+              </div>
+              {myOrgsError ? <div className="wizard-error">{myOrgsError}</div> : null}
+              <div style={{ overflow: "auto" }}>
+                <table className="wizard-models-table">
+                  <thead>
+                    <tr>
+                      <th>Nazov</th>
+                      <th>Rola</th>
+                      <th>Stav</th>
+                      <th>Akcia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myOrgsLoading ? (
+                      <tr>
+                        <td colSpan={4}>Nacitavam...</td>
+                      </tr>
+                    ) : myOrgs.length ? (
+                      myOrgs.map((org) => {
+                        const isActive = String(org.id) === String(activeOrgId);
+                        return (
+                          <tr key={org.id}>
+                            <td>{org.name || org.id}</td>
+                            <td>{org.role || "-"}</td>
+                            <td>{isActive ? "Aktivna" : "-"}</td>
+                            <td>
+                              <div className="wizard-models-actions">
+                                <button
+                                  className="btn btn--small btn-primary"
+                                  type="button"
+                                  onClick={() => handleSelectOrg(org)}
+                                  disabled={isActive}
+                                >
+                                  {isActive ? "Aktivna" : "Nastavit aktivnu"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={4}>Zatial nemas ziadnu organizaciu.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Vytvorit organizaciu</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="text"
+                    className="wizard-models-search"
+                    placeholder="Nazov organizacie"
+                    value={newOrgName}
+                    onChange={(e) => setNewOrgName(e.target.value)}
+                  />
+                  <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrgInline}>
+                    Vytvorit
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn" type="button" onClick={() => setOrgsModalOpen(false)}>
+                  Zavriet
                 </button>
               </div>
             </div>
@@ -3843,6 +4525,48 @@ export default function LinearWizardPage() {
                   disabled={orgMoveLoading || orgMoveTargetFolderId === orgMoveCurrentParentId}
                 >
                   {orgMoveLoading ? "Presuvam..." : "Presunut sem"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgPushModalOpen ? (
+          <div className="wizard-models-modal" onClick={closePushModal}>
+            <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Ulozit do organizacie</h3>
+                <button className="btn btn--small" type="button" onClick={closePushModal}>
+                  Zavriet
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
+                Model: <strong>{orgPushModel?.name || orgPushModel?.id || "-"}</strong>
+              </div>
+              {orgPushError ? <div className="wizard-error">{orgPushError}</div> : null}
+              <div className="org-tree">
+                {orgTree
+                  ? renderOrgFolderPickerNode(orgTree, 0, {
+                      mode: "push",
+                      selectedId: orgPushTargetFolderId,
+                      setSelectedId: setOrgPushTargetFolderId,
+                      expandedMap: orgPushExpandedFolders,
+                      toggleExpanded: (id) =>
+                        setOrgPushExpandedFolders((prev) => ({ ...prev, [id]: !prev[id] })),
+                    })
+                  : null}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn" type="button" onClick={closePushModal} disabled={orgPushLoading}>
+                  Zrusit
+                </button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={handleConfirmPushToOrg}
+                  disabled={orgPushLoading || !orgTree}
+                >
+                  {orgPushLoading ? "Ukladam..." : "Ulozit sem"}
                 </button>
               </div>
             </div>
