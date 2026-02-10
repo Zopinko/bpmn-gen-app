@@ -458,6 +458,7 @@ body {
   color: #dbeafe;
 }
 
+
 .org-tree-node:hover {
   border-color: var(--border-subtle);
   background: rgba(255, 255, 255, 0.03);
@@ -477,6 +478,7 @@ body {
   border-color: rgba(34, 197, 94, 0.7);
   background: rgba(22, 101, 52, 0.25);
 }
+
 
 .org-tree-process-row {
   position: relative;

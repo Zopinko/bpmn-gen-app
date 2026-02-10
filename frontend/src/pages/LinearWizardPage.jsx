@@ -1388,6 +1388,18 @@ export default function LinearWizardPage() {
 
   const isReadOnlyMode = modelSource?.kind === "org" && orgReadOnly;
 
+  const handleEnableOrgEdit_unused2 = () => {
+    if (modelSource?.kind !== "org") return;
+    if (activeOrgRole !== "owner") {
+      setInfo("Nemáš právo upravovať org model.");
+      return;
+    }
+    const confirmed = window.confirm("Prepnuť do editácie? Zmeny sa uložia do organizácie.");
+    if (!confirmed) return;
+    setOrgReadOnly(false);
+    setInfo("Režim: editácia.");
+  };
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
@@ -1421,6 +1433,7 @@ export default function LinearWizardPage() {
       xml,
       modelSource,
       orgReadOnly,
+      isReadOnlyMode,
     ],
   );
 
@@ -1850,6 +1863,27 @@ export default function LinearWizardPage() {
     setDrawerOpen(false);
   };
 
+  const showMissingDiagram = useCallback((message) => {
+    setError(message);
+    setInfo(null);
+    setEngineJson(null);
+    setXml("");
+    setSelectedLane(null);
+    setLaneDescription("");
+    setProcessCard(createEmptyProcessCardState());
+    setModelSource({ kind: "sandbox" });
+    setOrgReadOnly(false);
+  }, []);
+
+  const isMissingDiagramError = (err) => {
+    const message = String(err?.message || "");
+    const lower = message.toLowerCase();
+    if (err?.status === 404 || lower.includes("http 404") || lower.includes("not found")) return true;
+    if (lower.includes("diagram_xml") || lower.includes("engine_json")) return true;
+    if (lower.includes("nie je vytvoren") && lower.includes("diagram")) return true;
+    return false;
+  };
+
   const doLoadModelById = async (id) => {
     setError(null);
     setLoadLoading(true);
@@ -1867,10 +1901,18 @@ export default function LinearWizardPage() {
           setInfo("Model bol nacitany.");
           return;
         } catch (orgErr) {
+          if (isMissingDiagramError(orgErr)) {
+            showMissingDiagram("Tento diagram nie je dostupný.");
+            return;
+          }
           const message = orgErr?.message || "Nepodarilo sa nacitat model.";
           setError(message);
           return;
         }
+      }
+      if (isMissingDiagramError(e)) {
+        showMissingDiagram("Tento diagram nie je dostupný.");
+        return;
       }
       const message = e?.message || "Nepodarilo sa nacitat model.";
       setError(message);
@@ -1900,6 +1942,47 @@ export default function LinearWizardPage() {
 
   const toggleOrgFolder = (folderId) => {
     setExpandedOrgFolders((prev) => ({ ...prev, [folderId]: !prev[folderId] }));
+  };
+
+  const expandAllOrgFolders = () => {
+    if (!orgTree) return;
+    const next = { root: true };
+    const visit = (node) => {
+      if (!node) return;
+      if (node.type === "folder") {
+        next[node.id] = true;
+        (node.children || []).forEach(visit);
+      }
+    };
+    visit(orgTree);
+    setExpandedOrgFolders((prev) => ({ ...prev, ...next }));
+  };
+
+  const collapseAllOrgFolders = () => {
+    setExpandedOrgFolders({ root: true });
+  };
+
+  const isOrgTreeFullyExpanded = useMemo(() => {
+    if (!orgTree) return false;
+    const allIds = new Set();
+    const visit = (node) => {
+      if (!node) return;
+      if (node.type === "folder") {
+        allIds.add(node.id);
+        (node.children || []).forEach(visit);
+      }
+    };
+    visit(orgTree);
+    if (!allIds.size) return true;
+    return Array.from(allIds).every((id) => expandedOrgFolders[id]);
+  }, [orgTree, expandedOrgFolders]);
+
+  const toggleOrgTreeExpand = () => {
+    if (isOrgTreeFullyExpanded) {
+      collapseAllOrgFolders();
+    } else {
+      expandAllOrgFolders();
+    }
   };
 
   const handleCreateOrgFolder = async () => {
@@ -2017,6 +2100,10 @@ export default function LinearWizardPage() {
       navigate(`/model/${modelId}`);
       setInfo("Model bol nacitany.");
     } catch (e) {
+      if (isMissingDiagramError(e)) {
+        showMissingDiagram("Tento diagram nie je dostupný.");
+        return;
+      }
       const message = e?.message || "Nepodarilo sa nacitat model.";
       setError(message);
     } finally {
@@ -2041,6 +2128,10 @@ export default function LinearWizardPage() {
       navigate(`/model/${modelId}`);
       setInfo("Model bol nacitany.");
     } catch (e) {
+      if (isMissingDiagramError(e)) {
+        showMissingDiagram("Tento diagram nie je dostupný.");
+        return;
+      }
       const message = e?.message || "Nepodarilo sa nacitat model.";
       setError(message);
     } finally {
@@ -2538,8 +2629,17 @@ export default function LinearWizardPage() {
           )
         : null;
     const scrollTarget = activeProcess || activeFolder;
-    if (scrollTarget && typeof scrollTarget.scrollIntoView === "function") {
-      scrollTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (scrollTarget) {
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = scrollTarget.getBoundingClientRect();
+      const offsetTop = targetRect.top - containerRect.top;
+      const desired =
+        container.scrollTop + offsetTop - container.clientHeight / 2 + targetRect.height / 2;
+      if (typeof container.scrollTo === "function") {
+        container.scrollTo({ top: desired, behavior: "smooth" });
+      } else {
+        container.scrollTop = desired;
+      }
     }
 
     if (activeProcess) {
@@ -3535,6 +3635,9 @@ export default function LinearWizardPage() {
                   <button type="button" className="btn btn--small" onClick={refreshOrgTree} disabled={orgLoading}>
                     Obnovit
                   </button>
+                  <button type="button" className="btn btn--small" onClick={toggleOrgTreeExpand} disabled={!orgTree}>
+                    {isOrgTreeFullyExpanded ? "Zbalit strom" : "Rozbalit strom"}
+                  </button>
                 </div>
                 <div className="org-sidebar__search">
                   <input
@@ -4047,8 +4150,42 @@ export default function LinearWizardPage() {
                 key={`${modelSource?.kind || "sandbox"}-${modelSource?.kind === "org" && orgReadOnly ? "ro" : "rw"}`}
                 {...viewerProps}
               />
-          ) : (
-            <div className="wizard-placeholder">Vyplň Kartu procesu a klikni na Vygenerovať BPMN pre náhľad.</div>
+            ) : (
+              <div
+                style={{
+                  minHeight: "60vh",
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textAlign: "center",
+                }}
+              >
+                {!xml && error ? (
+                  <div
+                    className="wizard-error"
+                    style={{
+                      padding: "14px 16px",
+                      borderRadius: 12,
+                      fontWeight: 800,
+                      fontSize: 15,
+                      letterSpacing: 0.2,
+                      background: "linear-gradient(135deg, rgba(59,130,246,0.35), rgba(30,58,138,0.55))",
+                      border: "1px solid rgba(96,165,250,0.6)",
+                      color: "#eff6ff",
+                      boxShadow: "0 10px 30px rgba(30, 58, 138, 0.25)",
+                      maxWidth: 520,
+                    }}
+                  >
+                    {error}
+                  </div>
+                ) : null}
+                <div className="wizard-placeholder" style={{ maxWidth: 520 }}>
+                  Vyplň Kartu procesu a klikni na Vygenerovať BPMN pre náhľad.
+                </div>
+              </div>
           )}
           {selectedLane ? (
             <div className={`wizard-lane-panel ${isReadOnlyMode ? "is-readonly" : ""}`}>
