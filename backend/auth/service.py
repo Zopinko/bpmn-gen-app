@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from uuid import uuid4
 
 from auth.db import get_connection
@@ -180,3 +181,100 @@ def find_user_by_session(session_token: str) -> AuthUser | None:
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
     )
+
+
+def create_org_with_owner(name: str, user_id: str) -> dict:
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("Nazov organizacie je povinny.")
+    now = to_iso_z(utcnow())
+    org_id = str(uuid4())
+    membership_id = str(uuid4())
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO organizations(id, name, created_at, created_by_user_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            (org_id, cleaned, now, user_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
+            VALUES (?, ?, ?, 'owner', ?)
+            """,
+            (membership_id, org_id, user_id, now),
+        )
+        conn.commit()
+    logger.info("Created org %s by user %s", org_id, user_id)
+    return {"id": org_id, "name": cleaned}
+
+
+def get_user_orgs(user_id: str) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT o.id, o.name, m.role, o.created_at AS org_created_at, m.created_at AS member_created_at
+            FROM organization_members m
+            JOIN organizations o ON o.id = m.organization_id
+            WHERE m.user_id = ?
+            ORDER BY o.created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "role": row["role"],
+            "org_created_at": row["org_created_at"],
+            "member_created_at": row["member_created_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_user_primary_org(user_id: str) -> dict | None:
+    with get_connection() as conn:
+        owner = conn.execute(
+            """
+            SELECT o.id, o.name, m.role
+            FROM organization_members m
+            JOIN organizations o ON o.id = m.organization_id
+            WHERE m.user_id = ? AND m.role = 'owner'
+            ORDER BY o.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        if owner:
+            return {"id": owner["id"], "name": owner["name"], "role": owner["role"]}
+        member = conn.execute(
+            """
+            SELECT o.id, o.name, m.role
+            FROM organization_members m
+            JOIN organizations o ON o.id = m.organization_id
+            WHERE m.user_id = ?
+            ORDER BY o.created_at ASC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if not member:
+        return None
+    return {"id": member["id"], "name": member["name"], "role": member["role"]}
+
+
+def is_user_member_of_org(user_id: str, org_id: str) -> bool:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM organization_members
+            WHERE user_id = ? AND organization_id = ?
+            LIMIT 1
+            """,
+            (user_id, org_id),
+        ).fetchone()
+    return row is not None
+logger = logging.getLogger(__name__)

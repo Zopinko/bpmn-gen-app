@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
 from services.bpmn_svc import (
     append_tasks_to_lane_from_description,
     build_linear_engine_from_wizard,
@@ -31,8 +31,8 @@ from schemas.wizard import (
     WizardModelList,
 )
 import logging
-from auth.service import AuthUser, find_user_by_session
-from core.auth_config import get_auth_config
+from auth.deps import require_user
+from auth.service import AuthUser
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,17 +41,6 @@ router = APIRouter()
 @router.get("/")
 def root():
     return {"message": "BPMN Generator bezi!"}
-
-
-def require_user(request: Request) -> AuthUser:
-    cfg = get_auth_config()
-    token = request.cookies.get(cfg.cookie_name)
-    if not token:
-        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
-    user = find_user_by_session(token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
-    return user
 
 
 def _as_bpmn_download(xml_string: str, filename: str):

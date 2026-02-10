@@ -9,40 +9,56 @@ from uuid import uuid4
 from services.model_storage import save_model
 
 
-def _resolve_tree_path() -> Path:
-    models_dir = os.getenv("BPMN_MODELS_DIR", "data/models")
-    tree_dir = os.getenv("BPMN_TREE_DIR", os.path.join(models_dir, "tree"))
+def _models_dir() -> Path:
+    return Path(os.getenv("BPMN_MODELS_DIR", "data/models"))
+
+
+def _legacy_tree_path() -> Path:
+    tree_dir = os.getenv("BPMN_TREE_DIR", os.path.join(_models_dir().as_posix(), "tree"))
     return Path(tree_dir) / "model_organizacie.json"
 
 
-_TREE_PATH = _resolve_tree_path()
+def org_tree_path(org_id: str) -> Path:
+    path = _models_dir() / "orgs" / str(org_id) / "tree.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-def _ensure_storage() -> None:
-    _TREE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if _TREE_PATH.exists():
-        return
-    root = {
+def _default_root() -> dict[str, Any]:
+    return {
         "id": "root",
         "type": "folder",
         "name": "Model organizácie",
         "children": [],
     }
-    _TREE_PATH.write_text(json.dumps(root, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _read_tree() -> dict[str, Any]:
-    _ensure_storage()
-    return json.loads(_TREE_PATH.read_text(encoding="utf-8"))
+def _ensure_storage(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return
+    path.write_text(json.dumps(_default_root(), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _write_tree(tree: dict[str, Any]) -> None:
-    _ensure_storage()
-    _TREE_PATH.write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding="utf-8")
+def _read_tree(org_id: str) -> dict[str, Any]:
+    path = org_tree_path(org_id)
+    if not path.exists():
+        legacy = _legacy_tree_path()
+        if legacy.exists():
+            path.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            _ensure_storage(path)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def get_tree() -> dict[str, Any]:
-    return _read_tree()
+def _write_tree(org_id: str, tree: dict[str, Any]) -> None:
+    path = org_tree_path(org_id)
+    _ensure_storage(path)
+    path.write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_tree(org_id: str) -> dict[str, Any]:
+    return _read_tree(org_id)
 
 
 def _find_node_and_parent(
@@ -65,8 +81,8 @@ def _assert_folder(node: dict[str, Any] | None, message: str) -> dict[str, Any]:
     return node
 
 
-def create_folder(parent_id: str, name: str) -> dict[str, Any]:
-    tree = _read_tree()
+def create_folder(org_id: str, parent_id: str, name: str) -> dict[str, Any]:
+    tree = _read_tree(org_id)
     parent, _ = _find_node_and_parent(tree, parent_id)
     parent = _assert_folder(parent, "Nadriadena polozka musi byt priecinok.")
     node = {
@@ -76,7 +92,7 @@ def create_folder(parent_id: str, name: str) -> dict[str, Any]:
         "children": [],
     }
     parent.setdefault("children", []).append(node)
-    _write_tree(tree)
+    _write_tree(org_id, tree)
     return node
 
 
@@ -117,8 +133,8 @@ def _create_empty_process_model(name: str) -> dict[str, Any]:
     )
 
 
-def create_process(parent_id: str, name: str) -> dict[str, Any]:
-    tree = _read_tree()
+def create_process(org_id: str, parent_id: str, name: str) -> dict[str, Any]:
+    tree = _read_tree(org_id)
     parent, _ = _find_node_and_parent(tree, parent_id)
     parent = _assert_folder(parent, "Nadriadena polozka musi byt priecinok.")
     model = _create_empty_process_model(name.strip() or "Novy proces")
@@ -129,19 +145,19 @@ def create_process(parent_id: str, name: str) -> dict[str, Any]:
         "processRef": {"modelId": model["id"]},
     }
     parent.setdefault("children", []).append(node)
-    _write_tree(tree)
+    _write_tree(org_id, tree)
     return node
 
 
-def rename_node(node_id: str, name: str) -> dict[str, Any]:
-    tree = _read_tree()
+def rename_node(org_id: str, node_id: str, name: str) -> dict[str, Any]:
+    tree = _read_tree(org_id)
     node, _ = _find_node_and_parent(tree, node_id)
     if not node:
         raise ValueError("Polozka neexistuje.")
     if node.get("id") == "root":
         raise ValueError("Root nie je mozne premenovat.")
     node["name"] = name.strip() or node.get("name") or "Bez nazvu"
-    _write_tree(tree)
+    _write_tree(org_id, tree)
     return node
 
 
@@ -154,10 +170,10 @@ def _is_descendant(node: dict[str, Any], possible_descendant_id: str) -> bool:
     return False
 
 
-def move_node(node_id: str, new_parent_id: str) -> dict[str, Any]:
+def move_node(org_id: str, node_id: str, new_parent_id: str) -> dict[str, Any]:
     if node_id == "root":
         raise ValueError("Root nie je mozne presuvat.")
-    tree = _read_tree()
+    tree = _read_tree(org_id)
     node, parent = _find_node_and_parent(tree, node_id)
     if not node or not parent:
         raise ValueError("Polozka neexistuje.")
@@ -167,18 +183,18 @@ def move_node(node_id: str, new_parent_id: str) -> dict[str, Any]:
         raise ValueError("Priecinok nie je mozne presunut do vlastneho potomka.")
     parent["children"] = [child for child in parent.get("children", []) if child.get("id") != node_id]
     new_parent.setdefault("children", []).append(node)
-    _write_tree(tree)
+    _write_tree(org_id, tree)
     return node
 
 
-def delete_node(node_id: str) -> None:
+def delete_node(org_id: str, node_id: str) -> None:
     if node_id == "root":
         raise ValueError("Root nie je mozne zmazat.")
-    tree = _read_tree()
+    tree = _read_tree(org_id)
     node, parent = _find_node_and_parent(tree, node_id)
     if not node or not parent:
         raise ValueError("Polozka neexistuje.")
     if node.get("type") == "folder" and node.get("children"):
         raise ValueError("Priecinok musi byt prazdny.")
     parent["children"] = [child for child in parent.get("children", []) if child.get("id") != node_id]
-    _write_tree(tree)
+    _write_tree(org_id, tree)
