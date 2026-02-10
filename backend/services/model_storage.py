@@ -26,6 +26,33 @@ def _model_path(model_id: str) -> Path:
     return _models_dir() / f"{model_id}.json"
 
 
+def _user_models_dir(user_id: str) -> Path:
+    base = _models_dir()
+    user_dir = base / "users" / str(user_id) / "models"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
+
+def get_user_models_dir(user_id: str) -> Path:
+    return _user_models_dir(user_id)
+
+
+def _user_model_path(user_id: str, model_id: str) -> Path:
+    return _user_models_dir(user_id) / f"{model_id}.json"
+
+
+def _resolve_model_path(user_id: Optional[str], model_id: str) -> Path:
+    if user_id:
+        user_path = _user_model_path(user_id, model_id)
+        if user_path.exists():
+            return user_path
+        global_path = _model_path(model_id)
+        if global_path.exists():
+            return global_path
+        return user_path
+    return _model_path(model_id)
+
+
 def _now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -37,10 +64,11 @@ def save_model(
     model_id: Optional[str] = None,
     generator_input: Optional[Dict[str, Any]] = None,
     process_meta: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create or update a model. Returns full model."""
     model_id = model_id or str(uuid4())
-    path = _model_path(model_id)
+    path = _user_model_path(user_id, model_id) if user_id else _model_path(model_id)
     created_at = _now_iso()
     existing_generator_input: Optional[Dict[str, Any]] = None
     existing_process_meta: Optional[Dict[str, Any]] = None
@@ -72,23 +100,23 @@ def save_model(
     return model
 
 
-def load_model(model_id: str) -> Dict[str, Any]:
-    path = _model_path(model_id)
+def load_model(model_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    path = _resolve_model_path(user_id, model_id)
     if not path.exists():
         raise FileNotFoundError(model_id)
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def delete_model(model_id: str) -> None:
-    path = _model_path(model_id)
+def delete_model(model_id: str, user_id: Optional[str] = None) -> None:
+    path = _resolve_model_path(user_id, model_id)
     if path.exists():
         path.unlink()
 
 
-def list_models(search: str | None = None) -> List[Dict[str, Any]]:
+def list_models(search: str | None = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
-    directory = _models_dir()
+    directory = _user_models_dir(user_id) if user_id else _models_dir()
     for file in directory.glob("*.json"):
         try:
             with file.open("r", encoding="utf-8") as f:

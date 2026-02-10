@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, Response, UploadFile
 from services.bpmn_svc import (
     append_tasks_to_lane_from_description,
     build_linear_engine_from_wizard,
@@ -7,6 +7,7 @@ from services.bpmn_svc import (
 from services.bpmn_import import bpmn_xml_to_engine
 from services.model_storage import (
     delete_model,
+    get_user_models_dir,
     list_models as storage_list_models,
     load_model as storage_load_model,
     save_model as storage_save_model,
@@ -30,6 +31,8 @@ from schemas.wizard import (
     WizardModelList,
 )
 import logging
+from auth.service import AuthUser, find_user_by_session
+from core.auth_config import get_auth_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,6 +41,17 @@ router = APIRouter()
 @router.get("/")
 def root():
     return {"message": "BPMN Generator bezi!"}
+
+
+def require_user(request: Request) -> AuthUser:
+    cfg = get_auth_config()
+    token = request.cookies.get(cfg.cookie_name)
+    if not token:
+        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
+    user = find_user_by_session(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
+    return user
 
 
 def _as_bpmn_download(xml_string: str, filename: str):
@@ -118,7 +132,10 @@ async def wizard_import_bpmn(file: UploadFile = File(...)):
 
 
 @router.post("/wizard/models", response_model=WizardModelBase)
-def create_wizard_model(payload: dict = Body(...)):
+def create_wizard_model(
+    payload: dict = Body(...),
+    current_user: AuthUser = Depends(require_user),
+):
     """
     Uloží model s engine_json a aktuálnym BPMN XML (DI) do perzistentného úložiska.
     """
@@ -141,6 +158,7 @@ def create_wizard_model(payload: dict = Body(...)):
         model_id=payload.get("id"),
         generator_input=generator_input,
         process_meta=process_meta,
+        user_id=current_user.id,
     )
     return {
         "id": model["id"],
@@ -151,43 +169,57 @@ def create_wizard_model(payload: dict = Body(...)):
 
 
 @router.get("/wizard/models/{model_id}", response_model=WizardModelDetail)
-def get_wizard_model(model_id: str):
+def get_wizard_model(model_id: str, current_user: AuthUser = Depends(require_user)):
     try:
-        model = storage_load_model(model_id)
+        model = storage_load_model(model_id, user_id=current_user.id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
     return model
 
 
 @router.get("/wizard/models", response_model=WizardModelList)
-def list_wizard_models(limit: int = 20, offset: int = 0, search: str | None = None):
+def list_wizard_models(
+    limit: int = 20,
+    offset: int = 0,
+    search: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
     """
     Jednoduché listovanie uložených modelov (perzistentné úložisko).
     """
-    items = storage_list_models(search=search)
+    items = storage_list_models(search=search, user_id=current_user.id)
     total = len(items)
     sliced = items[offset : offset + limit]
+    try:
+        path = get_user_models_dir(current_user.id)
+    except Exception:
+        path = "unknown"
+    logger.info("Listing sandbox models user=%s path=%s count=%s", current_user.id, path, total)
     return {"items": sliced, "total": total, "limit": limit, "offset": offset}
 
 
 @router.delete("/wizard/models/{model_id}")
-def delete_wizard_model(model_id: str):
+def delete_wizard_model(model_id: str, current_user: AuthUser = Depends(require_user)):
     try:
-        storage_load_model(model_id)
+        storage_load_model(model_id, user_id=current_user.id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
-    delete_model(model_id)
+    delete_model(model_id, user_id=current_user.id)
     return {"ok": True}
 
 
 @router.patch("/wizard/models/{model_id}", response_model=WizardModelBase)
-def rename_wizard_model(model_id: str, payload: dict = Body(...)):
+def rename_wizard_model(
+    model_id: str,
+    payload: dict = Body(...),
+    current_user: AuthUser = Depends(require_user),
+):
     new_name = payload.get("name") if isinstance(payload, dict) else None
     if not isinstance(new_name, str) or not new_name.strip():
         raise HTTPException(status_code=400, detail="name je povinné a musí byť string.")
 
     try:
-        existing = storage_load_model(model_id)
+        existing = storage_load_model(model_id, user_id=current_user.id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
 
@@ -198,6 +230,7 @@ def rename_wizard_model(model_id: str, payload: dict = Body(...)):
         model_id=model_id,
         generator_input=existing.get("generator_input"),
         process_meta=existing.get("process_meta"),
+        user_id=current_user.id,
     )
     return updated
 
