@@ -342,6 +342,11 @@ export default function LinearWizardPage() {
   const [orgPushLoading, setOrgPushLoading] = useState(false);
   const [orgPushError, setOrgPushError] = useState(null);
   const [orgPushExpandedFolders, setOrgPushExpandedFolders] = useState({ root: true });
+  const [orgPushConflictOpen, setOrgPushConflictOpen] = useState(false);
+  const [orgPushConflictMatches, setOrgPushConflictMatches] = useState([]);
+  const [orgPushConflictName, setOrgPushConflictName] = useState("");
+  const [orgPushConflictSelectedId, setOrgPushConflictSelectedId] = useState(null);
+  const [orgPushOverwriteConfirmOpen, setOrgPushOverwriteConfirmOpen] = useState(false);
   const [orgToast, setOrgToast] = useState("");
   const orgToastTimerRef = useRef(null);
   const orgTreeRef = useRef(null);
@@ -627,6 +632,7 @@ export default function LinearWizardPage() {
       ...prev,
       generatorInput: { ...prev.generatorInput, [field]: value },
     }));
+    setHasUnsavedChanges(true);
   };
 
   const updateProcessMeta = (field, value) => {
@@ -634,6 +640,12 @@ export default function LinearWizardPage() {
       ...prev,
       processMeta: { ...prev.processMeta, [field]: value },
     }));
+    setHasUnsavedChanges(true);
+  };
+
+  const updateLaneDescription = (value) => {
+    setLaneDescription(value);
+    setHasUnsavedChanges(true);
   };
 
   const appendLine = (current, text) => {
@@ -643,9 +655,35 @@ export default function LinearWizardPage() {
 
   const insertHelpExample = (text) => {
     setLaneDescription((prev) => appendLine(prev, text));
+    setHasUnsavedChanges(true);
     if (helpInsertTarget?.type === "lane") {
       openSingleCard("lane");
     }
+  };
+
+  const findOrgProcessMatchesByName = (tree, name) => {
+    if (!tree || !name) return [];
+    const target = name.trim().toLowerCase();
+    if (!target) return [];
+    const matches = [];
+    const buildPathLabel = (path) =>
+      path
+        .filter((node) => node?.type === "folder")
+        .map((node) => node.name || node.id)
+        .join(" / ") || "root";
+    const visit = (node, path = []) => {
+      if (!node) return;
+      const nextPath = [...path, node];
+      if (node.type === "process") {
+        const nodeName = String(node.name || "").trim().toLowerCase();
+        if (nodeName && nodeName === target) {
+          matches.push({ node, path: nextPath, pathLabel: buildPathLabel(nextPath) });
+        }
+      }
+      (node.children || []).forEach((child) => visit(child, nextPath));
+    };
+    visit(tree);
+    return matches;
   };
 
   const buildHelpTemplate = (rule) => {
@@ -2178,37 +2216,72 @@ export default function LinearWizardPage() {
     setOrgPushModalOpen(false);
     setOrgPushModel(null);
     setOrgPushError(null);
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    setOrgPushOverwriteConfirmOpen(false);
   };
 
-  const handleConfirmPushToOrg = async () => {
+  const executePushToOrg = async ({ nameOverride = null, overwriteModelId = null, skipConflictCheck = false } = {}) => {
     if (!orgPushModel?.id) return;
     if (!activeOrgId) {
       setOrgPushError("Najprv si vyber alebo vytvor organizaciu.");
       return;
     }
+    const baseName = (nameOverride || orgPushModel?.name || "").trim();
+    if (!skipConflictCheck && orgTree && baseName) {
+      const matches = findOrgProcessMatchesByName(orgTree, baseName);
+      if (matches.length) {
+        setOrgPushConflictMatches(matches);
+        setOrgPushConflictName(baseName);
+        setOrgPushConflictSelectedId(matches[0]?.node?.id || null);
+        setOrgPushConflictOpen(true);
+        return;
+      }
+    }
     setPushLoading(orgPushModel.id, true);
     setOrgPushLoading(true);
     setOrgPushError(null);
     try {
-      const pushResp = await pushSandboxModelToOrg(orgPushModel.id, orgPushModel?.name, activeOrgId);
-      const orgModelId = pushResp?.org_model_id;
-      if (!orgModelId) {
-        throw new Error("Org model ID nebol vrateny.");
+      if (overwriteModelId) {
+        const sandboxModel = await loadWizardModel(orgPushModel.id);
+        const payload = {
+          name: (nameOverride || sandboxModel?.name || orgPushModel?.name || orgPushModel.id || "Process").trim(),
+          engine_json: sandboxModel?.engine_json || {},
+          diagram_xml: sandboxModel?.diagram_xml || "",
+          generator_input: sandboxModel?.generator_input,
+          process_meta: sandboxModel?.process_meta,
+        };
+        await saveOrgModel(overwriteModelId, activeOrgId, payload);
+        await refreshOrgTree(activeOrgId);
+        setInfo("Proces v organizácii bol prepísaný.");
+      } else {
+        const pushResp = await pushSandboxModelToOrg(orgPushModel.id, nameOverride || orgPushModel?.name, activeOrgId);
+        const orgModelId = pushResp?.org_model_id;
+        if (!orgModelId) {
+          throw new Error("Org model ID nebol vrateny.");
+        }
+        const treeResp = await createOrgProcessFromOrgModel(
+          {
+            parentId: orgPushTargetFolderId,
+            modelId: orgModelId,
+            name: (nameOverride || orgPushModel?.name || "Process").trim(),
+          },
+          activeOrgId,
+        );
+        setOrgTree(treeResp?.tree || orgTree);
+        setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgPushTargetFolderId]: true }));
+        setInfo("Model bol ulozeny do organizacie.");
       }
-      const treeResp = await createOrgProcessFromOrgModel(
-        {
-          parentId: orgPushTargetFolderId,
-          modelId: orgModelId,
-          name: orgPushModel?.name || "Process",
-        },
-        activeOrgId,
-      );
-      setOrgTree(treeResp?.tree || orgTree);
-      setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgPushTargetFolderId]: true }));
-      setInfo("Model bol ulozeny do organizacie.");
       await fetchModels();
       setOrgPushModalOpen(false);
       setOrgPushModel(null);
+      setOrgPushConflictOpen(false);
+      setOrgPushConflictMatches([]);
+      setOrgPushConflictName("");
+      setOrgPushConflictSelectedId(null);
+      setOrgPushOverwriteConfirmOpen(false);
     } catch (e) {
       if (e?.status === 403) {
         setInfo("Nemas organizaciu alebo nemas pristup.");
@@ -2223,6 +2296,64 @@ export default function LinearWizardPage() {
         window.setTimeout(() => setPushLoading(orgPushModel.id, false), 400);
       }
     }
+  };
+
+  const handleConfirmPushToOrg = async () => {
+    await executePushToOrg();
+  };
+
+  const handleConflictRename = async () => {
+    const name = window.prompt("Nový názov procesu", orgPushConflictName || orgPushModel?.name || "");
+    if (!name) return;
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    await executePushToOrg({ nameOverride: name.trim(), skipConflictCheck: false });
+  };
+
+  const handleConflictOverwrite = async () => {
+    if (!orgPushConflictSelectedId) {
+      setOrgPushError("Najprv vyber proces na prepisanie.");
+      return;
+    }
+    setOrgPushOverwriteConfirmOpen(true);
+  };
+
+  const handleConflictProceed = async () => {
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    setOrgPushOverwriteConfirmOpen(false);
+    await executePushToOrg({ skipConflictCheck: true });
+  };
+
+  const handleConflictCloseModal = () => {
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    setOrgPushOverwriteConfirmOpen(false);
+  };
+
+  const handleConfirmOverwrite = async () => {
+    const match = orgPushConflictMatches.find((m) => m?.node?.id === orgPushConflictSelectedId);
+    if (!match) {
+      setOrgPushError("Nenasiel sa existujuci proces na prepisanie.");
+      setOrgPushOverwriteConfirmOpen(false);
+      return;
+    }
+    setOrgPushOverwriteConfirmOpen(false);
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    await executePushToOrg({ overwriteModelId: match.node.processRef.modelId, skipConflictCheck: true });
+  };
+
+  const handleCancelOverwrite = () => {
+    setOrgPushOverwriteConfirmOpen(false);
   };
 
   const handleConfirmMoveProcess = async () => {
@@ -3802,7 +3933,7 @@ export default function LinearWizardPage() {
                     <span className="wizard-lane-panel__sub">Popíš, čo robí táto rola (jedna aktivita na riadok)</span>
                     <textarea
                       value={laneDescription}
-                      onChange={(e) => setLaneDescription(e.target.value)}
+                      onChange={(e) => updateLaneDescription(e.target.value)}
                       rows={6}
                       className="wizard-lane-textarea"
                     />
@@ -4626,6 +4757,86 @@ export default function LinearWizardPage() {
                   disabled={orgPushLoading || !orgTree}
                 >
                   {orgPushLoading ? "Ukladam..." : "Ulozit sem"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgPushConflictOpen ? (
+          <div className="wizard-models-modal" onClick={handleConflictCloseModal}>
+            <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Duplicitný názov</h3>
+                <button className="btn btn--small" type="button" onClick={handleConflictCloseModal}>
+                  Zavrieť
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+                V organizačnej vrstve už existuje proces s názvom <strong>{orgPushConflictName}</strong>.
+              </div>
+              {orgPushConflictMatches.length ? (
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 12 }}>
+                  <div style={{ marginBottom: 6 }}>Nájdené zhody:</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+                    {orgPushConflictMatches.map((match) => (
+                      <li key={match.node.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="radio"
+                          name="org-push-conflict"
+                          checked={orgPushConflictSelectedId === match.node.id}
+                          onChange={() => setOrgPushConflictSelectedId(match.node.id)}
+                        />
+                        <span>
+                          <strong>{match.node.name || match.node.id}</strong>
+                          <span style={{ opacity: 0.7 }}> — {match.pathLabel}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={handleConflictOverwrite}
+                  disabled={!orgPushConflictSelectedId}
+                >
+                  Prepísať
+                </button>
+                <button className="btn" type="button" onClick={handleConflictProceed}>
+                  Vložiť aj tak
+                </button>
+                <button className="btn btn-primary" type="button" onClick={handleConflictRename}>
+                  Premenovať názov procesu
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgPushOverwriteConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={handleCancelOverwrite}>
+            <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Potvrdiť prepísanie</h3>
+                <button className="btn btn--small" type="button" onClick={handleCancelOverwrite}>
+                  Zavrieť
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+                Ozaj chceš prepísať vybraný proces v organizačnej vrstve?
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+                Ak prepíšeš tento proces, zmeny z tvojho Pieskoviska sa prejavia v organizačnej vrstve.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+                <button className="btn" type="button" onClick={handleCancelOverwrite}>
+                  Zrušiť
+                </button>
+                <button className="btn btn-danger" type="button" onClick={handleConfirmOverwrite}>
+                  Áno, prepísať
                 </button>
               </div>
             </div>
