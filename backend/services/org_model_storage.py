@@ -44,7 +44,8 @@ def _read_tree(org_id: str) -> dict[str, Any]:
     path = org_tree_path(org_id)
     if not path.exists():
         legacy = _legacy_tree_path()
-        if legacy.exists():
+        legacy_org_id = os.getenv("BPMN_LEGACY_ORG_ID")
+        if legacy_org_id and str(org_id) == legacy_org_id and legacy.exists():
             path.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
         else:
             _ensure_storage(path)

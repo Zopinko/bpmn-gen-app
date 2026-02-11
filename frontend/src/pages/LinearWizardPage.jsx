@@ -290,7 +290,6 @@ export default function LinearWizardPage() {
   const [laneInsertOpen, setLaneInsertOpen] = useState(false);
   const [laneInsertType, setLaneInsertType] = useState("task");
   const [laneInsertInputs, setLaneInsertInputs] = useState(() => createLaneInsertInputs());
-  const [loadId, setLoadId] = useState("");
   const modelerRef = useRef(null);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [models, setModels] = useState([]);
@@ -315,9 +314,9 @@ export default function LinearWizardPage() {
   const [orgReadOnly, setOrgReadOnly] = useState(false);
   const [expandedModelGroups, setExpandedModelGroups] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [metaOpen, setMetaOpen] = useState(false);
   const [mentorOpen, setMentorOpen] = useState(false);
   const [storyOpen, setStoryOpen] = useState(false);
+  const [laneOpen, setLaneOpen] = useState(false);
   const [storyOptions, setStoryOptions] = useState(() => createDefaultProcessStoryOptions());
   const [storyDoc, setStoryDoc] = useState(null);
   const [storyStale, setStoryStale] = useState(false);
@@ -369,6 +368,10 @@ export default function LinearWizardPage() {
   const storyEngineRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const pendingOpenActionRef = useRef(null);
+  const pendingOpenResolveRef = useRef(null);
+  const pendingOpenCancelRef = useRef(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [previewVersionTag, setPreviewVersionTag] = useState("");
   const [projectNotes, setProjectNotes] = useState([]);
   const [projectNotesLoading, setProjectNotesLoading] = useState(false);
   const [projectNotesSaving, setProjectNotesSaving] = useState(false);
@@ -408,19 +411,19 @@ export default function LinearWizardPage() {
   const openSingleCard = (cardKey) => {
     setOrgOpen(cardKey === "org");
     setDrawerOpen(cardKey === "drawer");
-    setMetaOpen(cardKey === "meta");
     setHelpOpen(cardKey === "help");
     setStoryOpen(cardKey === "story");
     setMentorOpen(cardKey === "mentor");
+    setLaneOpen(cardKey === "lane");
   };
   const toggleSingleCard = (cardKey) => {
     const isOpen =
       (cardKey === "org" && orgOpen) ||
       (cardKey === "drawer" && drawerOpen) ||
-      (cardKey === "meta" && metaOpen) ||
       (cardKey === "help" && helpOpen) ||
       (cardKey === "story" && storyOpen) ||
-      (cardKey === "mentor" && mentorOpen);
+      (cardKey === "mentor" && mentorOpen) ||
+      (cardKey === "lane" && laneOpen);
     if (isOpen) {
       openSingleCard(null);
       return;
@@ -551,12 +554,11 @@ export default function LinearWizardPage() {
       lines.push("");
     }
     if (doc.decisions?.length) {
-      lines.push("Rozhodnutia");
       doc.decisions.forEach((decision) => {
         lines.push(decision.title);
         (decision.branches || []).forEach((branch) => {
-          lines.push(`- ${branch.intro}`);
-          (branch.steps || []).forEach((step) => lines.push(`  - ${step.text}`));
+          lines.push(`  ${branch.intro}`);
+          (branch.steps || []).forEach((step) => lines.push(`    ${step.text}`));
         });
       });
       lines.push("");
@@ -620,17 +622,19 @@ export default function LinearWizardPage() {
     }
   };
 
-  const updateGeneratorInput = (field, value) =>
+  const updateGeneratorInput = (field, value) => {
     setProcessCard((prev) => ({
       ...prev,
       generatorInput: { ...prev.generatorInput, [field]: value },
     }));
+  };
 
-  const updateProcessMeta = (field, value) =>
+  const updateProcessMeta = (field, value) => {
     setProcessCard((prev) => ({
       ...prev,
       processMeta: { ...prev.processMeta, [field]: value },
     }));
+  };
 
   const appendLine = (current, text) => {
     const base = (current || "").trimEnd();
@@ -639,6 +643,9 @@ export default function LinearWizardPage() {
 
   const insertHelpExample = (text) => {
     setLaneDescription((prev) => appendLine(prev, text));
+    if (helpInsertTarget?.type === "lane") {
+      openSingleCard("lane");
+    }
   };
 
   const buildHelpTemplate = (rule) => {
@@ -894,7 +901,6 @@ export default function LinearWizardPage() {
     setXml("");
     setSelectedLane(null);
     setLaneDescription("");
-    setLoadId("");
     setModelSource({ kind: "sandbox" });
     setOrgReadOnly(false);
     setError(null);
@@ -904,6 +910,8 @@ export default function LinearWizardPage() {
     setImportLoading(false);
     setSaveLoading(false);
     setLoadLoading(false);
+    setHasUnsavedChanges(false);
+    setPreviewVersionTag("");
     setMentorNotes([]);
     setMentorDoneIds([]);
     setMentorAppliedIds([]);
@@ -968,6 +976,7 @@ export default function LinearWizardPage() {
       if (!undoInProgressRef.current) {
         pushHistorySnapshot(engineJson, xml);
       }
+      setHasUnsavedChanges(true);
       const updatedEngine = { ...engineJson, lanes: nextLanes };
       setEngineJson(updatedEngine);
       setProcessCard((prev) => ({
@@ -988,14 +997,14 @@ export default function LinearWizardPage() {
     [engineJson, pushHistorySnapshot, xml],
   );
 
-    const handleDiagramChange = useCallback(
-      async (diagramXml) => {
-        pendingDiagramXmlRef.current = diagramXml;
-        if (!diagramXml || !diagramXml.trim()) return;
-        if (syncInFlightRef.current) return;
-        if (undoInProgressRef.current) return;
-        if (diagramXml === lastSyncedXmlRef.current) return;
-        if (!engineJson) return;
+  const handleDiagramChange = useCallback(
+    async (diagramXml) => {
+      pendingDiagramXmlRef.current = diagramXml;
+      if (!diagramXml || !diagramXml.trim()) return;
+      if (syncInFlightRef.current) return;
+      if (undoInProgressRef.current) return;
+      if (diagramXml === lastSyncedXmlRef.current) return;
+      if (!engineJson) return;
       pushHistorySnapshot(engineJson, xml);
       syncInFlightRef.current = true;
       try {
@@ -1019,21 +1028,22 @@ export default function LinearWizardPage() {
             }));
           }
           lastSyncedXmlRef.current = diagramXml;
+          setHasUnsavedChanges(true);
         }
       } catch (e) {
         const message = e?.message || "Nepodarilo sa synchronizovať zmeny v diagrame.";
         setError(message);
-        } finally {
-          syncInFlightRef.current = false;
-          const pendingXml = pendingDiagramXmlRef.current;
-          if (pendingXml && pendingXml !== diagramXml && pendingXml !== lastSyncedXmlRef.current) {
-            pendingDiagramXmlRef.current = "";
-            window.setTimeout(() => handleDiagramChange(pendingXml), 0);
-          }
+      } finally {
+        syncInFlightRef.current = false;
+        const pendingXml = pendingDiagramXmlRef.current;
+        if (pendingXml && pendingXml !== diagramXml && pendingXml !== lastSyncedXmlRef.current) {
+          pendingDiagramXmlRef.current = "";
+          window.setTimeout(() => handleDiagramChange(pendingXml), 0);
         }
-      },
-      [engineJson, pushHistorySnapshot, xml],
-    );
+      }
+    },
+    [engineJson, pushHistorySnapshot, xml],
+  );
 
   const findLaneIndex = (laneRef, lanes) => {
     if (!laneRef || !Array.isArray(lanes)) return -1;
@@ -1121,6 +1131,7 @@ export default function LinearWizardPage() {
       setEngineJson(generatedEngine);
       const xmlText = await renderEngineXml(generatedEngine);
       setXml(xmlText);
+      setHasUnsavedChanges(true);
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
       setError(message);
@@ -1405,6 +1416,9 @@ export default function LinearWizardPage() {
       title: "Karta procesu - náhľad",
       subtitle: previewName,
       subtitleMeta: previewVersionLabel,
+      subtitleTag: previewVersionTag,
+      subtitleBadge: modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko",
+      subtitleBadgeVariant: modelSource?.kind === "org" ? "org" : "sandbox",
       subtitleProminent: true,
       xml,
       loading: isLoading && !xml,
@@ -1428,6 +1442,7 @@ export default function LinearWizardPage() {
       isLoading,
       previewName,
       previewVersionLabel,
+      previewVersionTag,
       reorderLanesByNames,
       insertLaneBlock,
       xml,
@@ -1752,7 +1767,7 @@ export default function LinearWizardPage() {
       return;
     }
     if (!selectedLane || !laneDescription.trim()) {
-      setError("Vyber lane a doplň aspoň jeden krok.");
+      setError("Vyber lane a doplň aspoň jednu aktivitu.");
       return;
     }
     setIsLoading(true);
@@ -1774,7 +1789,7 @@ export default function LinearWizardPage() {
       setXml(updatedXml);
       setLaneDescription("");
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa pridať kroky do lane.";
+      const message = e?.message || "Nepodarilo sa pridať aktivity do lane.";
       setError(message);
     } finally {
       setIsLoading(false);
@@ -1831,6 +1846,7 @@ export default function LinearWizardPage() {
       }
       setLastSavedAt(Date.now());
       setInfo("Model bol ulozeny.");
+      setHasUnsavedChanges(false);
     } catch (e) {
       const message = e?.message || "Nepodarilo sa ulozit model.";
       setError(message);
@@ -1839,7 +1855,7 @@ export default function LinearWizardPage() {
     }
   };
 
-  const applyLoadedModel = (resp, { closeModels = false, source = null } = {}) => {
+  const applyLoadedModel = (resp, { closeModels = false, source = null, versionTag = "" } = {}) => {
     const loadedEngine = resp?.engine_json;
     const diagram = resp?.diagram_xml;
     if (!loadedEngine || !diagram) {
@@ -1853,6 +1869,8 @@ export default function LinearWizardPage() {
     setSelectedLane(null);
     setLaneDescription("");
     hydrateProcessCard(resp);
+    setPreviewVersionTag(versionTag || "");
+    setHasUnsavedChanges(false);
     if (source) {
       setModelSource(source);
       setOrgReadOnly(source.kind === "org");
@@ -1873,6 +1891,8 @@ export default function LinearWizardPage() {
     setProcessCard(createEmptyProcessCardState());
     setModelSource({ kind: "sandbox" });
     setOrgReadOnly(false);
+    setHasUnsavedChanges(false);
+    setPreviewVersionTag("");
   }, []);
 
   const isMissingDiagramError = (err) => {
@@ -2692,20 +2712,38 @@ export default function LinearWizardPage() {
   );
 
   useEffect(() => {
+    if (selectedLane) {
+      openSingleCard("lane");
+    } else {
+      setLaneOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLane]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.__FLOWMATE_REQUEST_SAVE__ = () => {
+      if (!hasUnsavedChanges) {
+        return Promise.resolve(true);
+      }
+      return new Promise((resolve) => {
+        pendingOpenResolveRef.current = resolve;
+        pendingOpenCancelRef.current = () => resolve(false);
+        pendingOpenActionRef.current = null;
+        setSavePromptOpen(true);
+      });
+    };
+    return () => {
+      if (window.__FLOWMATE_REQUEST_SAVE__) {
+        delete window.__FLOWMATE_REQUEST_SAVE__;
+      }
+    };
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
     void refreshMyOrgs(activeOrgId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleLoadModel = async () => {
-    const trimmed = loadId.trim();
-    if (!trimmed) {
-      setError("Zadaj ID modelu.");
-      return;
-    }
-    requestOpenWithSave(() => {
-      void doLoadModelById(trimmed);
-    });
-  };
 
   const fetchModels = async () => {
     setModelsLoading(true);
@@ -2733,7 +2771,7 @@ export default function LinearWizardPage() {
   };
 
   const requestOpenWithSave = (action) => {
-    if (!engineJson && !xml) {
+    if (!hasUnsavedChanges) {
       action();
       return;
     }
@@ -2745,6 +2783,13 @@ export default function LinearWizardPage() {
     setSavePromptOpen(false);
     await handleSaveModel();
     setInfo("Model bol ulozeny.");
+    setHasUnsavedChanges(false);
+    const resolve = pendingOpenResolveRef.current;
+    pendingOpenResolveRef.current = null;
+    pendingOpenCancelRef.current = null;
+    if (resolve) {
+      resolve(true);
+    }
     const action = pendingOpenActionRef.current;
     pendingOpenActionRef.current = null;
     if (action) {
@@ -2755,6 +2800,12 @@ export default function LinearWizardPage() {
   };
 
   const handleOpenWithoutSave = () => {
+    const resolve = pendingOpenResolveRef.current;
+    pendingOpenResolveRef.current = null;
+    pendingOpenCancelRef.current = null;
+    if (resolve) {
+      resolve(true);
+    }
     const action = pendingOpenActionRef.current;
     pendingOpenActionRef.current = null;
     setSavePromptOpen(false);
@@ -2764,6 +2815,12 @@ export default function LinearWizardPage() {
   };
 
   const handleCancelOpen = () => {
+    const cancel = pendingOpenCancelRef.current;
+    pendingOpenResolveRef.current = null;
+    pendingOpenCancelRef.current = null;
+    if (cancel) {
+      cancel();
+    }
     pendingOpenActionRef.current = null;
     setSavePromptOpen(false);
   };
@@ -2777,9 +2834,6 @@ export default function LinearWizardPage() {
     try {
       await deleteWizardModel(id);
       await fetchModels();
-      if (loadId.trim() === id) {
-        setLoadId("");
-      }
       setInfo("Model bol zmazany.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa zmazat model.";
@@ -2833,12 +2887,13 @@ export default function LinearWizardPage() {
     await openPushToOrgModal(model);
   };
 
-  const doLoadModelFromList = async (id) => {
+  const doLoadModelFromList = async (id, versionTag = "") => {
     setError(null);
     setInfo(null);
     try {
       const resp = await loadWizardModel(id);
-      applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" } });
+      const fallbackTag = resp?.process_meta?.version ? String(resp.process_meta.version) : "";
+      applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" }, versionTag: versionTag || fallbackTag });
       setInfo("Model bol nacitany.");
     } catch (e) {
       const message = e?.message || "Nepodarilo sa nacitat model.";
@@ -2846,9 +2901,9 @@ export default function LinearWizardPage() {
     }
   };
 
-  const loadModelFromList = async (id) => {
+  const loadModelFromList = async (id, versionTag = "") => {
     requestOpenWithSave(() => {
-      void doLoadModelFromList(id);
+      void doLoadModelFromList(id, versionTag);
     });
   };
 
@@ -3029,6 +3084,7 @@ export default function LinearWizardPage() {
       setSelectedLane(null);
       setLaneDescription("");
       setInfo("BPMN model bol importovaný do Karty procesu.");
+      setHasUnsavedChanges(true);
     } catch (e) {
       const message = e?.message || "Nepodarilo sa importovať BPMN.";
       setError(message);
@@ -3254,23 +3310,6 @@ export default function LinearWizardPage() {
           >
             {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
           </button>
-          <button
-            type="button"
-            className={`process-card-toggle ${metaOpen ? "is-active" : ""}`}
-            style={
-              metaOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("meta")}
-          >
-            {metaOpen ? "Skryt meta udaje" : "Meta udaje"}
-          </button>
 
           <button
             type="button"
@@ -3364,6 +3403,19 @@ export default function LinearWizardPage() {
           >
             {saveLoading ? "Ukladám..." : "Uložiť model"}
           </button>
+          <div className="process-card-rail-hover">
+            <button type="button" className="process-card-toggle process-card-toggle--io">
+              Export / Import BPMN
+            </button>
+            <div className="process-card-rail-popover">
+              <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
+                {exportLoading ? "Exportujem..." : "Export BPMN"}
+              </button>
+              <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
+                {importLoading ? "Importujem..." : "Import BPMN"}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="process-card-rail-spacer" />
@@ -3392,7 +3444,7 @@ export default function LinearWizardPage() {
         </div>
       </div>
 
-      {drawerOpen || metaOpen || helpOpen || mentorOpen || storyOpen || orgOpen ? (
+      {drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen ? (
         <div
           style={{
             display: "flex",
@@ -3417,7 +3469,12 @@ export default function LinearWizardPage() {
             >
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Karta procesu</div>
+                  <div className="process-card-label process-card-label-row">
+                    <span>Karta procesu</span>
+                    <span className={`process-card-badge ${modelSource?.kind === "org" ? "is-org" : "is-sandbox"}`}>
+                      {modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko"}
+                    </span>
+                  </div>
                   <div className="process-card-description">Vyplň vstupy pre generovanie BPMN a meta údaje.</div>
                 </div>
                 <button
@@ -3478,6 +3535,21 @@ export default function LinearWizardPage() {
                       placeholder="Aký je výsledok procesu?"
                     />
                   </label>
+                  <div className="process-card-grid">
+                    <label className="wizard-field">
+                      <span>Status</span>
+                      <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)} >
+                        <option value="Draft">Koncept</option>
+                        <option value="Review">Na posúdenie</option>
+                        <option value="Approved">Schválený</option>
+                        <option value="Deprecated">Zastaraný</option>
+                      </select>
+                    </label>
+                    <label className="wizard-field">
+                      <span>Verzia</span>
+                      <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
+                    </label>
+                  </div>
                   <div className="process-card-buttons">
                     <button
                       className="btn btn-primary"
@@ -3495,26 +3567,28 @@ export default function LinearWizardPage() {
                     </button>
                   </div>
                 </section>
-                <section className="process-card-section process-card-section--actions">
-                  <div className="process-card-actions">
-                    <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
-                      {exportLoading ? "Exportujem..." : "Export BPMN"}
-                    </button>
-                    <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
-                      {importLoading ? "Importujem..." : "Import BPMN"}
-                    </button>
+                <section className="process-card-section">
+                  <div className="process-card-section__title">
+                    <h2>Meta udaje o procese</h2>
+                    <span className="process-card-pill process-card-pill--muted">Opis</span>
                   </div>
-                  <div className="process-card-inline-load">
-                    <input
-                      type="text"
-                      placeholder="Model ID"
-                      value={loadId}
-                      onChange={(e) => setLoadId(e.target.value)}
-                      className="wizard-load-input"
-                    />
-                    <button className="btn btn--small" type="button" onClick={handleLoadModel} disabled={loadLoading}>
-                      {loadLoading ? "Načítavam..." : "Načítaj"}
-                    </button>
+                  <div className="process-card-grid">
+                    <label className="wizard-field">
+                      <span>Vlastnik procesu</span>
+                      <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
+                    </label>
+                    <label className="wizard-field">
+                      <span>Oddelenie</span>
+                      <input value={processMeta.department} onChange={(e) => updateProcessMeta("department", e.target.value)} />
+                    </label>
+                    <label className="wizard-field wizard-field--full">
+                      <span>Popis procesu</span>
+                      <textarea
+                        value={processMeta.description}
+                        onChange={(e) => updateProcessMeta("description", e.target.value)}
+                        rows={4}
+                      />
+                    </label>
                   </div>
                 </section>
 
@@ -3522,7 +3596,7 @@ export default function LinearWizardPage() {
                 {info ? <div className="wizard-toast">{info}</div> : null}
                 {modelSource?.kind === "org" ? (
                   <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
-                    Režim: {orgReadOnly ? "Len na čítanie" : "Editácia"} (ORG)
+                    Režim: {orgReadOnly ? "Len na čítanie" : "Editácia"} (Organizácia)
                     {orgReadOnly && activeOrgRole === "owner" ? (
                       <button
                         className="btn btn--small"
@@ -3668,68 +3742,101 @@ export default function LinearWizardPage() {
             </div>
           ) : null}
 
-          {metaOpen ? (
-            <div className={`process-card-drawer is-open process-card-meta ${isReadOnlyMode ? "is-readonly" : ""}`}>
+          {laneOpen && selectedLane ? (
+            <div className={`process-card-drawer is-open process-card-lane ${isReadOnlyMode ? "is-readonly" : ""}`}>
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Meta udaje o procese</div>
-                  <div className="process-card-description">Dopln popis a vlastnosti procesu.</div>
+                  <div className="process-card-label">
+                    Lane {selectedLaneIndex >= 0 ? `${selectedLaneIndex + 1}: ` : ""}
+                    {selectedLane.name || selectedLane.id}
+                  </div>
+                  <div className="process-card-description">
+                    Vybraná lane. Môžeš pridať aktivity, použiť POMOC alebo posunúť lane vyššie/nižšie.
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="process-card-close"
-                  aria-label="Zavriet meta udaje"
-                  onClick={() => setMetaOpen(false)}
-                >
-                  ?-
-                </button>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="btn btn--small btn-primary"
+                    onClick={() => setLaneInsertOpen(true)}
+                    disabled={isReadOnlyMode}
+                  >
+                    Pridať tvar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small btn-link wizard-lane-help-btn"
+                    onClick={() => {
+                      if (helpOpen) {
+                        openSingleCard(null);
+                        return;
+                      }
+                      openSingleCard("help");
+                      setHelpInsertTarget({
+                        type: "lane",
+                        laneId: selectedLane.id,
+                        laneName: selectedLane.name || selectedLane.id,
+                      });
+                    }}
+                  >
+                    Pomocník
+                  </button>
+                  <button
+                    type="button"
+                    className="process-card-close"
+                    aria-label="Zavrieť panel lane"
+                    onClick={() => {
+                      setSelectedLane(null);
+                      setLaneDescription("");
+                      setLaneInsertOpen(false);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               <div className="process-card-body">
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Meta udaje o procese</h2>
-                    <span className="process-card-pill process-card-pill--muted">Opis</span>
+                <div className="wizard-lane-panel__content wizard-lane-panel__content--single">
+                  <div className="wizard-lane-panel__right wizard-lane-panel__right--full">
+                    <div className="wizard-lane-panel__section-title">Popis lane</div>
+                    <span className="wizard-lane-panel__sub">Popíš, čo robí táto rola (jedna aktivita na riadok)</span>
+                    <textarea
+                      value={laneDescription}
+                      onChange={(e) => setLaneDescription(e.target.value)}
+                      rows={6}
+                      className="wizard-lane-textarea"
+                    />
+                    <button className="btn btn-primary" type="button" onClick={handleAppendToLane} disabled={isLoading || isReadOnlyMode}>
+                      {isLoading ? "Pridávam..." : "Vytvor aktivity pre túto rolu"}
+                    </button>
                   </div>
-                  <div className="process-card-grid">
-                    <label className="wizard-field">
-                      <span>Vlastnik procesu</span>
-                      <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
-                    </label>
-                    <label className="wizard-field">
-                      <span>Oddelenie</span>
-                      <input value={processMeta.department} onChange={(e) => updateProcessMeta("department", e.target.value)} />
-                    </label>
-                    <label className="wizard-field">
-                      <span>Status</span>
-                      <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)} >
-                        <option value="Draft">Koncept</option>
-                        <option value="Review">Na posúdenie</option>
-                        <option value="Approved">Schválený</option>
-                        <option value="Deprecated">Zastaraný</option>
-                      </select>
-                    </label>
-                    <label className="wizard-field">
-                      <span>Verzia</span>
-                      <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
-                    </label>
-                    <label className="wizard-field">
-                      <span>Interne ID</span>
-                      <input value={processMeta.internalId} onChange={(e) => updateProcessMeta("internalId", e.target.value)} />
-                    </label>
-                    <label className="wizard-field">
-                      <span>Tagy</span>
-                      <input value={processMeta.tags} onChange={(e) => updateProcessMeta("tags", e.target.value)} />
-                    </label>
-                    <label className="wizard-field wizard-field--full">
-                      <span>Popis procesu</span>
-                      <textarea
-                        value={processMeta.description}
-                        onChange={(e) => updateProcessMeta("description", e.target.value)}
-                        rows={4}
-                      />
-                    </label>
+                  <div className="wizard-lane-panel__left wizard-lane-panel__left--full">
+                    {laneHelperItems.length ? (
+                      <div className="lane-helper">
+                        <div className="lane-helper__title">Pomocník pri zadávaní</div>
+                        <div className="lane-helper__list">
+                          {laneHelperItems.map((item) => (
+                            <div key={item.id} className={`lane-helper__row lane-helper__row--${item.type}`}>
+                              <div className="lane-helper__badge">{item.badge}</div>
+                              <div className="lane-helper__content">
+                                <div className="lane-helper__line">
+                                  <span className="lane-helper__label">Riadok {item.lineNumber}:</span> {item.text}
+                                </div>
+                                <div className="lane-helper__hint">{item.hint}</div>
+                                {item.warning ? <div className="lane-helper__warning">{item.warning}</div> : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="lane-helper">
+                        <div className="lane-helper__title">Pomocník pri zadávaní</div>
+                        <div className="lane-helper__hint">Napíš aktivitu a ja ti ukážem, či to bude task alebo gateway.</div>
+                      </div>
+                    )}
                   </div>
-                </section>
+                </div>
               </div>
             </div>
           ) : null}
@@ -3866,103 +3973,20 @@ export default function LinearWizardPage() {
 
                 <section className="process-card-section">
                   <div className="process-card-section__title">
-                    <h2>Kratke zhrnutie</h2>
+                    <h2>Celý príbeh</h2>
+                    <span className="process-card-pill process-card-pill--muted">Text</span>
                   </div>
-                  {storyDoc?.summary?.length ? (
-                    storyDoc.summary.map((line, idx) => (
-                      <p key={`story-summary-${idx}`} className="process-story-paragraph">
-                        {line}
-                      </p>
-                    ))
+                  {storyDoc ? (
+                    <textarea
+                      className="process-story-textarea"
+                      value={buildStoryText(storyDoc)}
+                      readOnly
+                      rows={14}
+                    />
                   ) : (
                     <div className="process-story-empty">
-                      {engineJson ? "Klikni na Prepocitat pre zhrnutie." : "Najprv nacitaj alebo vytvor mapu."}
+                      {engineJson ? "Klikni na Prepočítať pre príbeh." : "Najprv načítaj alebo vytvor mapu."}
                     </div>
-                  )}
-                </section>
-
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Hlavny priebeh</h2>
-                  </div>
-                  {storyDoc?.mainFlow?.length ? (
-                    <ol className="process-story-list">
-                      {storyDoc.mainFlow.map((line, idx) => (
-                        <li key={`story-main-${idx}`}>{line.text}</li>
-                      ))}
-                    </ol>
-                  ) : (
-                    <div className="process-story-empty">Zatial ziadne kroky.</div>
-                  )}
-                </section>
-
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Rozhodnutia</h2>
-                  </div>
-                  {storyDoc?.decisions?.length ? (
-                    <div className="process-story-paragraphs">
-                      {storyDoc.decisions.map((decision, idx) => (
-                        <div key={`story-decision-${idx}`}>
-                          <p className="process-story-paragraph">
-                            <strong>{decision.title}</strong>
-                          </p>
-                          {decision.branches.map((branch, branchIdx) => (
-                            <p key={`story-decision-${idx}-branch-${branchIdx}`} className="process-story-paragraph">
-                              {buildBranchParagraph(branch)}
-                            </p>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="process-story-empty">Ziadne rozhodnutia.</div>
-                  )}
-                </section>
-
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Paralely</h2>
-                  </div>
-                  {storyDoc?.parallels?.length ? (
-                    <div className="process-story-blocks">
-                      {storyDoc.parallels.map((parallel, idx) => (
-                        <div key={`story-parallel-${idx}`} className="process-story-block">
-                          <div className="process-story-block__title">{parallel.title}</div>
-                          {parallel.branches.map((branch, branchIdx) => (
-                            <div key={`story-parallel-${idx}-branch-${branchIdx}`} className="process-story-branch">
-                              <div className="process-story-branch__label">{branch.label}</div>
-                              <ul>
-                                {branch.steps.map((step, stepIdx) => (
-                                  <li key={`story-parallel-${idx}-branch-${branchIdx}-step-${stepIdx}`}>{step.text}</li>
-                                ))}
-                                {branch.truncated ? <li>...</li> : null}
-                              </ul>
-                            </div>
-                          ))}
-                          {parallel.outro ? <div className="process-story-block__outro">{parallel.outro}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="process-story-empty">Ziadne paralely.</div>
-                  )}
-                </section>
-
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Poznamky</h2>
-                  </div>
-                  {storyDoc?.notes?.length ? (
-                    <ul className="process-story-notes">
-                      {storyDoc.notes.map((note, idx) => (
-                        <li key={`story-note-${idx}`} className={`process-story-note process-story-note--${note.severity}`}>
-                          {note.text}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="process-story-empty">Bez poznamok.</div>
                   )}
                 </section>
               </div>
@@ -4187,113 +4211,6 @@ export default function LinearWizardPage() {
                 </div>
               </div>
           )}
-          {selectedLane ? (
-            <div className={`wizard-lane-panel ${isReadOnlyMode ? "is-readonly" : ""}`}>
-              <div className="wizard-lane-panel__header" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <span>
-                  Lane {selectedLaneIndex >= 0 ? `${selectedLaneIndex + 1}: ` : ""}
-                  {selectedLane.name || selectedLane.id}
-                </span>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <button
-                    type="button"
-                    className="btn btn--small btn-primary"
-                    onClick={() => setLaneInsertOpen(true)}
-                    disabled={isReadOnlyMode}
-                  >
-                    Pridat tvar
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--small btn-link wizard-lane-help-btn"
-                    onClick={() => {
-                      if (helpOpen) {
-                        openSingleCard(null);
-                        return;
-                      }
-                      openSingleCard("help");
-                      setHelpInsertTarget({
-                        type: "lane",
-                        laneId: selectedLane.id,
-                        laneName: selectedLane.name || selectedLane.id,
-                      });
-                    }}
-                  >
-                    Pomocník
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--small btn-link"
-                    aria-label="Zavrieť panel lane"
-                    onClick={() => {
-                      setSelectedLane(null);
-                      setLaneDescription("");
-                      setLaneInsertOpen(false);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              <div className="wizard-lane-panel__hint">
-                Vybraná lane. Môžeš pridať kroky, použiť POMOC alebo posunúť lane vyššie/nižšie.
-              </div>
-
-              
-
-              
-              <div className="wizard-lane-panel__content">
-                <div className="wizard-lane-panel__right">
-                  <div className="wizard-lane-panel__section-title">Popis lane</div>
-<label className="wizard-field">
-                <span>Popíš, čo sa robí v tejto lane (jeden krok na riadok)</span>
-                  <textarea
-                    value={laneDescription}
-                    onChange={(e) => setLaneDescription(e.target.value)}
-                    rows={6}
-                    placeholder={"Krok A\nKrok B\nKrok C"}
-                    disabled={isReadOnlyMode}
-                  />
-              </label>
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={handleAppendToLane}
-                disabled={isLoading || isReadOnlyMode}
-              >
-                {isLoading ? "Pridávam..." : "Vytvoriť kroky v tejto lane"}
-              </button>
-                </div>
-                <div className="wizard-lane-panel__left">
-                  {laneHelperItems.length ? (
-                    <div className="lane-helper">
-                      <div className="lane-helper__title">Pomocnik pri zadavani</div>
-                      <div className="lane-helper__list">
-                        {laneHelperItems.map((item) => (
-                          <div key={item.id} className={`lane-helper__row lane-helper__row--${item.type}`}>
-                            <div className="lane-helper__badge">{item.badge}</div>
-                            <div className="lane-helper__content">
-                              <div className="lane-helper__line">
-                                <span className="lane-helper__label">Riadok {item.lineNumber}:</span> {item.text}
-                              </div>
-                              <div className="lane-helper__hint">{item.hint}</div>
-                              {item.warning ? <div className="lane-helper__warning">{item.warning}</div> : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="lane-helper">
-                      <div className="lane-helper__title">Pomocnik pri zadavani</div>
-                      <div className="lane-helper__hint">Napis krok a ja ti ukazem, ci to bude task alebo gateway.</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-            </div>
-          ) : null}
         </div>
 
         {laneInsertOpen && selectedLane ? (
@@ -4321,7 +4238,7 @@ export default function LinearWizardPage() {
             <div className="wizard-models-panel wizard-models-panel--sandbox" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div>
-                  <h3 style={{ margin: 0 }}>Moje uložené modely (Sandbox)</h3>
+                  <h3 style={{ margin: 0 }}>Moje uložené modely (Pieskovisko)</h3>
                   <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
                     Súkromné modely viditeľné len pre teba. Tlačidlom „Push do organizácie“ ich uložíš do organizačnej
                     knižnice.
@@ -4399,7 +4316,7 @@ export default function LinearWizardPage() {
                                     }}
                                     title={`Ulozene v ${latest.process_meta.org_pushes.length} organizacii(ach)`}
                                   >
-                                    ORG
+                                    Organizácia
                                   </span>
                                 ) : null}
                               </div>
@@ -4421,7 +4338,7 @@ export default function LinearWizardPage() {
                                   <button
                                     className="btn btn--small btn-primary"
                                     type="button"
-                                    onClick={() => loadModelFromList(latest.id)}
+                                    onClick={() => loadModelFromList(latest.id, `#${group.items.length}`)}
                                     disabled={loadLoading || modelsActionLoading}
                                   >
                                     Otvoriť poslednú
@@ -4485,7 +4402,12 @@ export default function LinearWizardPage() {
                                               <button
                                                 className="btn btn--small btn-primary"
                                                 type="button"
-                                                onClick={() => loadModelFromList(m.id)}
+                                                onClick={() =>
+                                                  loadModelFromList(
+                                                    m.id,
+                                                    m.process_meta?.version || `#${group.items.length - index}`,
+                                                  )
+                                                }
                                                 disabled={loadLoading || modelsActionLoading}
                                               >
                                                 Otvoriť

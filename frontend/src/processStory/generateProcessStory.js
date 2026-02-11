@@ -272,7 +272,7 @@ const buildDecisionLines = ({
       incoming,
       nodeById,
       notes,
-      maxSteps: options.moreDetails ? 6 : 3,
+      maxSteps: options.moreDetails ? 100 : 6,
       laneCount,
       decisionDepth: depth + 2,
       mainFlowNodeIds,
@@ -369,7 +369,7 @@ export const createDefaultProcessStoryOptions = () => ({
   summarizeParallels: true,
   showEnds: true,
   showBranchEnds: true,
-  moreDetails: false,
+  moreDetails: true,
   selectedStartId: null,
 });
 
@@ -449,7 +449,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
             incoming,
             nodeById,
             notes,
-            maxSteps: opts.moreDetails ? 6 : 3,
+            maxSteps: opts.moreDetails ? 100 : 6,
             laneCount,
             decisionDepth: 0,
             mainFlowNodeIds: new Set(mainFlowItems.map((item) => item.refs?.nodeIds?.[0]).filter(Boolean)),
@@ -474,7 +474,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
       mainFlowItems.push({ ...line, type: "and" });
       const flows = outgoing.get(node.id) || [];
       const joinNode = findJoinNode({ splitId: node.id, outgoing, incoming, nodeById, type: "and" });
-      const maxSteps = opts.summarizeParallels && !opts.moreDetails ? 1 : 4;
+      const maxSteps = opts.summarizeParallels && !opts.moreDetails ? 1 : 20;
       const parallel = {
         title: `Paralela: ${withFallback(node?.name, "Paralela")}`,
         branches: flows.map((flow, idx) => {

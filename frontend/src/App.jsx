@@ -359,6 +359,12 @@ function AppLayout() {
   }, [refreshAuthState]);
 
   const handleLogout = async () => {
+    if (typeof window !== "undefined" && window.__FLOWMATE_REQUEST_SAVE__) {
+      const shouldProceed = await window.__FLOWMATE_REQUEST_SAVE__();
+      if (!shouldProceed) {
+        return;
+      }
+    }
     try {
       await logoutAuth();
       await refreshAuthState();

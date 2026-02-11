@@ -22,6 +22,9 @@ export default function MapViewer({
   title,
   subtitle,
   subtitleMeta,
+  subtitleTag,
+  subtitleBadge,
+  subtitleBadgeVariant = "sandbox",
   subtitleProminent = false,
   xml,
   loading = false,
@@ -42,7 +45,7 @@ export default function MapViewer({
   const [importError, setImportError] = useState("");
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [blocksOpen, setBlocksOpen] = useState(false);
-  const hasSubtitle = Boolean(subtitle || subtitleMeta);
+  const hasSubtitle = Boolean(subtitle || subtitleMeta || subtitleBadge || subtitleTag);
   const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
   const lastViewboxRef = useRef(null);
@@ -55,6 +58,7 @@ export default function MapViewer({
   const laneHandleOverlayIdsRef = useRef([]);
   const laneHandleMapRef = useRef(new Map());
   const laneDragStartMapRef = useRef(new Map());
+  const laneHandleHoverRef = useRef(false);
   const annotationOverlayIdsRef = useRef([]);
   const laneDragStateRef = useRef({
     active: false,
@@ -82,11 +86,25 @@ export default function MapViewer({
     canvas.zoom(next);
   };
 
-  const zoomFit = () => {
+  const fitWithPadding = (padding = 24) => {
     const modeler = modelerRef.current;
     if (!modeler) return;
     const canvas = modeler.get("canvas");
     canvas.zoom("fit-viewport", "auto");
+    const viewbox = canvas.viewbox();
+    if (!viewbox) return;
+    canvas.viewbox({
+      x: viewbox.x - padding,
+      y: viewbox.y - padding,
+      width: viewbox.width + padding * 2,
+      height: viewbox.height + padding * 2,
+    });
+  };
+
+  const zoomFit = () => {
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    fitWithPadding();
   };
 
   useEffect(() => {
@@ -308,6 +326,15 @@ export default function MapViewer({
       if (isLane) {
         const laneName = element.businessObject?.name || element.businessObject?.id || "";
         const startLaneDrag = laneDragStartMapRef.current.get(element.id);
+        const addLaneWithPrompt = (position) => {
+          const created = modeling.addLane(element, position);
+          if (!created) return;
+          const currentName = created.businessObject?.name || "";
+          const name = window.prompt("Názov lane", currentName);
+          if (typeof name === "string" && name.trim()) {
+            modeling.updateProperties(created, { name: name.trim() });
+          }
+        };
 
         const moveLane = (delta) => {
           if (!elementRegistry || !laneName) return;
@@ -338,13 +365,13 @@ export default function MapViewer({
 
         container.appendChild(
           makeButton("Add lane above", "bpmn-icon-lane-insert-above", {
-            onClick: () => modeling.addLane(element, "top"),
+            onClick: () => addLaneWithPrompt("top"),
             hideOnAction: false,
           }),
         );
         container.appendChild(
           makeButton("Add lane below", "bpmn-icon-lane-insert-below", {
-            onClick: () => modeling.addLane(element, "bottom"),
+            onClick: () => addLaneWithPrompt("bottom"),
             hideOnAction: false,
           }),
         );
@@ -530,6 +557,19 @@ export default function MapViewer({
       }
     };
 
+    const handleElementHover = (event) => {
+      const { element } = event;
+      const boType = element?.businessObject && element.businessObject.$type;
+      if (boType === "bpmn:Lane" || boType === "bpmn:Participant") {
+        showLaneHandle(element.id);
+      }
+    };
+
+    const handleElementOut = () => {
+      if (laneHandleHoverRef.current || laneDragStateRef.current.active) return;
+      hideLaneHandles();
+    };
+
     const handleCanvasClick = () => {
       clearLaneHandles();
       clearContextPad();
@@ -689,6 +729,8 @@ export default function MapViewer({
       eventBus.on("shape.resize.end", stopGhostStyling);
       eventBus.on("shape.resize.cancel", stopGhostStyling);
       eventBus.on("element.click", handleElementClick);
+      eventBus.on("element.hover", handleElementHover);
+      eventBus.on("element.out", handleElementOut);
       eventBus.on("canvas.click", handleCanvasClick);
       eventBus.on("canvas.viewbox.changed", handleViewboxChanged);
       eventBus.on("commandStack.changed", handleDiagramChanged);
@@ -717,6 +759,8 @@ export default function MapViewer({
         eventBus.off("shape.resize.end", stopGhostStyling);
         eventBus.off("shape.resize.cancel", stopGhostStyling);
         eventBus.off("element.click", handleElementClick);
+        eventBus.off("element.hover", handleElementHover);
+        eventBus.off("element.out", handleElementOut);
         eventBus.off("canvas.click", handleCanvasClick);
         eventBus.off("canvas.viewbox.changed", handleViewboxChanged);
         eventBus.off("commandStack.changed", handleDiagramChanged);
@@ -801,12 +845,7 @@ export default function MapViewer({
       .then(() => {
         if (cancelled) return;
         setImportError("");
-        const canvas = modeler.get("canvas");
-        if (hasImportedRef.current && lastViewboxRef.current) {
-          canvas.viewbox(lastViewboxRef.current);
-        } else {
-          canvas.zoom("fit-viewport", "auto");
-        }
+        fitWithPadding();
         hasImportedRef.current = true;
 
         const overlays = modeler.get("overlays");
@@ -872,6 +911,10 @@ export default function MapViewer({
           if (typeof handler !== "function") return;
           if (!laneName) return;
           event.preventDefault();
+          event.stopPropagation();
+          if (event.nativeEvent?.stopImmediatePropagation) {
+            event.nativeEvent.stopImmediatePropagation();
+          }
           const dragState = laneDragStateRef.current;
           if (dragState.active) return;
 
@@ -942,17 +985,23 @@ export default function MapViewer({
           if (!laneName) return;
           const handle = document.createElement("div");
           handle.className = "lane-dnd-handle";
+          handle.title = "Presunúť lane";
           handle.style.display = "none";
-          const title = document.createElement("div");
-          title.className = "lane-dnd-handle__title";
-          title.textContent = laneName;
-          const hint = document.createElement("div");
-          hint.className = "lane-dnd-handle__hint";
-          hint.textContent = "Potiahni pre presun";
-          handle.appendChild(title);
-          handle.appendChild(hint);
+          handle.addEventListener("mouseenter", () => {
+            laneHandleHoverRef.current = true;
+          });
+          handle.addEventListener("mouseleave", () => {
+            laneHandleHoverRef.current = false;
+          });
+          const icon = document.createElement("div");
+          icon.className = "lane-dnd-handle__icon";
+          handle.appendChild(icon);
           const dragStart = beginLaneDrag(laneName);
-          handle.addEventListener("mousedown", dragStart);
+          handle.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            dragStart(event);
+          });
           const id = overlays.add(lane, {
             position: { top: 6, left: 6 },
             html: handle,
@@ -1047,6 +1096,10 @@ export default function MapViewer({
           <div className="map-viewer__title">{title}</div>
           {hasSubtitle ? (
             <div className={subtitleClassName}>
+              {subtitleBadge ? (
+                <span className={`map-viewer__badge map-viewer__badge--${subtitleBadgeVariant}`}>{subtitleBadge}</span>
+              ) : null}
+              {subtitleTag ? <span className="map-viewer__tag">{subtitleTag}</span> : null}
               {subtitle ? <span className="map-viewer__subtitle-name">{subtitle}</span> : null}
               {subtitleMeta ? <span className="map-viewer__subtitle-meta">{subtitleMeta}</span> : null}
             </div>
@@ -1063,65 +1116,65 @@ export default function MapViewer({
           </button>
         ) : null}
       </div>
-      <div className="map-viewer__body">
-        <div className="map-toolbar-stack">
-          <div className={`map-toolbar ${toolbarCollapsed ? "is-collapsed" : ""}`}>
-            <button
-              className="map-toolbar__toggle map-toolbar__toggle--primary"
-              type="button"
-              onClick={() => setToolbarCollapsed((prev) => !prev)}
-              title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
-            >
-              {toolbarCollapsed ? "Nástroje" : "Skryť"}
-            </button>
-            {!toolbarCollapsed ? (
-              <div className="map-toolbar__group">
-                <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
+        <div className="map-viewer__body">
+          <div className="map-toolbar-stack">
+            <div className={`map-toolbar ${toolbarCollapsed ? "is-collapsed" : ""}`}>
+              <button
+                className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--compact"
+                type="button"
+                onClick={() => setToolbarCollapsed((prev) => !prev)}
+                title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
+              >
+                {toolbarCollapsed ? "Nástroje" : "Skryť"}
+              </button>
+              {!toolbarCollapsed ? (
+                <div className="map-toolbar__group">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
                   +
                 </button>
-                <button className="map-toolbar__btn" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
                   -
                 </button>
-                <button className="map-toolbar__btn" type="button" onClick={zoomFit} title="Prispôsobiť">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={zoomFit} title="Prispôsobiť">
                   Fit
                 </button>
-                {onUndo ? (
-                  <button
-                    className="map-toolbar__btn map-toolbar__btn--undo"
-                    type="button"
-                    onClick={onUndo}
-                    title="Späť"
-                    disabled={!canUndo}
-                  >
-                    Späť
-                  </button>
+                  {onUndo ? (
+                    <button
+                      className="map-toolbar__btn map-toolbar__btn--undo"
+                      type="button"
+                      onClick={onUndo}
+                      title="Späť"
+                      disabled={!canUndo}
+                    >
+                      Späť
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="map-toolbar__blocks-panel">
+                <button
+                  className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--blocks"
+                  type="button"
+                  onClick={() => setBlocksOpen((prev) => !prev)}
+                  title="Vložiť blok"
+                >
+                  Bloky
+                </button>
+                {blocksOpen ? (
+                  <div className="map-toolbar__blocks-menu">
+                    <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("xor")}>
+                      <span className="map-toolbar__btn-icon bpmn-icon-gateway-xor" aria-hidden="true" />
+                      Rozhodnutie
+                    </button>
+                    <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("and")}>
+                      <span className="map-toolbar__btn-icon bpmn-icon-gateway-parallel" aria-hidden="true" />
+                      Paralela
+                    </button>
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-          <div className="map-toolbar__blocks-panel">
-            <button
-              className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--blocks"
-              type="button"
-              onClick={() => setBlocksOpen((prev) => !prev)}
-              title="Vložiť blok"
-            >
-              Bloky
-            </button>
-            {blocksOpen ? (
-              <div className="map-toolbar__blocks-menu">
-                <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("xor")}>
-                  <span className="map-toolbar__btn-icon bpmn-icon-gateway-xor" aria-hidden="true" />
-                  Rozhodnutie
-                </button>
-                <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("and")}>
-                  <span className="map-toolbar__btn-icon bpmn-icon-gateway-parallel" aria-hidden="true" />
-                  Paralela
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div><div ref={containerRef} className="map-viewer__canvas" />
+            </div>
+          </div><div ref={containerRef} className="map-viewer__canvas" />
         {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
         {annotations?.length ? (
