@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import AiModeSwitch from "./components/AiModeSwitch";
 import OverlayLegend from "./components/OverlayLegend";
@@ -25,7 +25,7 @@ const loadInitialText = () => {
   try {
     return window.localStorage.getItem(STORAGE_KEY_TEXT) || DEFAULT_TEXT;
   } catch (error) {
-    console.warn("Neviem \č\íta\ť posledn\ý text zo storage:", error);
+    console.warn("Neviem citat posledny text zo storage:", error);
     return DEFAULT_TEXT;
   }
 };
@@ -341,6 +341,7 @@ function App() {
 function AppLayout() {
   const navigate = useNavigate();
   const [authState, setAuthState] = useState({ user: null, loading: true });
+  const [activeOrgLabel, setActiveOrgLabel] = useState("");
 
   const refreshAuthState = useCallback(async () => {
     setAuthState((prev) => ({ ...prev, loading: true }));
@@ -370,9 +371,32 @@ function AppLayout() {
       await refreshAuthState();
     } finally {
       setAuthState({ user: null, loading: false });
+      setActiveOrgLabel("");
       navigate("/login", { replace: true });
     }
   };
+
+  useEffect(() => {
+    const readActiveOrg = () => {
+      if (typeof window === "undefined") return;
+      const id = window.localStorage.getItem("ACTIVE_ORG_ID") || "";
+      const name = window.localStorage.getItem("ACTIVE_ORG_NAME") || "";
+      if (!id && !name) {
+        setActiveOrgLabel("");
+        return;
+      }
+      setActiveOrgLabel(name || id);
+    };
+    readActiveOrg();
+    if (typeof window === "undefined") return;
+    const handler = () => readActiveOrg();
+    window.addEventListener("active-org-changed", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("active-org-changed", handler);
+      window.removeEventListener("storage", handler);
+    };
+  }, [authState.user]);
 
 
   const renderProtected = (element) => {
@@ -416,7 +440,12 @@ function AppLayout() {
               </>
             ) : (
               <div className="app-nav__auth">
-                <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
+                <div className="app-nav__auth-meta">
+                  <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
+                  {activeOrgLabel ? (
+                    <span className="app-nav__auth-status">Aktivna organizacia: {activeOrgLabel}</span>
+                  ) : null}
+                </div>
                 <button type="button" className="btn app-nav__logout" onClick={handleLogout} disabled={authState.loading}>
                   Odhlasit
                 </button>

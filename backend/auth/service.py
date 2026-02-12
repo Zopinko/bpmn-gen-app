@@ -291,4 +291,42 @@ def get_user_org_role(user_id: str, org_id: str) -> str | None:
             (user_id, org_id),
         ).fetchone()
     return row["role"] if row else None
+
+
+def find_user_id_by_email(email: str) -> str | None:
+    normalized_email = normalize_email(email)
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE email = ? LIMIT 1",
+            (normalized_email,),
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def add_org_member(user_id: str, org_id: str, role: str) -> None:
+    now = to_iso_z(utcnow())
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(uuid4()), org_id, user_id, role, now),
+        )
+        conn.commit()
+
+
+def list_org_members(org_id: str) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.email, m.role
+            FROM organization_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.organization_id = ?
+            ORDER BY u.email ASC
+            """,
+            (org_id,),
+        ).fetchall()
+    return [{"email": row["email"], "role": row["role"]} for row in rows]
 logger = logging.getLogger(__name__)

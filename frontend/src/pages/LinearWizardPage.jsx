@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MapViewer from "../components/MapViewer";
 import { useHeaderStepper } from "../components/HeaderStepperContext";
@@ -19,6 +19,8 @@ import {
   saveOrgModel,
   getProjectNotes,
   saveProjectNotes,
+  addOrgMember,
+  listOrgMembers,
   mentorReview,
   mentorApply,
 } from "../api/wizard";
@@ -310,6 +312,24 @@ export default function LinearWizardPage() {
   const [activeOrgName, setActiveOrgName] = useState("");
   const [activeOrgRole, setActiveOrgRole] = useState("");
   const [newOrgName, setNewOrgName] = useState("");
+  const [addMemberEmail, setAddMemberEmail] = useState("");
+  const [addMemberOrgId, setAddMemberOrgId] = useState("");
+  const [addMemberRole, setAddMemberRole] = useState("owner");
+  const [addMemberLoading, setAddMemberLoading] = useState(false);
+  const [addMemberError, setAddMemberError] = useState(null);
+  const [addMemberInfo, setAddMemberInfo] = useState(null);
+  const [orgMembersOpen, setOrgMembersOpen] = useState(false);
+  const [orgMembers, setOrgMembers] = useState([]);
+  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
+  const [orgMembersError, setOrgMembersError] = useState(null);
+  const [railSections, setRailSections] = useState({
+    org: true,
+    process: true,
+    mentor: false,
+    save: false,
+    env: false,
+    project: false,
+  });
   const [modelSource, setModelSource] = useState({ kind: "sandbox" });
   const [orgReadOnly, setOrgReadOnly] = useState(false);
   const [expandedModelGroups, setExpandedModelGroups] = useState([]);
@@ -434,6 +454,10 @@ export default function LinearWizardPage() {
       return;
     }
     openSingleCard(cardKey);
+  };
+
+  const toggleRailSection = (key) => {
+    setRailSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
   const startOptions = useMemo(() => {
     const nodes = engineJson?.nodes || [];
@@ -1449,48 +1473,6 @@ export default function LinearWizardPage() {
     setInfo("Režim: editácia.");
   };
 
-  const viewerProps = useMemo(
-    () => ({
-      title: "Karta procesu - náhľad",
-      subtitle: previewName,
-      subtitleMeta: previewVersionLabel,
-      subtitleTag: previewVersionTag,
-      subtitleBadge: modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko",
-      subtitleBadgeVariant: modelSource?.kind === "org" ? "org" : "sandbox",
-      subtitleProminent: true,
-      xml,
-      loading: isLoading && !xml,
-      error: error || "",
-      readOnly: modelSource?.kind === "org" && orgReadOnly,
-      onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
-      onLaneOrderChange: reorderLanesByNames,
-      onDiagramChange: handleDiagramChange,
-      onUndo: handleUndo,
-      canUndo: historyCount > 0,
-      onInsertBlock: insertLaneBlock,
-      onModelerReady: (modeler) => {
-        modelerRef.current = modeler;
-      },
-    }),
-    [
-      error,
-      handleDiagramChange,
-      handleUndo,
-      historyCount,
-      isLoading,
-      previewName,
-      previewVersionLabel,
-      previewVersionTag,
-      reorderLanesByNames,
-      insertLaneBlock,
-      xml,
-      modelSource,
-      orgReadOnly,
-      isReadOnlyMode,
-    ],
-  );
-
-
   const laneShapeOptions = useMemo(() => LANE_SHAPE_OPTIONS, []);
   const activeLaneShape = useMemo(
     () => laneShapeOptions.find((shape) => shape.id === laneInsertType) || laneShapeOptions[0],
@@ -1893,6 +1875,52 @@ export default function LinearWizardPage() {
     }
   };
 
+  const viewerProps = useMemo(
+    () => ({
+      title: "Karta procesu - náhľad",
+      subtitle: previewName,
+      subtitleMeta: previewVersionLabel,
+      subtitleTag: previewVersionTag,
+      subtitleBadge: modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko",
+      subtitleBadgeVariant: modelSource?.kind === "org" ? "org" : "sandbox",
+      subtitleProminent: true,
+      xml,
+      loading: isLoading && !xml,
+      error: error || "",
+      readOnly: modelSource?.kind === "org" && orgReadOnly,
+      onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
+      onLaneOrderChange: reorderLanesByNames,
+      onDiagramChange: handleDiagramChange,
+      onUndo: handleUndo,
+      canUndo: historyCount > 0,
+      onSave: handleSaveModel,
+      saveDisabled: saveLoading || isReadOnlyMode,
+      saveLabel: saveLoading ? "Ukladám..." : "Uložiť",
+      onInsertBlock: insertLaneBlock,
+      onModelerReady: (modeler) => {
+        modelerRef.current = modeler;
+      },
+    }),
+    [
+      error,
+      handleDiagramChange,
+      handleSaveModel,
+      handleUndo,
+      historyCount,
+      isLoading,
+      previewName,
+      previewVersionLabel,
+      previewVersionTag,
+      reorderLanesByNames,
+      insertLaneBlock,
+      saveLoading,
+      xml,
+      modelSource,
+      orgReadOnly,
+      isReadOnlyMode,
+    ],
+  );
+
   const applyLoadedModel = (resp, { closeModels = false, source = null, versionTag = "" } = {}) => {
     const loadedEngine = resp?.engine_json;
     const diagram = resp?.diagram_xml;
@@ -1992,7 +2020,13 @@ export default function LinearWizardPage() {
       const tree = await getOrgModel(orgId);
       setOrgTree(tree);
     } catch (e) {
-      setOrgError(e?.message || "Nepodarilo sa nacitat Model organizacie.");
+      const status = e?.status;
+      if (status === 403) {
+        setOrgError("Pouzivatel nema pristup k organizacii. Skus prepnúť organizaciu.");
+        void refreshMyOrgs(activeOrgId);
+      } else {
+        setOrgError(e?.message || "Nepodarilo sa nacitat Model organizacie.");
+      }
     } finally {
       setOrgLoading(false);
     }
@@ -2876,6 +2910,14 @@ export default function LinearWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!orgsModalOpen) return;
+    const fallback = activeOrgId || (myOrgs.length ? myOrgs[0].id : "");
+    if (!addMemberOrgId && fallback) {
+      setAddMemberOrgId(fallback);
+    }
+  }, [orgsModalOpen, activeOrgId, myOrgs, addMemberOrgId]);
+
   const fetchModels = async () => {
     setModelsLoading(true);
     setModelsError(null);
@@ -3046,6 +3088,8 @@ export default function LinearWizardPage() {
       setMyOrgsEmpty(true);
       if (typeof window !== "undefined") {
         window.localStorage.removeItem("ACTIVE_ORG_ID");
+        window.localStorage.removeItem("ACTIVE_ORG_NAME");
+        window.dispatchEvent(new Event("active-org-changed"));
       }
       return;
     }
@@ -3057,6 +3101,8 @@ export default function LinearWizardPage() {
     setMyOrgsEmpty(false);
     if (active?.id && typeof window !== "undefined") {
       window.localStorage.setItem("ACTIVE_ORG_ID", active.id);
+      window.localStorage.setItem("ACTIVE_ORG_NAME", active?.name || "");
+      window.dispatchEvent(new Event("active-org-changed"));
     }
   };
 
@@ -3116,6 +3162,8 @@ export default function LinearWizardPage() {
     setActiveOrgRole(org?.role || "");
     if (typeof window !== "undefined") {
       window.localStorage.setItem("ACTIVE_ORG_ID", org.id);
+      window.localStorage.setItem("ACTIVE_ORG_NAME", org?.name || "");
+      window.dispatchEvent(new Event("active-org-changed"));
     }
     setInfo("Aktivna organizacia bola zmenena.");
     setMyOrgsEmpty(false);
@@ -3143,6 +3191,65 @@ export default function LinearWizardPage() {
     } catch (e) {
       setMyOrgsError(e?.message || "Nepodarilo sa vytvorit organizaciu.");
     }
+  };
+
+  const handleAddOrgMember = async () => {
+    const email = addMemberEmail.trim();
+    const orgId = addMemberOrgId || activeOrgId;
+    if (!email || !orgId) return;
+    setAddMemberLoading(true);
+    setAddMemberError(null);
+    setAddMemberInfo(null);
+    try {
+      const resp = await addOrgMember(email, orgId, addMemberRole);
+      if (resp?.already_member) {
+        setAddMemberInfo("Pouzivatel uz je clen organizacie.");
+      } else {
+        setAddMemberInfo("Pouzivatel bol pridany do organizacie.");
+      }
+      setAddMemberEmail("");
+      await refreshMyOrgs(activeOrgId);
+    } catch (e) {
+      setAddMemberError(e?.message || "Nepodarilo sa pridat pouzivatela.");
+    } finally {
+      setAddMemberLoading(false);
+    }
+  };
+
+  const handleToggleOrgMembers = async () => {
+    const nextOpen = !orgMembersOpen;
+    setOrgMembersOpen(nextOpen);
+    if (!nextOpen) return;
+    if (!activeOrgId) {
+      setOrgMembers([]);
+      setOrgMembersError("Najprv si vyber organizaciu.");
+      return;
+    }
+    setOrgMembersLoading(true);
+    setOrgMembersError(null);
+    try {
+      const members = await listOrgMembers(activeOrgId);
+      setOrgMembers(members || []);
+    } catch (e) {
+      setOrgMembersError(e?.message || "Nepodarilo sa nacitat clenov organizacie.");
+      setOrgMembers([]);
+    } finally {
+      setOrgMembersLoading(false);
+    }
+  };
+
+  const handleDeactivateOrg = () => {
+    setActiveOrgId(null);
+    setActiveOrgName("");
+    setActiveOrgRole("");
+    setOrgTree(null);
+    setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("ACTIVE_ORG_ID");
+      window.localStorage.removeItem("ACTIVE_ORG_NAME");
+      window.dispatchEvent(new Event("active-org-changed"));
+    }
+    setInfo("Aktivna organizacia bola zrusena.");
   };
 
 
@@ -3396,182 +3503,209 @@ export default function LinearWizardPage() {
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
-      <div className="process-card-rail">
-        <div className="process-card-rail-group">
-          <button
-            type="button"
-            className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
-            style={
-              orgOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("org")}
-          >
-            {orgOpen ? "Skryt model organizacie" : "Model organizacie"}
+            <div className="process-card-rail">
+        <div className={`process-card-rail-group ${railSections.org ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("org")}>
+            <span>ORGANIZÁCIA</span>
+            <span className="process-card-rail-chevron">{railSections.org ? "-" : "+"}</span>
           </button>
-          <button type="button" className="process-card-toggle" onClick={openOrgsModal}>
-            Organizacie
-          </button>
-        </div>
-
-        <div className="process-card-rail-divider" />
-
-        <div className="process-card-rail-group">
-          <div className="process-card-rail-title">Proces</div>
-          <button
-            type="button"
-            className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
-            style={
-              drawerOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("drawer")}
-          >
-            {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
-          </button>
-
-          <button
-            type="button"
-            className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
-            style={
-              helpOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("help")}
-          >
-            {helpOpen ? "Skryť pomocník" : "Pomocník"}
-          </button>
-          <button
-            type="button"
-            className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
-            style={
-              storyOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("story")}
-          >
-            {storyOpen ? "Skryt pribeh" : "Pribeh procesu"}
-          </button>
-          <button
-            type="button"
-            className="process-card-toggle process-card-toggle--new-model"
-            onClick={handleNewModel}
-          >
-            Nový model
-          </button>
-        </div>
-
-        <div className="process-card-rail-divider" />
-
-        <div className="process-card-rail-group">
-          <div className="process-card-rail-title">Mentor</div>
-          <button
-            type="button"
-            className={`process-card-toggle ${mentorOpen ? "is-active" : ""}`}
-            style={
-              mentorOpen
-                ? {
-                    backgroundColor: "#1b3a6b",
-                    color: "#fff",
-                    borderColor: "#2f5ca0",
-                    boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                  }
-                : undefined
-            }
-            onClick={() => toggleSingleCard("mentor")}
-          >
-            {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
-          </button>
-          <button
-            type="button"
-            className={`process-card-toggle process-card-toggle--mentor-review ${mentorStale ? "is-stale" : ""}`}
-            onClick={() => {
-              openSingleCard("mentor");
-              runMentorReview();
-            }}
-            disabled={mentorLoading}
-          >
-            {mentorLoading ? "Kontrolujem..." : "Spustiť kontrolu"}
-          </button>
-        </div>
-
-        <div className="process-card-rail-divider" />
-
-        <div className="process-card-rail-group">
-          <div className="process-card-rail-title">Uloženie</div>
-          <button type="button" className="process-card-toggle process-card-toggle--models" onClick={openModels}>
-            Uložené modely
-          </button>
-          <button
-            type="button"
-            className="process-card-toggle process-card-toggle--save"
-            onClick={handleSaveModel}
-            disabled={saveLoading}
-          >
-            {saveLoading ? "Ukladám..." : "Uložiť model"}
-          </button>
-          <div className="process-card-rail-hover">
-            <button type="button" className="process-card-toggle process-card-toggle--io">
-              Export / Import BPMN
-            </button>
-            <div className="process-card-rail-popover">
-              <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
-                {exportLoading ? "Exportujem..." : "Export BPMN"}
+          {railSections.org ? (
+            <div className="process-card-rail-content">
+              <button
+                type="button"
+                className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
+                style={
+                  orgOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("org")}
+              >
+                {orgOpen ? "Skryť model organizacie" : "Model organizacie"}
               </button>
-              <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
-                {importLoading ? "Importujem..." : "Import BPMN"}
+              <button type="button" className="process-card-toggle" onClick={openOrgsModal}>
+                Organizacie
               </button>
             </div>
-          </div>
+          ) : null}
         </div>
 
-        <div className="process-card-rail-spacer" />
+        <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
+            <span>Proces</span>
+            <span className="process-card-rail-chevron">{railSections.process ? "-" : "+"}</span>
+          </button>
+          {railSections.process ? (
+            <div className="process-card-rail-content">
+              <button
+                type="button"
+                className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
+                style={
+                  drawerOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("drawer")}
+              >
+                {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
+              </button>
 
-        <div className="process-card-rail-group">
-          <div className="process-card-rail-title">Prostredie</div>
-          <button type="button" className="process-card-toggle" onClick={() => navigate("/")}>
-            Karta procesu
-          </button>
-          <button type="button" className="process-card-toggle" onClick={() => navigate("/text")}>
-            Text - mapa
-          </button>
+              <button
+                type="button"
+                className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
+                style={
+                  helpOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("help")}
+              >
+                {helpOpen ? "Skryť pomocník" : "Pomocník"}
+              </button>
+              <button
+                type="button"
+                className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
+                style={
+                  storyOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("story")}
+              >
+                {storyOpen ? "Skryť príbeh" : "Príbeh procesu"}
+              </button>
+              <button
+                type="button"
+                className={`process-card-toggle ${mentorOpen ? "is-active" : ""}`}
+                style={
+                  mentorOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("mentor")}
+              >
+                {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
+              </button>
+              <button
+                type="button"
+                className={`process-card-toggle process-card-toggle--mentor-review ${mentorStale ? "is-stale" : ""}`}
+                onClick={() => {
+                  openSingleCard("mentor");
+                  runMentorReview();
+                }}
+                disabled={mentorLoading}
+              >
+                {mentorLoading ? "Kontrolujem..." : "Spustiť kontrolu"}
+              </button>
+              <button
+                type="button"
+                className="process-card-toggle process-card-toggle--new-model"
+                onClick={handleNewModel}
+              >
+                Nový model
+              </button>
+            </div>
+          ) : null}
         </div>
 
-        <div className="process-card-rail-divider" />
-
-        <div className="process-card-rail-group">
-          <div className="process-card-rail-title">Projekt</div>
-          <button
-            type="button"
-            className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
-            onClick={() => setNotesOpen(true)}
-          >
-            Poznámky
+        <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
+            <span>Model</span>
+            <span className="process-card-rail-chevron">{railSections.save ? "-" : "+"}</span>
           </button>
+          {railSections.save ? (
+            <div className="process-card-rail-content">
+              <button
+                type="button"
+                className="process-card-toggle process-card-toggle--models"
+                onClick={openModels}
+              >
+                Uložené modely
+              </button>
+              <button
+                type="button"
+                className="process-card-toggle process-card-toggle--save"
+                onClick={handleSaveModel}
+                disabled={saveLoading}
+              >
+                {saveLoading ? "Ukladám..." : "Uložiť model"}
+              </button>
+              <div className="process-card-rail-hover">
+                <button type="button" className="process-card-toggle process-card-toggle--io">
+                  Export / Import BPMN
+                </button>
+                <div className="process-card-rail-popover">
+                  <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
+                    {exportLoading ? "Exportujem..." : "Export BPMN"}
+                  </button>
+                  <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
+                    {importLoading ? "Importujem..." : "Import BPMN"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className={`process-card-rail-group ${railSections.project ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
+            <span>Projekt</span>
+            <span className="process-card-rail-chevron">{railSections.project ? "-" : "+"}</span>
+          </button>
+          {railSections.project ? (
+            <div className="process-card-rail-content">
+              <button
+                type="button"
+                className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
+                onClick={() => setNotesOpen(true)}
+              >
+                Poznámky
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className={`process-card-rail-group ${railSections.env ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("env")}>
+            <span>Prostredie</span>
+            <span className="process-card-rail-chevron">{railSections.env ? "-" : "+"}</span>
+          </button>
+          {railSections.env ? (
+            <div className="process-card-rail-content">
+              <button type="button" className="process-card-toggle" onClick={() => navigate("/")}>
+                Karta procesu
+              </button>
+              <button type="button" className="process-card-toggle" onClick={() => navigate("/text")}
+              >
+                Text - mapa
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -3836,9 +3970,6 @@ export default function LinearWizardPage() {
                   </button>
                   <button type="button" className="btn btn--small" onClick={handleCreateOrgProcess} disabled={!activeOrgId}>
                     + Process
-                  </button>
-                  <button type="button" className="btn btn--small" onClick={refreshOrgTree} disabled={orgLoading}>
-                    Obnovit
                   </button>
                   <button type="button" className="btn btn--small" onClick={toggleOrgTreeExpand} disabled={!orgTree}>
                     {isOrgTreeFullyExpanded ? "Zbalit strom" : "Rozbalit strom"}
@@ -4648,6 +4779,11 @@ export default function LinearWizardPage() {
                                 >
                                   {isActive ? "Aktivna" : "Nastavit aktivnu"}
                                 </button>
+                                {isActive ? (
+                                  <button className="btn btn--small btn-danger" type="button" onClick={handleDeactivateOrg}>
+                                    Zrusit aktivnu
+                                  </button>
+                                ) : null}
                               </div>
                             </td>
                           </tr>
@@ -4675,6 +4811,94 @@ export default function LinearWizardPage() {
                     Vytvorit
                   </button>
                 </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Pridat pouzivatela do organizacie</div>
+                {addMemberError ? <div className="wizard-error">{addMemberError}</div> : null}
+                {addMemberInfo ? <div className="wizard-info">{addMemberInfo}</div> : null}
+                <div style={{ display: "grid", gap: 8 }}>
+                  <input
+                    type="email"
+                    className="wizard-models-search"
+                    placeholder="Email pouzivatela"
+                    value={addMemberEmail}
+                    onChange={(e) => setAddMemberEmail(e.target.value)}
+                  />
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <select
+                      className="wizard-models-search"
+                      value={addMemberOrgId}
+                      onChange={(e) => setAddMemberOrgId(e.target.value)}
+                    >
+                      <option value="">Vyber organizaciu</option>
+                      {myOrgs.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name || org.id}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="wizard-models-search"
+                      value={addMemberRole}
+                      onChange={(e) => setAddMemberRole(e.target.value)}
+                    >
+                      <option value="owner">owner</option>
+                      <option value="member">member</option>
+                    </select>
+                    <button
+                      className="btn btn--small btn-primary"
+                      type="button"
+                      onClick={handleAddOrgMember}
+                      disabled={addMemberLoading || !addMemberEmail.trim() || !addMemberOrgId}
+                    >
+                      {addMemberLoading ? "Pridavam..." : "Pridat"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>Clenovia aktivnej organizacie</div>
+                  <button
+                    className="btn btn--small"
+                    type="button"
+                    onClick={handleToggleOrgMembers}
+                    disabled={orgMembersLoading}
+                  >
+                    {orgMembersOpen ? "Skryt" : "Zobrazit"}
+                  </button>
+                </div>
+                {orgMembersError ? <div className="wizard-error">{orgMembersError}</div> : null}
+                {orgMembersOpen ? (
+                  <div style={{ overflow: "auto" }}>
+                    <table className="wizard-models-table">
+                      <thead>
+                        <tr>
+                          <th>Email</th>
+                          <th>Rola</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orgMembersLoading ? (
+                          <tr>
+                            <td colSpan={2}>Nacitavam...</td>
+                          </tr>
+                        ) : orgMembers.length ? (
+                          orgMembers.map((member) => (
+                            <tr key={`${member.email}-${member.role}`}>
+                              <td>{member.email}</td>
+                              <td>{member.role || "-"}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={2}>Ziadni clenovia.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                 <button className="btn" type="button" onClick={() => setOrgsModalOpen(false)}>
@@ -5065,3 +5289,4 @@ export default function LinearWizardPage() {
     </div>
   );
 }
+

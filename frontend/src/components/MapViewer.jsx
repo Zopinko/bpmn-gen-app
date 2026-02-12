@@ -36,6 +36,9 @@ export default function MapViewer({
   onDiagramChange,
   onUndo,
   canUndo = false,
+  onSave,
+  saveDisabled = false,
+  saveLabel = "Uložiť",
   onModelerReady,
   onInsertBlock,
   readOnly = false,
@@ -1147,6 +1150,17 @@ export default function MapViewer({
                       disabled={!canUndo}
                     >
                       Späť
+                    </button>
+                  ) : null}
+                  {onSave ? (
+                    <button
+                      className="map-toolbar__btn map-toolbar__btn--save"
+                      type="button"
+                      onClick={onSave}
+                      title="Uložiť"
+                      disabled={saveDisabled}
+                    >
+                      {saveLabel}
                     </button>
                   ) : null}
                 </div>
