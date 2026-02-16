@@ -58,7 +58,7 @@ def generate_linear_wizard_diagram(
     """
     Build a simple linear BPMN diagram from a wizard payload without any AI calls.
     """
-    built = build_linear_engine_from_wizard(payload)
+    built = build_linear_engine_from_wizard(payload, return_issues=True)
     engine_json = built["engine_json"]
     issues = built.get("issues") or []
     validate_payload(engine_json)
@@ -197,7 +197,7 @@ def delete_wizard_model(model_id: str, current_user: AuthUser = Depends(require_
     return {"ok": True}
 
 
-@router.patch("/wizard/models/{model_id}", response_model=WizardModelBase)
+@router.patch("/wizard/models/{model_id}", response_model=WizardModelDetail)
 def rename_wizard_model(
     model_id: str,
     payload: dict = Body(...),

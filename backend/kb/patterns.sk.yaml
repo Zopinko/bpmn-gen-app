@@ -27,7 +27,7 @@ constructs:
   - id: WHILE_LOOP
     intent: loop
     hints:
-      - "(?i)\\b(opakuj kým|kým|pokým|až do)\\b"
+      - "(?i)\\b(opakuj kým|kým|pokiaľ|až do)\\b"
     template: "while_loop"
 
   - id: HANDOFF

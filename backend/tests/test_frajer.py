@@ -6,10 +6,10 @@ from typing import Dict, Any
 from services.frajer_services import draft_engine_json_from_text
 from services.bpmn_svc import postprocess_engine_json
 
-# 2) UNIT test pre detekciu IF/ELSE cez KB (nevolĂˇme HTTP)
+# 2) UNIT test pre detekciu IF/ELSE cez KB (nevoláme HTTP)
 from services.frajer_kb_engine import FrajerKB
 
-# 3) INTEGRATION test: volĂˇme priamo FastAPI app (bez spĂşĹˇĹĄania uvicorn)
+# 3) INTEGRATION test: voláme priamo FastAPI app (bez spúšťania uvicorn)
 from main import app
 from fastapi.testclient import TestClient
 
@@ -22,7 +22,7 @@ def _by_type(ej: Dict[str, Any], t: str):
 
 def test_simple_linear_draft():
     ej = draft_engine_json_from_text(
-        "PouĹľĂ­vateÄľ vytvorĂ­ objednĂˇvku. SystĂ©m odoĹˇle potvrdenie."
+        "Používateľ vytvorí objednávku. Systém odošle potvrdenie."
     )
     assert ej["lanes"]
     assert _by_type(ej, "start_event")
@@ -32,28 +32,28 @@ def test_simple_linear_draft():
 
 
 def test_if_else_detect_slots_with_kb():
-    text = "Ak je suma > 1000, potom schvĂˇÄľ ponuku, inak eskaluj manaĹľĂ©rovi."
+    text = "Ak je suma > 1000, potom schvál ponuku, inak eskaluj manažérovi."
     kb = FrajerKB(locale="sk")
     c = kb.detect_construct(text)
-    assert c is not None, "IF/ELSE veta nebola rozpoznanĂˇ (chĂ˝ba 'potom'?)"
+    assert c is not None, "IF/ELSE veta nebola rozpoznaná (chýba 'potom'?)"
     assert c["template"] == "exclusive_if_else"
 
     slots = kb.fill_slots(text, c["template"])
-    # oÄŤakĂˇvanĂ© sloty
+    # očakávané sloty
     assert "suma > 1000" in slots["cond_short"]
-    assert "schvĂˇÄľ" in slots["then_action"].lower()
+    assert "schvál" in slots["then_action"].lower()
     assert "eskaluj" in slots["else_action"].lower()
 
 
 def test_lane_detection_order_independent_draft():
     text = (
-        "OperĂˇtor: skontroluje ĹľiadosĹĄ. ZapĂ­Ĺˇe poznĂˇmku.\n"
-        "Backoffice: vytvorĂ­ zmluvu; odoĹˇle email."
+        "Operátor: skontroluje žiadosť. Zapíše poznámku.\n"
+        "Backoffice: vytvorí zmluvu; odošle email."
     )
     ej = draft_engine_json_from_text(text)
 
     lane_names = {lane["name"] for lane in ej["lanes"]}
-    assert {"OperĂˇtor", "Backoffice"}.issubset(lane_names)
+    assert {"Operátor", "Backoffice"}.issubset(lane_names)
 
     lane_by_id = {lane["id"]: lane["name"] for lane in ej["lanes"]}
     tasks_by_lane = {}
@@ -61,23 +61,23 @@ def test_lane_detection_order_independent_draft():
         if node["type"] != "task":
             continue
         lane_name = lane_by_id[node["laneId"]]
-        # podpor nĂˇzvy v "name" (novĂ©) aj "label" (starĹˇie)
+        # podpor názvy v "name" (nové) aj "label" (staršie)
         nm = node.get("name") or node.get("label") or ""
         tasks_by_lane.setdefault(lane_name, []).append(nm)
 
-    # len over, Ĺľe sĂş tam tie dva tasky (poradie nerieĹˇime)
-    assert any("skontroluje ĹľiadosĹĄ" in t.lower() for t in tasks_by_lane["OperĂˇtor"])
-    assert any("zapĂ­Ĺˇe poznĂˇmku" in t.lower() for t in tasks_by_lane["OperĂˇtor"])
-    assert any("vytvorĂ­ zmluvu" in t.lower() for t in tasks_by_lane["Backoffice"])
-    assert any("odoĹˇle email" in t.lower() for t in tasks_by_lane["Backoffice"])
+    # len over, že sú tam tie dva tasky (poradie neriešime)
+    assert any("skontroluje žiadosť" in t.lower() for t in tasks_by_lane["Operátor"])
+    assert any("zapíše poznámku" in t.lower() for t in tasks_by_lane["Operátor"])
+    assert any("vytvorí zmluvu" in t.lower() for t in tasks_by_lane["Backoffice"])
+    assert any("odošle email" in t.lower() for t in tasks_by_lane["Backoffice"])
 
 
 def test_preview_bpmn_contains_exclusive_gateway_with_kb():
-    # IntegraÄŤne otestujeme endpoint /frajer/preview-bpmn (bez uvicorn)
+    # Integračne otestujeme endpoint /frajer/preview-bpmn (bez uvicorn)
     txt = (
         "Sales: prijme dopyt. "
-        "Ak je suma > 1000, potom schvĂˇÄľ ponuku, inak eskaluj manaĹľĂ©rovi. "
-        "Backoffice: vystav faktĂşru."
+        "Ak je suma > 1000, potom schvál ponuku, inak eskaluj manažérovi. "
+        "Backoffice: vystav faktúru."
     )
     r = client.post(
         "/frajer/preview-bpmn",
@@ -86,13 +86,13 @@ def test_preview_bpmn_contains_exclusive_gateway_with_kb():
     assert r.status_code == 200
     xml = r.text
 
-    # v XML musĂ­ byĹĄ exclusiveGateway a gateway s otĂˇznikom v name
+    # v XML musí byť exclusiveGateway a gateway s otáznikom v name
     assert "<exclusiveGateway" in xml
     assert re.search(
         r'<exclusiveGateway[^>]+name="[^"]+\?"', xml
     ), "Gateway nemĂˇ popis s otĂˇznikom"
 
-    # lanes by mali obsahovaĹĄ Sales a Backoffice
+    # lanes by mali obsahovať Sales a Backoffice
     assert 'lane id="Sales"' in xml
     assert 'lane id="Backoffice"' in xml
 
@@ -123,7 +123,7 @@ def test_gateway_flows_have_yes_no_labels():
     labels = {
         (flow.get("name") or flow.get("label") or "").lower() for flow in decision_outs
     }
-    assert "Ăˇno" in labels
+    assert "áno" in labels
     assert "nie" in labels
 
 

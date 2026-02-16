@@ -4,7 +4,7 @@ aliases:
   "Sklad": ["sklad", "skladník", "logistika", "warehouse", "logistics"]
   "Sales": ["sales", "obchod", "predaj", "obchodník", "sales team"]
   "HR": ["hr", "personál", "personálne", "human resources", "personalista"]
-  "Manažér": ["manažér", "manažer", "manager", "vedúci", "šéf", "veduci"]
+  "Manažér": ["manažér", "manazer", "manager", "vedúci", "šéf", "veduci"]
   "Zákazník": ["klient", "customer", "užívateľ", "zákazník", "zakaznik"]
   "Backoffice": ["back office", "backoffice", "bo", "podpora", "support"]
   "Účtovník": ["účtovník", "uctovnik", "financie", "finančné oddelenie", "finance team"]

@@ -182,6 +182,382 @@ const splitLines = (text) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+const applyEnginePatch = (prevEngine, patch) => {
+  if (!prevEngine || !patch) return prevEngine;
+  const next = { ...prevEngine };
+  const nodes = Array.isArray(next.nodes) ? [...next.nodes] : [];
+  const flows = Array.isArray(next.flows) ? [...next.flows] : [];
+  const lanes = Array.isArray(next.lanes) ? [...next.lanes] : [];
+
+  const findNodeIndex = (id) => nodes.findIndex((n) => String(n?.id) === String(id));
+  const findFlowIndex = (id) => flows.findIndex((f) => String(f?.id) === String(id));
+  const findLaneIndex = (id) => lanes.findIndex((l) => String(l?.id) === String(id));
+
+  switch (patch.type) {
+    case "ADD_NODE": {
+      if (!patch.id) return prevEngine;
+      if (findNodeIndex(patch.id) >= 0) return prevEngine;
+      nodes.push({
+        id: patch.id,
+        type: patch.nodeType,
+        name: patch.name || "",
+        laneId: patch.laneId || undefined,
+      });
+      next.nodes = nodes;
+      return next;
+    }
+    case "REMOVE_NODE": {
+      if (!patch.id) return prevEngine;
+      const idx = findNodeIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      nodes.splice(idx, 1);
+      next.nodes = nodes;
+      next.flows = flows.filter(
+        (f) => String(f?.source) !== String(patch.id) && String(f?.target) !== String(patch.id),
+      );
+      return next;
+    }
+    case "RENAME_NODE": {
+      if (!patch.id) return prevEngine;
+      const idx = findNodeIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      nodes[idx] = { ...nodes[idx], name: patch.name || "" };
+      next.nodes = nodes;
+      return next;
+    }
+    case "ADD_FLOW": {
+      if (!patch.id || !patch.sourceId || !patch.targetId) return prevEngine;
+      if (findFlowIndex(patch.id) >= 0) return prevEngine;
+      flows.push({
+        id: patch.id,
+        type: "SequenceFlow",
+        source: patch.sourceId,
+        target: patch.targetId,
+      });
+      next.flows = flows;
+      return next;
+    }
+    case "UPDATE_NODE_LANE": {
+      if (!patch.id) return prevEngine;
+      const idx = findNodeIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      nodes[idx] = { ...nodes[idx], laneId: patch.laneId || undefined };
+      next.nodes = nodes;
+      return next;
+    }
+    case "RENAME_LANE": {
+      if (!patch.id) return prevEngine;
+      const idx = findLaneIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      const nextName = (patch.name || "").trim();
+      lanes[idx] = { ...lanes[idx], name: nextName };
+      next.lanes = lanes;
+      return next;
+    }
+    case "REMOVE_FLOW": {
+      if (!patch.id) return prevEngine;
+      const idx = findFlowIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      flows.splice(idx, 1);
+      next.flows = flows;
+      return next;
+    }
+    default:
+      return prevEngine;
+  }
+};
+
+const GUIDE_DISMISS_MS = 90 * 1000;
+const GUIDE_MIN_TASKS_PER_LANE = 2;
+
+const getGuideDismissKey = (key) => `guide.dismiss.${key}`;
+
+const wasGuideDismissedRecently = (key) => {
+  if (!key || typeof window === "undefined") return false;
+  const raw = window.localStorage.getItem(getGuideDismissKey(key));
+  const ts = raw ? Number(raw) : 0;
+  if (!ts) return false;
+  return Date.now() - ts < GUIDE_DISMISS_MS;
+};
+
+const dismissGuideCard = (key) => {
+  if (!key || typeof window === "undefined") return;
+  window.localStorage.setItem(getGuideDismissKey(key), String(Date.now()));
+};
+
+const normalizeGuideRuleId = (finding) => {
+  const id = String(finding?.id || "");
+  const idx = id.indexOf(":");
+  return idx >= 0 ? id.slice(0, idx) : id;
+};
+
+const buildGuideIndex = (engineJson) => {
+  const nodes = Array.isArray(engineJson?.nodes) ? engineJson.nodes : [];
+  const flows = Array.isArray(engineJson?.flows) ? engineJson.flows : [];
+  const lanes = Array.isArray(engineJson?.lanes) ? engineJson.lanes : [];
+  const nodesById = new Map();
+  const flowsById = new Map();
+  nodes.forEach((n) => {
+    if (n?.id) nodesById.set(String(n.id), n);
+  });
+  flows.forEach((f) => {
+    if (f?.id) flowsById.set(String(f.id), f);
+  });
+  return { nodes, flows, lanes, nodesById, flowsById };
+};
+
+const getLaneIdForFinding = (finding, index) => {
+  const target = finding?.target || {};
+  const targetId = target?.id ? String(target.id) : null;
+  if (!targetId) return null;
+  if (target.type === "lane") return targetId;
+  if (target.type === "sequenceFlow" || target.type === "messageFlow") {
+    const flow = index.flowsById.get(targetId);
+    if (!flow) return null;
+    const sourceNode = index.nodesById.get(String(flow.source || ""));
+    if (sourceNode?.laneId) return String(sourceNode.laneId);
+    const targetNode = index.nodesById.get(String(flow.target || ""));
+    if (targetNode?.laneId) return String(targetNode.laneId);
+    return null;
+  }
+  const node = index.nodesById.get(targetId);
+  return node?.laneId ? String(node.laneId) : null;
+};
+
+const getLaneTasks = (engineJson, laneId) => {
+  const nodes = Array.isArray(engineJson?.nodes) ? engineJson.nodes : [];
+  return nodes.filter(
+    (n) => n?.laneId === laneId && /task/i.test(String(n?.type || "")),
+  );
+};
+
+const isLaneDone = (engineJson, laneId, findingsForLane) => {
+  const tasks = getLaneTasks(engineJson, laneId);
+  if (!tasks.length || tasks.length < GUIDE_MIN_TASKS_PER_LANE) return false;
+  return !findingsForLane.some((f) => f?.severity === "HARD");
+};
+
+const pickNextLane = (engineJson, findings) => {
+  const { lanes } = buildGuideIndex(engineJson);
+  if (!lanes.length) return null;
+  const byRule = (ruleId) =>
+    findings.find((f) => normalizeGuideRuleId(f) === ruleId);
+  const emptyFinding = byRule("lane_is_empty");
+  if (emptyFinding) {
+    const laneId = emptyFinding?.target?.id;
+    return lanes.find((l) => l?.id === laneId) || null;
+  }
+  const disconnectedFinding = byRule("lane_is_disconnected");
+  if (disconnectedFinding) {
+    const laneId = disconnectedFinding?.target?.id;
+    return lanes.find((l) => l?.id === laneId) || null;
+  }
+  for (const lane of lanes) {
+    const laneFindings = findings.filter(
+      (f) => getLaneIdForFinding(f, buildGuideIndex(engineJson)) === lane.id,
+    );
+    if (!isLaneDone(engineJson, lane.id, laneFindings)) {
+      return lane;
+    }
+  }
+  return null;
+};
+
+const getNodeLabel = (node) =>
+  String(node?.name || node?.label || node?.id || "").trim();
+
+const buildFlowAdjacency = (index) => {
+  const incoming = new Map();
+  const outgoing = new Map();
+  index.nodes.forEach((node) => {
+    if (!node?.id) return;
+    const id = String(node.id);
+    if (!incoming.has(id)) incoming.set(id, 0);
+    if (!outgoing.has(id)) outgoing.set(id, 0);
+  });
+  index.flows.forEach((flow) => {
+    const sourceId = flow?.source ? String(flow.source) : null;
+    const targetId = flow?.target ? String(flow.target) : null;
+    if (sourceId) outgoing.set(sourceId, (outgoing.get(sourceId) || 0) + 1);
+    if (targetId) incoming.set(targetId, (incoming.get(targetId) || 0) + 1);
+  });
+  return { incoming, outgoing };
+};
+
+const pickGuideCard = ({
+  engineJson,
+  findings,
+  activeLaneId,
+  lastEditedLaneId,
+}) => {
+  if (!engineJson) return null;
+  const index = buildGuideIndex(engineJson);
+  const ctxLaneId = activeLaneId || lastEditedLaneId || null;
+  const ctxLane = ctxLaneId
+    ? index.lanes.find((l) => l?.id === ctxLaneId) || null
+    : null;
+  const hardFindings = findings.filter((f) => f?.severity === "HARD");
+  if (hardFindings.length) {
+    const hardInCtx = ctxLaneId
+      ? hardFindings.find(
+          (f) => getLaneIdForFinding(f, index) === ctxLaneId,
+        )
+      : null;
+    const chosen = hardInCtx || hardFindings[0];
+    const laneIdForHard = getLaneIdForFinding(chosen, index);
+    return {
+      key: `hard:${chosen.id}`,
+      scope: laneIdForHard ? "lane" : "global",
+      laneId: laneIdForHard || null,
+      title: "Poďme to doladiť",
+      message: `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Mrkni na túto rolu a uprav to priamo tam.`,
+      primary: laneIdForHard
+        ? { label: "Do roly", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
+        : null,
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }
+
+  const hasEmptyLane = index.lanes.some(
+    (lane) => getLaneTasks(engineJson, lane.id).length === 0,
+  );
+  if (!hasEmptyLane) {
+    const { incoming, outgoing } = buildFlowAdjacency(index);
+    const taskNodes = index.nodes.filter((n) => /task/i.test(String(n?.type || "")));
+    const pickTask = (predicate) => {
+      if (!taskNodes.length) return null;
+      if (ctxLaneId) {
+        const inCtx = taskNodes.find(
+          (node) => String(node?.laneId || "") === ctxLaneId && predicate(node),
+        );
+        if (inCtx) return inCtx;
+      }
+      return taskNodes.find(predicate) || null;
+    };
+    const missingOutgoingTask = pickTask((node) => {
+      const id = node?.id ? String(node.id) : "";
+      return id && (outgoing.get(id) || 0) === 0;
+    });
+    if (missingOutgoingTask) {
+      const laneId = missingOutgoingTask?.laneId
+        ? String(missingOutgoingTask.laneId)
+        : null;
+      const label = getNodeLabel(missingOutgoingTask);
+      return {
+        key: `task_no_out:${missingOutgoingTask.id}`,
+        scope: laneId ? "lane" : "global",
+        laneId,
+        title: "Kam ďalej?",
+        message: `Aktivita „${label || "tento krok"}“ zatiaľ nikam nepokračuje. Skús pridať ďalší krok, aby bolo jasné, kam proces smeruje.`,
+        primary: laneId
+          ? {
+              label: "Do roly",
+              action: "OPEN_LANE",
+              payload: { laneId: laneId },
+            }
+          : null,
+        secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+    const missingIncomingTask = pickTask((node) => {
+      const id = node?.id ? String(node.id) : "";
+      return id && (incoming.get(id) || 0) === 0;
+    });
+    if (missingIncomingTask) {
+      const laneId = missingIncomingTask?.laneId
+        ? String(missingIncomingTask.laneId)
+        : null;
+      const label = getNodeLabel(missingIncomingTask);
+      return {
+        key: `task_no_in:${missingIncomingTask.id}`,
+        scope: laneId ? "lane" : "global",
+        laneId,
+        title: "Odkiaľ to prichádza?",
+        message: `Aktivita „${label || "tento krok"}“ nemá začiatok. Prepoj ju s predchádzajúcim krokom, aby tok dával zmysel.`,
+        primary: laneId
+          ? {
+              label: "Do roly",
+              action: "OPEN_LANE",
+              payload: { laneId: laneId },
+            }
+          : null,
+        secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+  }
+
+  const tasks = index.nodes.filter((n) => /task/i.test(String(n?.type || "")));
+  if (!tasks.length && index.lanes.length) {
+    const firstLane = index.lanes[0];
+    return {
+      key: "process_empty",
+      scope: "global",
+      title: "Pridajme prvé kroky",
+      message:
+        "Čo presne robí táto rola? Skús napísať 2–3 kroky (každý na nový riadok). Potom z nich vytvoríme aktivity.",
+      primary: firstLane
+        ? { label: "Do roly", action: "OPEN_LANE", payload: { laneId: firstLane.id } }
+        : null,
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }
+
+  if (ctxLaneId && ctxLane) {
+    const laneFindings = findings.filter(
+      (f) => getLaneIdForFinding(f, index) === ctxLaneId,
+    );
+    const laneDone = isLaneDone(engineJson, ctxLaneId, laneFindings);
+    const nextLane = pickNextLane(engineJson, findings);
+    if (laneDone && nextLane && nextLane.id !== ctxLaneId) {
+      return {
+        key: `lane_done:${ctxLaneId}->${nextLane.id}`,
+        scope: "lane",
+        laneId: ctxLaneId,
+      title: "Ďalšia rola",
+      message: `Rola „${ctxLane.name || ctxLane.id}“ vyzerá dobre 👍 Môžeme sa presunúť na ďalšiu – „${nextLane.name || nextLane.id}“.`,
+      primary: { label: "Do roly", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+  }
+
+  const emptyLaneFinding = findings.find(
+    (f) => normalizeGuideRuleId(f) === "lane_is_empty",
+  );
+  if (emptyLaneFinding) {
+    const laneId = emptyLaneFinding?.target?.id;
+    const lane = index.lanes.find((l) => l?.id === laneId);
+    if (lane) {
+      return {
+        key: `lane_empty:${lane.id}`,
+        scope: "lane",
+        laneId: lane.id,
+        title: "Doplň rolu",
+        message: `Táto rola je zatiaľ prázdna. Skús napísať aspoň jeden krok, aby sme vedeli, čo tu prebieha.`,
+        primary: { label: "Do roly", action: "OPEN_LANE", payload: { laneId: lane.id } },
+        secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+  }
+
+  const disconnectedFinding = findings.find(
+    (f) => normalizeGuideRuleId(f) === "lane_is_disconnected",
+  );
+  if (disconnectedFinding) {
+    return {
+      key: "lanes_disconnected",
+      scope: "global",
+      title: "Prepojme role",
+      message:
+        "Kroky máme, teraz ich spojme. Prepoj aktivity tak, aby proces plynule prechádzal medzi rolami.",
+      primary: { label: "Prepojenie", action: "CONNECT_LANES_HEURISTIC" },
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }
+
+  return null;
+};
+
 const normalizeAscii = (value) =>
   String(value || "")
     .toLowerCase()
@@ -194,7 +570,7 @@ const analyzeLaneLine = (lineText) => {
   if (!trimmed) return null;
   const ascii = normalizeAscii(trimmed);
   const isXor = /^(ak|ked)\b/.test(ascii);
-  const isAnd = /^(paralelne|zaroven|sucasne)\b/.test(ascii);
+  const isAnd = /^(paralelne|zaroven|sucasne|subezne|naraz|popritom|popri)\b/.test(ascii);
   const hasTak = /\btak\b/.test(ascii);
   const hasInak = /\binak\b/.test(ascii);
 
@@ -206,13 +582,21 @@ const analyzeLaneLine = (lineText) => {
     return {
       type: "xor",
       badge: "XOR",
-      hint: "XOR gateway: Ak <podmienka> tak <krok>, inak <krok/koniec>.",
+      hint: "Rozhodnutie: „Ak <podmienka> tak <krok>, inak <krok/koniec>“.",
       warning,
+      success: warning ? "" : "Super, toto je rozhodnutie v procese.",
     };
   }
 
   if (isAnd) {
-    const parts = ascii.replace(/^paralelne:?/, "").replace(/^zaroven/, "").replace(/^sucasne/, "");
+    const parts = ascii
+      .replace(/^paralelne:?/, "")
+      .replace(/^zaroven/, "")
+      .replace(/^sucasne/, "")
+      .replace(/^subezne/, "")
+      .replace(/^naraz/, "")
+      .replace(/^popritom/, "")
+      .replace(/^popri/, "");
     let stepCount = 0;
     if (ascii.startsWith("paralelne")) {
       stepCount = parts
@@ -225,20 +609,22 @@ const analyzeLaneLine = (lineText) => {
         .map((part) => part.trim())
         .filter(Boolean).length;
     }
-    const warning = stepCount < 2 ? "Pridaj aspon 2 kroky (oddelenie ; alebo , a ...)." : "";
+    const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky (oddeľ ich ;, , alebo slovom „a“)." : "";
     return {
       type: "and",
       badge: "AND",
-      hint: "AND gateway: Paralelne: <krok>; <krok> alebo Zaroven <krok>, <krok> a <krok>.",
+      hint: "Paralela: „Paralelne: krok; krok; krok“ alebo „Zároveň krok, krok a krok“.",
       warning,
+      success: warning ? "" : "Super, toto je paralelné rozdelenie.",
     };
   }
 
   return {
     type: "task",
     badge: "TASK",
-    hint: "Toto bude aktivita (task) v lane.",
+    hint: "Toto bude bežný krok v procese.",
     warning: "",
+    success: "",
   };
 };
 
@@ -277,7 +663,7 @@ export default function LinearWizardPage() {
   const fileInputRef = useRef(null);
   const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [engineJson, setEngineJson] = useState(null);
   const [xml, setXml] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -330,6 +716,16 @@ export default function LinearWizardPage() {
     env: false,
     project: false,
   });
+  const [guideEnabled, setGuideEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem("GUIDE_ENABLED");
+    if (stored === null) return true;
+    return stored === "true";
+  });
+  const [guideState, setGuideState] = useState(null);
+  const [guideFindings, setGuideFindings] = useState([]);
+  const [activeLaneId, setActiveLaneId] = useState(null);
+  const [lastEditedLaneId, setLastEditedLaneId] = useState(null);
   const [modelSource, setModelSource] = useState({ kind: "sandbox" });
   const [orgReadOnly, setOrgReadOnly] = useState(false);
   const [expandedModelGroups, setExpandedModelGroups] = useState([]);
@@ -391,6 +787,7 @@ export default function LinearWizardPage() {
   const mentorHighlightRef = useRef(null);
   const mentorReviewedEngineRef = useRef(null);
   const storyEngineRef = useRef(null);
+  const guidePatchTimerRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const pendingOpenActionRef = useRef(null);
   const pendingOpenResolveRef = useRef(null);
@@ -459,6 +856,258 @@ export default function LinearWizardPage() {
   const toggleRailSection = (key) => {
     setRailSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("GUIDE_ENABLED", guideEnabled ? "true" : "false");
+    if (!guideEnabled) {
+      setGuideState(null);
+    }
+  }, [guideEnabled]);
+
+  const normalizeNodeId = (node) => node?.id || node?.nodeId || node?.refId || null;
+  const normalizeFlowSource = (flow) => flow?.source || flow?.sourceRef || flow?.from || null;
+  const normalizeFlowTarget = (flow) => flow?.target || flow?.targetRef || flow?.to || null;
+
+  const guideRequestIdRef = useRef(0);
+
+  const applyGuideFromFindings = useCallback(
+    (findings, laneId = null, options = {}) => {
+      const force = Boolean(options.force);
+      const card = pickGuideCard({
+        engineJson,
+        findings,
+        activeLaneId: laneId || activeLaneId,
+        lastEditedLaneId,
+      });
+      if (!card) {
+        setGuideState(null);
+        return;
+      }
+      if (!force && wasGuideDismissedRecently(card.key)) {
+        setGuideState(null);
+        return;
+      }
+      setGuideState(card);
+    },
+    [engineJson, activeLaneId, lastEditedLaneId],
+  );
+
+  const runGuideReview = useCallback(
+    async (reason = "manual", laneId = null) => {
+      if (!guideEnabled) return;
+      const generator = processCard?.generatorInput || {};
+      const hasEngineModel =
+        Boolean((engineJson?.name || engineJson?.processName || "").trim()) ||
+        (Array.isArray(engineJson?.lanes) && engineJson.lanes.length > 0) ||
+        (Array.isArray(engineJson?.nodes) && engineJson.nodes.length > 0);
+      const hasProcessCard =
+        (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
+        hasEngineModel;
+      if (!hasProcessCard && !hasEngineModel) {
+        setGuideState({
+          key: "process_card",
+          scope: "global",
+          title: "Začíname spolu",
+          message:
+            "Najprv si nastavíme základ. Daj procesu názov a pridaj roly (každú na nový riadok). Keď budeš pripravený, vytvoríme model.",
+          primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
+          secondary: { label: "Neskôr", action: "NOT_NOW" },
+        });
+        return;
+      }
+      if (!engineJson) {
+        setGuideState(null);
+        return;
+      }
+      const requestId = ++guideRequestIdRef.current;
+      let findings = [];
+      try {
+        const payload = {
+          text: (laneDescription || "").trim() || null,
+          engine_json: engineJson,
+          kb_version: null,
+          telemetry: null,
+          telemetry_id: null,
+        };
+        const response = await mentorReview(payload);
+        findings = response?.findings || [];
+      } catch {
+        findings = [];
+      }
+      if (requestId !== guideRequestIdRef.current) return;
+      setGuideFindings(findings);
+      const forceGuide = reason === "skeleton_generated";
+      applyGuideFromFindings(findings, laneId, { force: forceGuide });
+    },
+    [guideEnabled, processCard, engineJson, laneDescription, applyGuideFromFindings],
+  );
+
+  useEffect(() => {
+    if (!guideEnabled) return;
+    if (!guideState || guideState.key !== "process_card") return;
+    const generator = processCard?.generatorInput || {};
+    const hasEngineModel =
+      Boolean((engineJson?.name || engineJson?.processName || "").trim()) ||
+      (Array.isArray(engineJson?.lanes) && engineJson.lanes.length > 0) ||
+      (Array.isArray(engineJson?.nodes) && engineJson.nodes.length > 0);
+    const hasProcessCard =
+      (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
+      hasEngineModel;
+    if (hasProcessCard || hasEngineModel) {
+      setGuideState(null);
+      runGuideReview("model_loaded");
+    }
+  }, [guideEnabled, guideState, engineJson, processCard, runGuideReview]);
+
+  const runConnectHeuristic = useCallback(() => {
+    const modeler = modelerRef.current;
+    if (!modeler) return false;
+    const elementRegistry = modeler.get("elementRegistry");
+    const modeling = modeler.get("modeling");
+    if (!elementRegistry || !modeling) return false;
+    const lanes = engineJson?.lanes || [];
+    const nodes = engineJson?.nodes || [];
+    const tasks = nodes.filter((n) => /task/i.test(String(n?.type || "")));
+    if (lanes.length < 2 || tasks.length < 2) return false;
+    const laneTasks = (laneIdValue) =>
+      tasks
+        .filter((t) => t?.laneId === laneIdValue)
+        .map((t) => elementRegistry.get(normalizeNodeId(t)))
+        .filter(Boolean)
+        .sort((a, b) => (a.x || 0) - (b.x || 0));
+    const firstLane = lanes[0];
+    const secondLane = lanes.find((l) => l.id !== firstLane.id);
+    const firstLaneTasks = laneTasks(firstLane.id);
+    const secondLaneTasks = secondLane ? laneTasks(secondLane.id) : [];
+    if (!firstLaneTasks.length || !secondLaneTasks.length) return false;
+    const sourceShape = firstLaneTasks[firstLaneTasks.length - 1];
+    const targetShape = secondLaneTasks[0];
+    modeling.connect(sourceShape, targetShape, { type: "bpmn:SequenceFlow" });
+    return true;
+  }, [engineJson]);
+
+  const handleGuideAction = async (actionId, payload) => {
+    if (!guideState || !actionId) return;
+    if (actionId === "NOT_NOW") {
+      dismissGuideCard(guideState.key);
+      setGuideState(null);
+      runGuideReview("end_added");
+      return;
+    }
+    if (actionId === "OPEN_PROCESS_CARD") {
+      openSingleCard("drawer");
+      setGuideState(null);
+      return;
+    }
+    if (actionId === "OPEN_LANE") {
+      const laneIdValue = payload?.laneId;
+      if (laneIdValue && engineJson?.lanes) {
+        const lane = engineJson.lanes.find((l) => l.id === laneIdValue);
+        if (lane) {
+          setSelectedLane(lane);
+          openSingleCard("lane");
+        }
+      }
+      setGuideState(null);
+      return;
+    }
+    if (actionId === "ADD_END_EVENT" || actionId === "MARK_TASK_AS_END") {
+      const modeler = modelerRef.current;
+      if (!modeler) return;
+      const elementRegistry = modeler.get("elementRegistry");
+      const modeling = modeler.get("modeling");
+      const elementFactory = modeler.get("elementFactory");
+      if (!elementRegistry || !modeling || !elementFactory) return;
+      const nodes = engineJson?.nodes || [];
+      const tasks = nodes.filter((n) => /task/i.test(String(n?.type || "")));
+      let targetTaskId = null;
+      if (actionId === "MARK_TASK_AS_END" && payload?.nodeId) {
+        targetTaskId = payload.nodeId;
+      }
+      if (!targetTaskId && tasks.length) {
+        const shapes = tasks
+          .map((t) => elementRegistry.get(normalizeNodeId(t)))
+          .filter(Boolean)
+          .sort((a, b) => (a.x || 0) - (b.x || 0));
+        targetTaskId = shapes.length ? shapes[shapes.length - 1].id : null;
+      }
+      if (!targetTaskId) return;
+      const sourceShape = elementRegistry.get(targetTaskId);
+      if (!sourceShape) return;
+      const endShape = elementFactory.createShape({ type: "bpmn:EndEvent" });
+      const position = { x: (sourceShape.x || 0) + 160, y: (sourceShape.y || 0) };
+      const createdEnd = modeling.createShape(endShape, position, sourceShape.parent);
+      modeling.connect(sourceShape, createdEnd, { type: "bpmn:SequenceFlow" });
+      setGuideState(null);
+      return;
+    }
+    if (actionId === "CONNECT_LANES_HEURISTIC") {
+      runConnectHeuristic();
+      setGuideState(null);
+      runGuideReview("connect_lanes");
+    }
+  };
+
+  const handleEngineJsonPatch = useCallback(
+    (patch) => {
+      const patchLaneId = patch?.laneId || patch?.payload?.laneId;
+      if (patchLaneId) {
+        setLastEditedLaneId(patchLaneId);
+      }
+      setEngineJson((prev) => {
+        const next = applyEnginePatch(prev, patch);
+        if (patch?.type === "RENAME_LANE" && next?.lanes) {
+          setProcessCard((prevCard) => ({
+            ...prevCard,
+            generatorInput: {
+              ...prevCard.generatorInput,
+              roles: next.lanes.map((lane) => lane.name || lane.id).join("\n"),
+            },
+          }));
+        }
+        return next;
+      });
+      setHasUnsavedChanges(true);
+      if (guideEnabled) {
+        if (guidePatchTimerRef.current) {
+          window.clearTimeout(guidePatchTimerRef.current);
+        }
+        guidePatchTimerRef.current = window.setTimeout(() => {
+          runGuideReview("canvas_edit", patchLaneId || null);
+        }, 500);
+      }
+    },
+    [guideEnabled, runGuideReview],
+  );
+
+  useEffect(() => {
+    if (!guideEnabled) return;
+    if (!engineJson && !guideState) {
+      runGuideReview("initial");
+    }
+  }, [guideEnabled, engineJson, guideState, runGuideReview]);
+
+  const prevLaneOpenRef = useRef(laneOpen);
+  const lastActiveLaneIdRef = useRef(null);
+
+  useEffect(() => {
+    if (laneOpen && selectedLane?.id) {
+      setActiveLaneId(selectedLane.id);
+      lastActiveLaneIdRef.current = selectedLane.id;
+      return;
+    }
+    if (!laneOpen) {
+      setActiveLaneId(null);
+    }
+  }, [laneOpen, selectedLane]);
+
+  useEffect(() => {
+    if (prevLaneOpenRef.current && !laneOpen) {
+      runGuideReview("lane_closed", lastActiveLaneIdRef.current);
+    }
+    prevLaneOpenRef.current = laneOpen;
+  }, [laneOpen, runGuideReview]);
   const startOptions = useMemo(() => {
     const nodes = engineJson?.nodes || [];
     const starts = nodes.filter((node) => String(node?.type || "").toLowerCase().includes("start"));
@@ -988,10 +1637,33 @@ export default function LinearWizardPage() {
     setHistoryCount(0);
   };
 
-  const handleNewModel = () => {
-    const confirmed = window.confirm("Začať nový model? Neuložené zmeny sa stratia.");
-    if (!confirmed) return;
+  const handleNewModel = (options = {}) => {
+    const hasWork = Boolean(engineJson || xml || hasUnsavedChanges);
+    if (hasWork && !options.skipConfirm) {
+      const confirmed = window.confirm("Začať nový model? Neuložené zmeny sa stratia.");
+      if (!confirmed) return;
+    }
     resetWizardState();
+    setHelpOpen(false);
+    setMentorOpen(false);
+    setStoryOpen(false);
+    setOrgOpen(false);
+    setLaneOpen(false);
+    setDrawerOpen(true);
+  };
+
+  const handleStartNewModel = () => handleNewModel({ skipConfirm: true });
+
+  const handleMainMenu = () => {
+    requestOpenWithSave(() => {
+      resetWizardState();
+      setHelpOpen(false);
+      setMentorOpen(false);
+      setStoryOpen(false);
+      setOrgOpen(false);
+      setLaneOpen(false);
+      setDrawerOpen(false);
+    });
   };
 
   const pushHistorySnapshot = useCallback((engine, diagramXml) => {
@@ -1194,6 +1866,7 @@ export default function LinearWizardPage() {
       const xmlText = await renderEngineXml(generatedEngine);
       setXml(xmlText);
       setHasUnsavedChanges(true);
+      runGuideReview("skeleton_generated");
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
       setError(message);
@@ -1808,6 +2481,7 @@ export default function LinearWizardPage() {
       const updatedXml = await renderEngineXml(updatedEngine);
       setXml(updatedXml);
       setLaneDescription("");
+      runGuideReview("lane_batch_created", selectedLane.id);
     } catch (e) {
       const message = e?.message || "Nepodarilo sa pridať aktivity do lane.";
       setError(message);
@@ -1890,12 +2564,14 @@ export default function LinearWizardPage() {
       readOnly: modelSource?.kind === "org" && orgReadOnly,
       onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
       onLaneOrderChange: reorderLanesByNames,
-      onDiagramChange: handleDiagramChange,
+      onDiagramChange: undefined,
       onUndo: handleUndo,
       canUndo: historyCount > 0,
       onSave: handleSaveModel,
+      onMainMenu: handleMainMenu,
       saveDisabled: saveLoading || isReadOnlyMode,
       saveLabel: saveLoading ? "Ukladám..." : "Uložiť",
+      onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
@@ -3503,7 +4179,10 @@ export default function LinearWizardPage() {
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
-            <div className="process-card-rail">
+      <div className="process-card-rail">
+        <button className="guide-toggle" type="button" onClick={() => setGuideEnabled((prev) => !prev)}>
+          {guideEnabled ? "Pomocník: On" : "Pomocník: Off"}
+        </button>
         <div className={`process-card-rail-group ${railSections.org ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("org")}>
             <span>ORGANIZÁCIA</span>
@@ -3816,20 +4495,14 @@ export default function LinearWizardPage() {
                     </label>
                   </div>
                   <div className="process-card-buttons">
-                    <button
-                      className="btn btn-primary"
-                      type="button"
-                      onClick={handleGenerate}
-                      disabled={isLoading || isReadOnlyMode}
-                    >
-                      {isLoading ? "Generujem..." : "Vygenerovať BPMN"}
-                    </button>
-                    <button className="btn" type="button" onClick={handleSaveModel} disabled={saveLoading}>
-                      {saveLoading ? "Ukladám..." : "Uložiť model"}
-                    </button>
-                    <button className="btn btn-danger" type="button" onClick={handleNewModel}>
-                      Nový model
-                    </button>
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={handleGenerate}
+                        disabled={isLoading || isReadOnlyMode}
+                      >
+                        {isLoading ? "Vytváram..." : "Vytvoriť model"}
+                      </button>
                   </div>
                 </section>
                 <section className="process-card-section">
@@ -4013,13 +4686,13 @@ export default function LinearWizardPage() {
                     {selectedLane.name || selectedLane.id}
                   </div>
                   <div className="process-card-description">
-                    Vybraná lane. Môžeš pridať aktivity, použiť POMOC alebo posunúť lane vyššie/nižšie.
+                    Si v role. Tu píšeš, čo táto rola robí. Môžeš pridať tvar alebo otvoriť pomocníka.
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <button
                     type="button"
-                    className="btn btn--small btn-primary"
+                    className="btn btn--small btn-primary lane-action-btn"
                     onClick={() => setLaneInsertOpen(true)}
                     disabled={isReadOnlyMode}
                   >
@@ -4027,7 +4700,7 @@ export default function LinearWizardPage() {
                   </button>
                   <button
                     type="button"
-                    className="btn btn--small btn-link wizard-lane-help-btn"
+                    className="btn btn--small btn-link wizard-lane-help-btn lane-action-btn"
                     onClick={() => {
                       if (helpOpen) {
                         openSingleCard(null);
@@ -4040,9 +4713,9 @@ export default function LinearWizardPage() {
                         laneName: selectedLane.name || selectedLane.id,
                       });
                     }}
-                  >
-                    Pomocník
-                  </button>
+                    >
+                      Pomocník
+                    </button>
                   <button
                     type="button"
                     className="process-card-close"
@@ -4060,22 +4733,69 @@ export default function LinearWizardPage() {
               <div className="process-card-body">
                 <div className="wizard-lane-panel__content wizard-lane-panel__content--single">
                   <div className="wizard-lane-panel__right wizard-lane-panel__right--full">
-                    <div className="wizard-lane-panel__section-title">Popis lane</div>
-                    <span className="wizard-lane-panel__sub">Popíš, čo robí táto rola (jedna aktivita na riadok)</span>
+                    {guideEnabled &&
+                    guideState?.message &&
+                    guideState?.scope === "lane" &&
+                    guideState?.laneId &&
+                    selectedLane?.id === guideState.laneId ? (
+                      <div className="guide-panel">
+                        {guideState?.title ? (
+                          <div className="guide-panel__title">{guideState.title}</div>
+                        ) : null}
+                        <div className="guide-panel__text">{guideState.message}</div>
+                        <div className="guide-panel__actions">
+                          {guideState?.primary ? (
+                            <button
+                              className="btn btn--small btn-primary"
+                              type="button"
+                              onClick={() =>
+                                handleGuideAction(
+                                  guideState.primary.action,
+                                  guideState.primary.payload,
+                                )
+                              }
+                            >
+                              {guideState.primary.label}
+                            </button>
+                          ) : null}
+                          {guideState?.secondary ? (
+                            <button
+                              className="btn btn--small"
+                              type="button"
+                              onClick={() =>
+                                handleGuideAction(
+                                  guideState.secondary.action,
+                                  guideState.secondary.payload,
+                                )
+                              }
+                            >
+                              {guideState.secondary.label}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="wizard-lane-panel__section-title">Kroky role</div>
+                    <span className="wizard-lane-panel__sub">Napíš kroky tejto role. Jeden riadok = jeden krok.</span>
                     <textarea
                       value={laneDescription}
                       onChange={(e) => updateLaneDescription(e.target.value)}
                       rows={6}
                       className="wizard-lane-textarea"
                     />
-                    <button className="btn btn-primary" type="button" onClick={handleAppendToLane} disabled={isLoading || isReadOnlyMode}>
+                    <button
+                      className="btn btn-primary lane-primary-btn"
+                      type="button"
+                      onClick={handleAppendToLane}
+                      disabled={isLoading || isReadOnlyMode}
+                    >
                       {isLoading ? "Pridávam..." : "Vytvor aktivity pre túto rolu"}
                     </button>
                   </div>
                   <div className="wizard-lane-panel__left wizard-lane-panel__left--full">
                     {laneHelperItems.length ? (
                       <div className="lane-helper">
-                        <div className="lane-helper__title">Pomocník pri zadávaní</div>
+                        <div className="lane-helper__title">Živý preklad krokov</div>
                         <div className="lane-helper__list">
                           {laneHelperItems.map((item) => (
                             <div key={item.id} className={`lane-helper__row lane-helper__row--${item.type}`}>
@@ -4085,6 +4805,7 @@ export default function LinearWizardPage() {
                                   <span className="lane-helper__label">Riadok {item.lineNumber}:</span> {item.text}
                                 </div>
                                 <div className="lane-helper__hint">{item.hint}</div>
+                                {item.success ? <div className="lane-helper__success">{item.success}</div> : null}
                                 {item.warning ? <div className="lane-helper__warning">{item.warning}</div> : null}
                               </div>
                             </div>
@@ -4093,8 +4814,8 @@ export default function LinearWizardPage() {
                       </div>
                     ) : (
                       <div className="lane-helper">
-                        <div className="lane-helper__title">Pomocník pri zadávaní</div>
-                        <div className="lane-helper__hint">Napíš aktivitu a ja ti ukážem, či to bude task alebo gateway.</div>
+                        <div className="lane-helper__title">Živý preklad krokov</div>
+                        <div className="lane-helper__hint">Napíš krok a ja ti ukážem, či je to jednoduchý krok alebo rozhodovanie.</div>
                       </div>
                     )}
                   </div>
@@ -4431,6 +5152,46 @@ export default function LinearWizardPage() {
             </div>
           ) : null}
           <div className="wizard-viewer">
+            {guideEnabled && guideState?.message ? (
+              <div className="guide-bar">
+                <div className="guide-bar__text">
+                  {guideState?.title ? (
+                    <div className="guide-bar__title">{guideState.title}</div>
+                  ) : null}
+                  <div>{guideState.message}</div>
+                </div>
+                <div className="guide-bar__actions">
+                  {guideState?.primary ? (
+                    <button
+                      className="btn btn--small btn-primary"
+                      type="button"
+                      onClick={() =>
+                        handleGuideAction(
+                          guideState.primary.action,
+                          guideState.primary.payload,
+                        )
+                      }
+                    >
+                      {guideState.primary.label}
+                    </button>
+                  ) : null}
+                  {guideState?.secondary ? (
+                    <button
+                      className="btn btn--small"
+                      type="button"
+                      onClick={() =>
+                        handleGuideAction(
+                          guideState.secondary.action,
+                          guideState.secondary.payload,
+                        )
+                      }
+                    >
+                      {guideState.secondary.label}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             {xml ? (
               <MapViewer
                 key={`${modelSource?.kind || "sandbox"}-${modelSource?.kind === "org" && orgReadOnly ? "ro" : "rw"}`}
@@ -4468,8 +5229,24 @@ export default function LinearWizardPage() {
                     {error}
                   </div>
                 ) : null}
-                <div className="wizard-placeholder" style={{ maxWidth: 520 }}>
-                  Vyplň Kartu procesu a klikni na Vygenerovať BPMN pre náhľad.
+                <div className="wizard-welcome">
+                  <div className="wizard-welcome__orb" aria-hidden />
+                  <div className="wizard-welcome__card">
+                    <div className="wizard-welcome__eyebrow">flowmate · BPMNGen</div>
+                    <div className="wizard-welcome__title">Vitaj znova v BPMNGen</div>
+                    <div className="wizard-welcome__subtitle">Čo ideme robiť dnes?</div>
+                    <div className="wizard-welcome__actions">
+                      <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
+                        Začať nový model
+                      </button>
+                      <button className="btn" type="button" onClick={openModels}>
+                        Pokračovať v rozpracovanom
+                      </button>
+                    </div>
+                    <div className="wizard-welcome__hint">
+                      Tip: Rozpracované modely nájdeš v sekcii Uložené modely.
+                    </div>
+                  </div>
                 </div>
               </div>
           )}

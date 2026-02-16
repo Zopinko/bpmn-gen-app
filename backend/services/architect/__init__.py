@@ -244,6 +244,7 @@ def tidy_yes_no_gateway(
         if len(outs) == 2:
             yes_label = "Áno" if locale_lower.startswith("sk") else "yes"
             no_label = "Nie" if locale_lower.startswith("sk") else "no"
+            yes_label = "Áno" if locale_lower.startswith("sk") else "yes"
             _ensure_flow_label(outs[0], yes_label)
             _ensure_flow_label(outs[1], no_label)
 

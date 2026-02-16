@@ -1,4 +1,4 @@
-# mypy: ignore-errors
+﻿# mypy: ignore-errors
 # bpmn_svc.py
 # Jednotné, prehľadné a spätnokompatibilné generovanie BPMN z engine_json.
 
@@ -163,30 +163,63 @@ def _expand_parallel_step(
     """Return (new_prev, nodes, flows) for parallel patterns or fallback."""
     items: list[str] = []
 
-    # Highest priority: explicit "Paralelne: A; B; ..."
-    m = re.match(r"^\s*Paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
+    def _clean_parts(parts: list[str]) -> list[str]:
+        cleaned = []
+        for part in parts:
+            text = part.strip().rstrip(".")
+            if text:
+                cleaned.append(text)
+        return cleaned
+
+    def _split_with_and(raw: str) -> list[str]:
+        # split by " a " / " aj " between words
+        chunks = re.split(r"\s+(?:a|aj)\s+", raw, flags=re.IGNORECASE)
+        return _clean_parts(chunks)
+
+    def _split_items(raw: str) -> list[str]:
+        if ";" in raw:
+            return _clean_parts(raw.split(";"))
+        if "," in raw:
+            parts = _clean_parts(raw.split(","))
+            merged: list[str] = []
+            for part in parts:
+                merged.extend(_split_with_and(part))
+            return _clean_parts(merged)
+        return _split_with_and(raw)
+
+    # Allow "Paralelne: ..." explicitly
+    m = re.match(r"^\s*paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
     if m:
-        raw = m.group(1)
-        items = [
-            part.strip().rstrip(".") for part in raw.split(";") if part.strip().rstrip(".")
-        ]
+        items = _split_items(m.group(1))
     else:
-        # Next: "Zároveň ..." with at least one explicit " a "
-        trimmed = step.lstrip()
+        trimmed = step.strip()
         lowered = trimmed.lower()
-        prefixes = ["zároveň", "zaroven", "súčasne", "sucasne"]
+        prefixes = [
+            "paralelne",
+            "zároveň",
+            "zaroven",
+            "súčasne",
+            "sucasne",
+            "súbežne",
+            "subezne",
+            "naraz",
+            "popri tom",
+            "popritom",
+        ]
         prefix = next((p for p in prefixes if lowered.startswith(p)), None)
+        raw = None
         if prefix:
-            raw = trimmed[len(prefix) :].strip()
-            if re.search(r"\s+a\s+", raw, flags=re.IGNORECASE):
-                parts = [p.strip().rstrip(".") for p in raw.split(",") if p.strip().rstrip(".")]
-                last_chunk = parts.pop() if parts else raw
-                subparts = [
-                    s.strip().rstrip(".")
-                    for s in re.split(r"\s+a\s+", last_chunk)
-                    if s.strip().rstrip(".")
-                ]
-                items = [x for x in parts + subparts if x]
+            raw = trimmed[len(prefix) :].lstrip(" :,-")
+        else:
+            # keyword in the middle (e.g. "... a zároveň ...")
+            for p in prefixes:
+                token = f" {p} "
+                idx = lowered.find(token)
+                if idx != -1:
+                    raw = trimmed[idx + len(token) :].lstrip(" :,-")
+                    break
+        if raw:
+            items = _split_items(raw)
 
     if len(items) < 2:
         return None, [], []  # fallback to normal task handling
@@ -230,7 +263,9 @@ def _expand_parallel_step(
     return join_id, nodes, flows
 
 
-def build_linear_engine_from_wizard(data: LinearWizardRequest) -> Dict[str, Any]:
+def build_linear_engine_from_wizard(
+    data: LinearWizardRequest, return_issues: bool = False
+) -> Dict[str, Any]:
     """
     Deterministically build a linear engine_json from a wizard payload without any AI calls.
     """
@@ -336,11 +371,13 @@ def build_linear_engine_from_wizard(data: LinearWizardRequest) -> Dict[str, Any]
     }
 
     validated = postprocess_engine_json(engine_json, locale="sk")
-    issues = validate_engine(validated)
-    return {
-        "engine_json": validated,
-        "issues": [issue.model_dump() for issue in issues],
-    }
+    if return_issues:
+        issues = validate_engine(validated)
+        return {
+            "engine_json": validated,
+            "issues": [issue.model_dump() for issue in issues],
+        }
+    return validated
 
 
 def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, Any]:
@@ -1813,7 +1850,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             lane_elems[ln["id"]] = ET.SubElement(
                 lane_set,
                 T("bpmn", "lane"),
-                {"id": xml_lane_id, "name": ln["name"]},
+                {"id": xml_lane_id, "name": ln["name"], "data-engine-id": ln["id"]},
             )
     node_ids = set()
     for n in nodes:
@@ -1827,16 +1864,24 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 
         if ntype == "startEvent":
             ET.SubElement(
-                process, T("bpmn", "startEvent"), {"id": nid, "name": n["name"]}
+                process,
+                T("bpmn", "startEvent"),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
 
         elif ntype == "endEvent":
             ET.SubElement(
-                process, T("bpmn", "endEvent"), {"id": nid, "name": n["name"]}
+                process,
+                T("bpmn", "endEvent"),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
 
         elif ntype in ("task", "userTask", "serviceTask"):
-            ET.SubElement(process, T("bpmn", ntype), {"id": nid, "name": n["name"]})
+            ET.SubElement(
+                process,
+                T("bpmn", ntype),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
+            )
 
         elif ntype in (
             "exclusiveGateway",
@@ -1844,29 +1889,48 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             "inclusiveGateway",
             "eventBasedGateway",
         ):
-            ET.SubElement(process, T("bpmn", ntype), {"id": nid, "name": n["name"]})
+            ET.SubElement(
+                process,
+                T("bpmn", ntype),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
+            )
 
         elif ntype in ("intermediateCatchEvent", "intermediateThrowEvent"):
             el = ET.SubElement(
-                process, T("bpmn", ntype), {"id": nid, "name": n["name"]}
+                process,
+                T("bpmn", ntype),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
             _add_event_definition(el, n)
 
         elif ntype == "subProcess":
             ET.SubElement(
-                process, T("bpmn", "subProcess"), {"id": nid, "name": n["name"]}
+                process,
+                T("bpmn", "subProcess"),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
 
         else:
-            ET.SubElement(process, T("bpmn", "task"), {"id": nid, "name": n["name"]})
+            ET.SubElement(
+                process,
+                T("bpmn", "task"),
+                {"id": nid, "name": n["name"], "data-engine-id": nid},
+            )
 
-    for f in flows:
+    for idx, f in enumerate(flows):
+        if "id" not in f or not f.get("id"):
+            f["id"] = f"F_{f.get('source','?')}_{f.get('target','?')}_{idx}"
         for key in ["id", "source", "target"]:
             if key not in f:
                 raise ValueError(f"Flow {f} chýba kľúč: {key}")
         if f["source"] not in node_ids or f["target"] not in node_ids:
             raise ValueError(f"Flow {f['id']} odkazuje na neexistujúci uzol.")
-        attrs = {"id": f["id"], "sourceRef": f["source"], "targetRef": f["target"]}
+        attrs = {
+            "id": f["id"],
+            "sourceRef": f["source"],
+            "targetRef": f["target"],
+            "data-engine-id": f["id"],
+        }
         # >>> Dôležité: ak flow nemá 'name', ale má 'label', použijeme label
         flow_name = f.get("name") or f.get("label")
         if flow_name:
@@ -1920,5 +1984,12 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 def generate_bpmn_from_json(data: dict) -> str:
     # zober locale z requestu, ak je; inak SK
     locale = (data.get("locale") or "sk").lower()
+    # Ensure flow ids exist before normalization (some steps assume flow["id"]).
+    flows = data.get("flows") if isinstance(data.get("flows"), list) else None
+    if flows is not None:
+        for idx, f in enumerate(flows):
+            if isinstance(f, dict) and ("id" not in f or not f.get("id")):
+                f["id"] = f"F_{f.get('source','?')}_{f.get('target','?')}_{idx}"
     data = postprocess_engine_json(data, locale=locale)
     return json_to_bpmn(data)
+

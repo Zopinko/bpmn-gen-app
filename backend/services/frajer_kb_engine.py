@@ -37,7 +37,12 @@ class FrajerKB:
 
     def _clean_action(self, txt: str) -> str:
         txt = (txt or "").strip().rstrip(".")
-        txt = re.sub(r"^\s*([A-Za-zĂ-Ĺľ][\wĂ-Ĺľ\s\-\/&]+?)\s*:\s+", "", txt)
+        txt = re.sub(
+            r"^\s*([^\W\d_][\w\s\-\/&]+?)\s*:\s+",
+            "",
+            txt,
+            flags=re.UNICODE,
+        )
         for lane_name in self.role_aliases.keys():
             pref = lane_name.lower() + " "
             if txt.lower().startswith(pref):
@@ -66,15 +71,15 @@ class FrajerKB:
                 "template": "exclusive_if_else",
                 "rule_id": "heur_if_else",
             }
-        if re.search(r"(?i)\b(paralelne|zĂˇroveĹ|sĂşbeĹľne|popritom)\b", s):
+        if re.search(r"(?i)\b(paralelne|zároveň|súbežne|popritom)\b", s):
             return {
                 "intent": "parallel_gateway",
                 "template": "parallel_split_join",
                 "rule_id": "heur_parallel",
             }
-        if re.search(r"(?i)\b(opakuj kĂ˝m|kĂ˝m|pokĂ˝m|aĹľ do)\b", s):
+        if re.search(r"(?i)\b(opakuj kým|kým|pokiaľ|až do)\b", s):
             return {"intent": "loop", "template": "while_loop", "rule_id": "heur_loop"}
-        if re.search(r"(?i)\b(po(?:Ĺˇle|doĹˇle)|notifikuj|informuj)\b", s):
+        if re.search(r"(?i)\b(po(?:šle|došle)|notifikuj|informuj)\b", s):
             return {
                 "intent": "message",
                 "template": "message_task",
@@ -87,7 +92,11 @@ class FrajerKB:
     def _lane_hint(self, sentence: str) -> str:
         s = sentence.strip()
 
-        match = re.match(r"^\s*([A-Za-zĂ-Ĺľ][\wĂ-Ĺľ\s\-\/&]+?)\s*:\s+", s)
+        match = re.match(
+            r"^\s*([^\W\d_][\w\s\-\/&]+?)\s*:\s+",
+            s,
+            flags=re.UNICODE,
+        )
         if match:
             return match.group(1).strip()
 
@@ -193,7 +202,7 @@ class FrajerKB:
                 slots["lane_false"] = lane_true or lane_hint
 
         elif template in ("parallel_split_join", "inclusive_split_join"):
-            parts = re.split(r"(?i)\b(?:a|tieĹľ|zĂˇroveĹ|popritom)\b", s, maxsplit=1)
+            parts = re.split(r"(?i)\b(?:a|tiež|zároveň|popritom)\b", s, maxsplit=1)
             if len(parts) == 2:
                 left, right = parts[0].strip(), parts[1].strip()
                 slots["action_a"] = self._clean_action(left)
@@ -204,12 +213,12 @@ class FrajerKB:
         elif template == "message_task":
             slots["lane_target"] = self._lane_hint(s)
             slots["message_action"] = self._clean_action(
-                re.sub(r"(?i)\b(po(?:Ĺˇle|doĹˇle)|notifikuj|informuj)\b", "OdoĹˇli", s)
+                re.sub(r"(?i)\b(po(?:šle|došle)|notifikuj|informuj)\b", "Odošli", s)
             )
 
         elif template == "while_loop":
             m = re.search(
-                r"(?i)\b(opakuj kĂ˝m|kĂ˝m|pokĂ˝m|aĹľ do)\b\s*(.+?)(?::|\.)", s
+                r"(?i)\b(opakuj kým|kým|pokiaľ|až do)\b\s*(.+?)(?::|\.)", s
             )
             if m:
                 slots["loop_cond"] = m.group(2).strip()

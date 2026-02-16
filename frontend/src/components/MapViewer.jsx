@@ -37,17 +37,22 @@ export default function MapViewer({
   onUndo,
   canUndo = false,
   onSave,
+  onMainMenu,
   saveDisabled = false,
   saveLabel = "Uložiť",
+  onEngineJsonPatch,
   onModelerReady,
   onInsertBlock,
   readOnly = false,
 }) {
+  const ENABLE_LANE_HANDLES = false;
+  const ENABLE_GHOST_STYLING = false;
   const containerRef = useRef(null);
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [blocksOpen, setBlocksOpen] = useState(false);
+  const isImportingRef = useRef(false);
   const hasSubtitle = Boolean(subtitle || subtitleMeta || subtitleBadge || subtitleTag);
   const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
@@ -61,6 +66,68 @@ export default function MapViewer({
   const laneHandleOverlayIdsRef = useRef([]);
   const laneHandleMapRef = useRef(new Map());
   const laneDragStartMapRef = useRef(new Map());
+  const nameCacheRef = useRef(new Map());
+  const laneCacheRef = useRef(new Map());
+
+  const emitEnginePatch = (patch) => {
+    if (typeof onEngineJsonPatch !== "function") return;
+    if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_SYNC) {
+      console.log("[engine-patch]", patch);
+    }
+    onEngineJsonPatch(patch);
+  };
+
+  const getEngineId = (element) => {
+    try {
+      const attrs = element?.businessObject?.$attrs;
+      return attrs ? attrs["data-engine-id"] : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const ensureEngineId = (element) => {
+    if (!element?.businessObject) return null;
+    const existing = getEngineId(element);
+    if (existing) return existing;
+    const fallback =
+      element.businessObject?.id || element.id || `N_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    try {
+      const bo = element.businessObject;
+      if (bo.$attrs == null || typeof bo.$attrs !== "object") {
+        bo.$attrs = {};
+      }
+      if (bo.$attrs && typeof bo.$attrs === "object") {
+        bo.$attrs["data-engine-id"] = fallback;
+      }
+    } catch {
+      // $attrs may be read-only on some elements; fall back to returning id without setting.
+    }
+    return fallback;
+  };
+
+  const mapNodeType = (boType) => {
+    if (!boType) return null;
+    if (boType.includes("StartEvent")) return "StartEvent";
+    if (boType.includes("EndEvent")) return "EndEvent";
+    if (boType.includes("Task")) return "Task";
+    if (boType.includes("Gateway")) return "Gateway";
+    return null;
+  };
+
+  const findLaneEngineId = (element, elementRegistry) => {
+    if (!elementRegistry) return null;
+    const lanes = elementRegistry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || el?.type).includes("Lane"));
+    if (!lanes.length) return null;
+    const centerY = (element?.y || 0) + (element?.height || 0) / 2;
+    const lane = lanes.find(
+      (ln) => centerY >= (ln.y || 0) && centerY <= (ln.y || 0) + (ln.height || 0),
+    );
+    if (!lane) return null;
+    return getEngineId(lane) || ensureEngineId(lane) || lane.id;
+  };
   const laneHandleHoverRef = useRef(false);
   const annotationOverlayIdsRef = useRef([]);
   const laneDragStateRef = useRef({
@@ -524,12 +591,14 @@ export default function MapViewer({
     };
 
     const hideLaneHandles = () => {
+      if (!ENABLE_LANE_HANDLES) return;
       laneHandleMapRef.current.forEach((handle) => {
         handle.style.display = "none";
       });
     };
 
     const showLaneHandle = (laneId) => {
+      if (!ENABLE_LANE_HANDLES) return;
       hideLaneHandles();
       const handle = laneHandleMapRef.current.get(laneId);
       if (handle) {
@@ -541,7 +610,9 @@ export default function MapViewer({
       const { element } = event;
 
       // always remove previous handles
-      clearLaneHandles();
+      if (ENABLE_LANE_HANDLES) {
+        clearLaneHandles();
+      }
       updateContextPad(element);
 
       const boType = element.businessObject && element.businessObject.$type;
@@ -574,7 +645,9 @@ export default function MapViewer({
     };
 
     const handleCanvasClick = () => {
-      clearLaneHandles();
+      if (ENABLE_LANE_HANDLES) {
+        clearLaneHandles();
+      }
       clearContextPad();
       if (typeof onLaneSelect === "function") {
         onLaneSelect(null);
@@ -584,6 +657,7 @@ export default function MapViewer({
 
     // Štýlujeme všetky aktuálne drag ghosty (aj pre resize, aj pre move)
     const styleAllDragGhosts = () => {
+      if (!ENABLE_GHOST_STYLING) return;
       // collect all possible ghost roots (dragger nodes + current visual from event context)
       const roots = Array.from(document.querySelectorAll(".djs-dragger"));
       if (lastDragEvent?.context?.visual) {
@@ -631,6 +705,7 @@ export default function MapViewer({
     let lastDragEvent = null;
 
     const stopGhostStyling = () => {
+      if (!ENABLE_GHOST_STYLING) return;
       if (ghostStylingHandle !== null) {
         if (useRaf) {
           cancelAnimationFrame(ghostStylingHandle);
@@ -643,6 +718,7 @@ export default function MapViewer({
     };
 
     const startGhostStyling = (event) => {
+      if (!ENABLE_GHOST_STYLING) return;
       lastDragEvent = event || null;
       if (ghostStylingHandle !== null) return;
 
@@ -713,11 +789,103 @@ export default function MapViewer({
       }
     };
 
+    const handleShapeAdded = (event) => {
+      if (isImportingRef.current) return;
+      const element = event?.element;
+      if (!element || element?.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      const nodeType = mapNodeType(boType);
+      if (!nodeType) return;
+      const id = ensureEngineId(element);
+      if (id) {
+        nameCacheRef.current.set(String(id), element.businessObject?.name || "");
+      }
+      const laneId = findLaneEngineId(element, elementRegistry);
+      if (id) {
+        laneCacheRef.current.set(String(id), laneId || "");
+      }
+      emitEnginePatch({
+        type: "ADD_NODE",
+        id,
+        nodeType,
+        name: element.businessObject?.name || "",
+        laneId,
+      });
+    };
+
+    const handleShapeRemoved = (event) => {
+      if (isImportingRef.current) return;
+      const element = event?.element;
+      if (!element || element?.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      const nodeType = mapNodeType(boType);
+      if (!nodeType) return;
+      const id = getEngineId(element) || element?.businessObject?.id || element?.id;
+      if (!id) return;
+      nameCacheRef.current.delete(String(id));
+      laneCacheRef.current.delete(String(id));
+      emitEnginePatch({ type: "REMOVE_NODE", id });
+    };
+
+    const handleConnectionAdded = (event) => {
+      if (isImportingRef.current) return;
+      const element = event?.element;
+      if (!element || element?.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      if (!String(boType).includes("SequenceFlow")) return;
+      const id = ensureEngineId(element);
+      const sourceId = ensureEngineId(element.source);
+      const targetId = ensureEngineId(element.target);
+      if (!sourceId || !targetId) return;
+      emitEnginePatch({ type: "ADD_FLOW", id, sourceId, targetId });
+    };
+
+    const handleConnectionRemoved = (event) => {
+      if (isImportingRef.current) return;
+      const element = event?.element;
+      if (!element || element?.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      if (!String(boType).includes("SequenceFlow")) return;
+      const id = getEngineId(element) || element?.businessObject?.id || element?.id;
+      if (!id) return;
+      emitEnginePatch({ type: "REMOVE_FLOW", id });
+    };
+
+    const handleElementChanged = (event) => {
+      if (isImportingRef.current) return;
+      const element = event?.element;
+      if (!element || element?.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      const nodeType = mapNodeType(boType);
+      const isLane = String(boType).includes("Lane");
+      if (!nodeType && !isLane) return;
+      const id = ensureEngineId(element);
+      if (!id) return;
+      const nextName = element.businessObject?.name || "";
+      const cacheKey = String(id);
+      const prevName = nameCacheRef.current.get(cacheKey);
+      if (prevName === nextName) return;
+      nameCacheRef.current.set(cacheKey, nextName);
+      if (isLane) {
+        emitEnginePatch({ type: "RENAME_LANE", id, name: nextName });
+        return;
+      }
+      const nextLaneId = findLaneEngineId(element, elementRegistry);
+      const prevLaneId = laneCacheRef.current.get(cacheKey);
+      if (nextLaneId && nextLaneId !== prevLaneId) {
+        laneCacheRef.current.set(cacheKey, nextLaneId);
+        emitEnginePatch({ type: "UPDATE_NODE_LANE", id, laneId: nextLaneId });
+      }
+      emitEnginePatch({ type: "RENAME_NODE", id, name: nextName });
+    };
+
     if (eventBus) {
-      eventBus.on("shape.move.start", startGhostStyling);
-      eventBus.on("shape.move.move", startGhostStyling);
-      eventBus.on("shape.move.end", stopGhostStyling);
-      eventBus.on("shape.move.cancel", stopGhostStyling);
+      if (ENABLE_GHOST_STYLING) {
+        eventBus.on("shape.move.start", startGhostStyling);
+        eventBus.on("shape.move.move", startGhostStyling);
+        eventBus.on("shape.move.end", stopGhostStyling);
+        eventBus.on("shape.move.cancel", stopGhostStyling);
+      }
       eventBus.on("shape.move.end", handleLaneMoveEnd);
       eventBus.on("connect.start", suppressContextPad);
       eventBus.on("connect.end", releaseContextPad);
@@ -727,16 +895,23 @@ export default function MapViewer({
       eventBus.on("create.end", releaseContextPad);
       eventBus.on("create.cancel", releaseContextPad);
       eventBus.on("create.cleanup", releaseContextPad);
-      eventBus.on("shape.resize.start", startGhostStyling);
-      eventBus.on("shape.resize.move", startGhostStyling);
-      eventBus.on("shape.resize.end", stopGhostStyling);
-      eventBus.on("shape.resize.cancel", stopGhostStyling);
+      if (ENABLE_GHOST_STYLING) {
+        eventBus.on("shape.resize.start", startGhostStyling);
+        eventBus.on("shape.resize.move", startGhostStyling);
+        eventBus.on("shape.resize.end", stopGhostStyling);
+        eventBus.on("shape.resize.cancel", stopGhostStyling);
+      }
       eventBus.on("element.click", handleElementClick);
       eventBus.on("element.hover", handleElementHover);
       eventBus.on("element.out", handleElementOut);
       eventBus.on("canvas.click", handleCanvasClick);
       eventBus.on("canvas.viewbox.changed", handleViewboxChanged);
       eventBus.on("commandStack.changed", handleDiagramChanged);
+      eventBus.on("shape.added", handleShapeAdded);
+      eventBus.on("shape.removed", handleShapeRemoved);
+      eventBus.on("connection.added", handleConnectionAdded);
+      eventBus.on("connection.removed", handleConnectionRemoved);
+      eventBus.on("element.changed", handleElementChanged);
     }
 
     return () => {
@@ -744,10 +919,12 @@ export default function MapViewer({
         onModelerReady(null);
       }
       if (eventBus) {
-        eventBus.off("shape.move.start", startGhostStyling);
-        eventBus.off("shape.move.move", startGhostStyling);
-        eventBus.off("shape.move.end", stopGhostStyling);
-        eventBus.off("shape.move.cancel", stopGhostStyling);
+        if (ENABLE_GHOST_STYLING) {
+          eventBus.off("shape.move.start", startGhostStyling);
+          eventBus.off("shape.move.move", startGhostStyling);
+          eventBus.off("shape.move.end", stopGhostStyling);
+          eventBus.off("shape.move.cancel", stopGhostStyling);
+        }
         eventBus.off("shape.move.end", handleLaneMoveEnd);
         eventBus.off("connect.start", suppressContextPad);
         eventBus.off("connect.end", releaseContextPad);
@@ -757,16 +934,23 @@ export default function MapViewer({
         eventBus.off("create.end", releaseContextPad);
         eventBus.off("create.cancel", releaseContextPad);
         eventBus.off("create.cleanup", releaseContextPad);
-        eventBus.off("shape.resize.start", startGhostStyling);
-        eventBus.off("shape.resize.move", startGhostStyling);
-        eventBus.off("shape.resize.end", stopGhostStyling);
-        eventBus.off("shape.resize.cancel", stopGhostStyling);
+        if (ENABLE_GHOST_STYLING) {
+          eventBus.off("shape.resize.start", startGhostStyling);
+          eventBus.off("shape.resize.move", startGhostStyling);
+          eventBus.off("shape.resize.end", stopGhostStyling);
+          eventBus.off("shape.resize.cancel", stopGhostStyling);
+        }
         eventBus.off("element.click", handleElementClick);
         eventBus.off("element.hover", handleElementHover);
         eventBus.off("element.out", handleElementOut);
         eventBus.off("canvas.click", handleCanvasClick);
         eventBus.off("canvas.viewbox.changed", handleViewboxChanged);
         eventBus.off("commandStack.changed", handleDiagramChanged);
+        eventBus.off("shape.added", handleShapeAdded);
+        eventBus.off("shape.removed", handleShapeRemoved);
+        eventBus.off("connection.added", handleConnectionAdded);
+        eventBus.off("connection.removed", handleConnectionRemoved);
+        eventBus.off("element.changed", handleElementChanged);
       }
       clearLaneHandles();
       clearContextPad();
@@ -843,6 +1027,7 @@ export default function MapViewer({
 
     let cancelled = false;
     skipDiagramChangeRef.current = true;
+    isImportingRef.current = true;
     modeler
       .importXML(xml)
       .then(() => {
@@ -854,6 +1039,18 @@ export default function MapViewer({
         const overlays = modeler.get("overlays");
         const elementRegistry = modeler.get("elementRegistry");
         if (!overlays || !elementRegistry) return;
+
+        nameCacheRef.current.clear();
+        laneCacheRef.current.clear();
+        elementRegistry.getAll().forEach((el) => {
+          const id = getEngineId(el) || el?.businessObject?.id || el?.id;
+          if (!id) return;
+          nameCacheRef.current.set(String(id), el.businessObject?.name || "");
+          const laneId = findLaneEngineId(el, elementRegistry);
+          if (laneId) {
+            laneCacheRef.current.set(String(id), laneId);
+          }
+        });
 
         laneHandleOverlayIdsRef.current.forEach((id) => overlays.remove(id));
         laneHandleOverlayIdsRef.current = [];
@@ -867,6 +1064,11 @@ export default function MapViewer({
           lastLaneOrderRef.current = key;
           handler(orderedNames);
         };
+
+        if (!ENABLE_LANE_HANDLES) {
+          isImportingRef.current = false;
+          return;
+        }
 
         const getLaneMetrics = () => {
           const lanes = elementRegistry
@@ -1016,6 +1218,7 @@ export default function MapViewer({
         if (!lanes.length && laneHandleOverlayIdsRef.current.length) {
           cleanupDrag();
         }
+        isImportingRef.current = false;
       })
       .catch((err) => {
         if (cancelled) return;
@@ -1025,12 +1228,14 @@ export default function MapViewer({
           ? "Zatiaľ nie je vytvorený diagram."
           : rawMessage;
         setImportError(message);
+        isImportingRef.current = false;
       })
       .finally(() => {
         if (cancelled) return;
         setTimeout(() => {
           skipDiagramChangeRef.current = false;
         }, 0);
+        isImportingRef.current = false;
       });
 
     return () => {
@@ -1161,6 +1366,16 @@ export default function MapViewer({
                       disabled={saveDisabled}
                     >
                       {saveLabel}
+                    </button>
+                  ) : null}
+                  {onMainMenu ? (
+                    <button
+                      className="map-toolbar__btn"
+                      type="button"
+                      onClick={onMainMenu}
+                      title="Hlavné menu"
+                    >
+                      Hlavné menu
                     </button>
                   ) : null}
                 </div>

@@ -68,6 +68,20 @@ body {
   filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.5)) contrast(1.1) brightness(1.05);
 }
 
+.app-nav__brand-text {
+  font-family: "Plus Jakarta Sans", "Space Grotesk", "Sora", "Segoe UI", sans-serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #f8fafc;
+  text-transform: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: radial-gradient(circle at top left, rgba(59, 130, 246, 0.35), rgba(15, 23, 42, 0.2));
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.6);
+}
+
 .app-nav__links {
   display: flex;
   gap: 12px;
@@ -1440,6 +1454,16 @@ body {
   z-index: 7;
 }
 
+/* Disable lane resize guides to prevent drag capture issues */
+.bpmn-lane-resize-guide,
+.lane-handle-overlay {
+  pointer-events: none !important;
+}
+
+.bpmn-lane-resize-guide {
+  display: none !important;
+}
+
 .map-viewer__status {
   position: absolute;
   top: 16px;
@@ -1455,6 +1479,66 @@ body {
 .map-viewer__status--error {
   color: #f97316;
   border-color: rgba(249, 115, 22, 0.5);
+}
+
+.guide-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+  color: #e2e8f0;
+  margin-bottom: 10px;
+}
+
+.guide-bar__text {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.guide-bar__title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.guide-bar__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.guide-panel {
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  margin-bottom: 10px;
+}
+
+.guide-panel__text {
+  font-size: 12px;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
+
+.guide-panel__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.guide-panel__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .map-viewer__annotations {
@@ -1650,6 +1734,25 @@ body {
   gap: 10px;
   padding: 12px 6px;
   background: #0b0f17;
+}
+
+.guide-toggle {
+  width: 100%;
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.guide-toggle:hover {
+  border-color: rgba(125, 211, 252, 0.6);
+  color: #f8fafc;
 }
 
 .process-card-rail-group {
@@ -2795,6 +2898,80 @@ body {
   font-size: 0.95rem;
 }
 
+.wizard-welcome {
+  position: relative;
+  width: min(820px, 90%);
+  display: flex;
+  justify-content: center;
+}
+
+.wizard-welcome__orb {
+  position: absolute;
+  top: -120px;
+  left: -120px;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.22), rgba(15, 23, 42, 0));
+  filter: blur(4px);
+  pointer-events: none;
+}
+
+.wizard-welcome__card {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  padding: 28px 32px;
+  border-radius: 18px;
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.95), rgba(10, 15, 25, 0.92));
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  box-shadow: 0 20px 60px rgba(2, 6, 23, 0.6);
+  text-align: left;
+}
+
+.wizard-welcome__eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.wizard-welcome__title {
+  margin-top: 12px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.wizard-welcome__subtitle {
+  margin-top: 8px;
+  font-size: 16px;
+  color: rgba(226, 232, 240, 0.8);
+}
+
+.wizard-welcome__actions {
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wizard-welcome__hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+@media (max-width: 720px) {
+  .wizard-welcome__card {
+    padding: 20px 22px;
+  }
+
+  .wizard-welcome__title {
+    font-size: 22px;
+  }
+}
+
 .wizard-lane-panel {
   position: absolute;
   top: 12px;
@@ -2929,6 +3106,11 @@ body {
   color: #f59e0b;
 }
 
+.lane-helper__success {
+  font-size: 11px;
+  color: #34d399;
+}
+
 .wizard-lane-panel__section-title {
   font-weight: 600;
   font-size: 0.95rem;
@@ -2940,6 +3122,33 @@ body {
   font-size: 0.85rem;
   color: var(--text-muted);
   margin-bottom: 6px;
+}
+
+.lane-action-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.wizard-lane-help-btn.lane-action-btn {
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  color: #e0f2fe;
+  background: rgba(30, 64, 175, 0.18);
+}
+
+.wizard-lane-help-btn.lane-action-btn:hover:not(:disabled) {
+  background: rgba(30, 64, 175, 0.28);
+  border-color: rgba(59, 130, 246, 0.7);
+}
+
+.lane-primary-btn {
+  margin-top: 10px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 12px;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
 }
 
 .wizard-lane-textarea {
