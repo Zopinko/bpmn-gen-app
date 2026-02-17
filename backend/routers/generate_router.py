@@ -4,6 +4,7 @@ from services.bpmn_svc import (
     build_linear_engine_from_wizard,
     generate_bpmn_from_json,
 )
+from services.architect.normalize import normalize_engine_payload
 from services.bpmn_import import bpmn_xml_to_engine
 from services.model_storage import (
     delete_model,
@@ -68,7 +69,11 @@ def generate_linear_wizard_diagram(
 @router.post("/wizard/lane/append", response_model=LaneAppendResponse)
 def wizard_append_lane(payload: LaneAppendRequest) -> LaneAppendResponse:
     built = append_tasks_to_lane_from_description(payload)
-    engine_json = built["engine_json"]
+    engine_json = normalize_engine_payload(built["engine_json"])
+    if not str(engine_json.get("name") or "").strip():
+        engine_json["name"] = str(engine_json.get("processId") or "").strip() or "Proces"
+    if not str(engine_json.get("processId") or "").strip():
+        engine_json["processId"] = "proc_fallback"
     issues = built.get("issues") or []
     validate_payload(engine_json)
     return LaneAppendResponse(engine_json=engine_json, issues=issues)
@@ -267,6 +272,39 @@ async def generate(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     return _as_bpmn_download(xml, filename=f"{engine.get('processId','process')}.bpmn")
+
+
+@router.post("/layout/reflow")
+async def reflow_layout(payload: dict = Body(...)):
+    if not payload:
+        raise HTTPException(status_code=400, detail="Payload je povinný.")
+
+    engine = payload.get("engine_json") if isinstance(payload, dict) else None
+    if not isinstance(engine, dict):
+        engine = payload if isinstance(payload, dict) else None
+
+    if not isinstance(engine, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Payload musí obsahovať engine_json alebo engine objekt.",
+        )
+
+    engine = normalize_engine_payload(engine)
+
+    for w in find_gateway_warnings(engine.get("nodes", []), engine.get("flows", [])):
+        try:
+            logger.warning(w)
+        except NameError:
+            print(f"[GW-WARN] {w}")
+
+    validate_payload(engine)
+    try:
+        xml = generate_bpmn_from_json(engine)
+        validate_xml(xml)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"engine_json": engine, "diagram_xml": xml}
 
 
 @router.post("/autogenerate")

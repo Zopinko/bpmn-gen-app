@@ -39,6 +39,22 @@ export async function renderEngineXml(engineJson) {
   return response.text();
 }
 
+export async function reflowLayout(engineJson) {
+  const response = await fetch(`${API_BASE}/layout/reflow`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ engine_json: engineJson }),
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const message = `Relayout failed (HTTP ${response.status} ${response.statusText})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 export async function appendLaneFromDescription(payload) {
   const response = await fetch(`${API_BASE}/wizard/lane/append`, {
     method: "POST",

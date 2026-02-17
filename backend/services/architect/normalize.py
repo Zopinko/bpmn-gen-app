@@ -49,7 +49,16 @@ _SNAKE_TO_BPMN_TYPE = {
 def _normalize_node_type(node: Dict[str, Any]) -> None:
     """Mutate *node* so its type matches canonical BPMN aliases."""
     node_type = (node.get("type") or "").strip()
-    node["type"] = _ALIAS_MAP.get(node_type, node_type)
+    if not node_type:
+        return
+    if node_type in _ALIAS_MAP:
+        node["type"] = _ALIAS_MAP[node_type]
+        return
+    lower = node_type.lower()
+    if lower in _ALIAS_MAP:
+        node["type"] = _ALIAS_MAP[lower]
+        return
+    node["type"] = node_type
 
 
 def normalize_engine_payload(engine: Dict[str, Any]) -> Dict[str, Any]:

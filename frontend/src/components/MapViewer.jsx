@@ -42,6 +42,8 @@ export default function MapViewer({
   saveLabel = "Uložiť",
   onEngineJsonPatch,
   onModelerReady,
+  onXmlImported,
+  overlayMessage,
   onInsertBlock,
   readOnly = false,
 }) {
@@ -108,10 +110,15 @@ export default function MapViewer({
 
   const mapNodeType = (boType) => {
     if (!boType) return null;
-    if (boType.includes("StartEvent")) return "StartEvent";
-    if (boType.includes("EndEvent")) return "EndEvent";
-    if (boType.includes("Task")) return "Task";
-    if (boType.includes("Gateway")) return "Gateway";
+    if (boType.includes("StartEvent")) return "startEvent";
+    if (boType.includes("EndEvent")) return "endEvent";
+    if (boType.includes("UserTask")) return "userTask";
+    if (boType.includes("ServiceTask")) return "serviceTask";
+    if (boType.includes("Task")) return "task";
+    if (boType.includes("ExclusiveGateway")) return "exclusiveGateway";
+    if (boType.includes("ParallelGateway")) return "parallelGateway";
+    if (boType.includes("InclusiveGateway")) return "inclusiveGateway";
+    if (boType.includes("Gateway")) return "gateway";
     return null;
   };
 
@@ -198,6 +205,143 @@ export default function MapViewer({
     const create = modeler.get("create");
     const elementFactory = modeler.get("elementFactory");
     const autoPlace = modeler.get("autoPlace", false);
+
+    const getLaneOfElement = (el) => {
+      let cur = el;
+      while (cur) {
+        const bo = cur.businessObject;
+        const type = String(bo?.$type || cur.type || "");
+        if (type.includes("Lane")) {
+          return (
+            bo?.$attrs?.["data-engine-id"] ||
+            bo?.id ||
+            cur.id ||
+            null
+          );
+        }
+        cur = cur.parent;
+      }
+      return null;
+    };
+
+    const routeFlow = (sourceEl, targetEl) => {
+      if (!sourceEl || !targetEl) return null;
+      const { x: sx = 0, y: sy = 0, width: sw = 0, height: sh = 0 } = sourceEl;
+      const { x: tx = 0, y: ty = 0, width: tw = 0, height: th = 0 } = targetEl;
+      if (!(sw && sh && tw && th)) return null;
+      const H = 30;
+      const ALT_BRANCH_X = 60;
+      const X_PAD = 30;
+      const EPS_Y = 40;
+      const srcMidY = sy + sh / 2;
+      const tgtMidY = ty + th / 2;
+      const srcR = { x: sx + sw, y: srcMidY };
+      const tgtL = { x: tx, y: tgtMidY };
+
+      const srcType = String(sourceEl?.businessObject?.$type || sourceEl?.type || "");
+      const isGateway = srcType.includes("Gateway");
+      const tgtBranch = String(targetEl?.businessObject?.$attrs?.["data-branch"] || "");
+      const isAlt =
+        isGateway && (tgtBranch === "alt" || tgtMidY > srcMidY + EPS_Y);
+      if (isAlt) {
+        const branchX = srcR.x + ALT_BRANCH_X;
+        return [srcR, { x: branchX, y: srcMidY }, { x: branchX, y: tgtMidY }, tgtL];
+      }
+
+      const srcLane = getLaneOfElement(sourceEl);
+      const tgtLane = getLaneOfElement(targetEl);
+      const sameLane =
+        srcLane && tgtLane ? srcLane === tgtLane : Math.abs(srcMidY - tgtMidY) < EPS_Y;
+
+      const forward = tgtL.x > srcR.x + 10;
+      const closeY = Math.abs(srcMidY - tgtMidY) < EPS_Y;
+
+      if (sameLane && forward && closeY) {
+        return [srcR, tgtL];
+      }
+
+      if (sameLane && forward && !closeY) {
+        return [srcR, { x: tgtL.x, y: srcMidY }, tgtL];
+      }
+
+      if (sameLane && !forward) {
+        return [
+          srcR,
+          { x: srcR.x + H, y: srcMidY },
+          { x: srcR.x + H, y: tgtMidY },
+          tgtL,
+        ];
+      }
+
+      return [
+        srcR,
+        { x: srcR.x + H, y: srcMidY },
+        { x: srcR.x + H, y: tgtMidY },
+        { x: tgtL.x - X_PAD, y: tgtMidY },
+        tgtL,
+      ];
+    };
+
+    const connectWithRouting = (source, target) => {
+      if (!modeling) return null;
+      const wps = routeFlow(source, target);
+      const conn = modeling.connect(
+        source,
+        target,
+        { type: "bpmn:SequenceFlow" },
+        null,
+        wps ? { waypoints: wps } : undefined,
+      );
+      if (window.__BPMNGEN_DEBUG_ROUTE) {
+        // eslint-disable-next-line no-console
+        console.log("[route] created conn id=", conn?.id);
+        // eslint-disable-next-line no-console
+        console.log("[route] before waypoints=", conn?.waypoints);
+        // eslint-disable-next-line no-console
+        console.log("[route] input waypoints=", wps);
+      }
+      if (conn && wps && typeof modeling.updateWaypoints === "function") {
+        modeling.updateWaypoints(conn, wps);
+        requestAnimationFrame(() => {
+          try {
+            modeling.updateWaypoints(conn, wps);
+          } catch {
+            // ignore
+          }
+        });
+      }
+      if (window.__BPMNGEN_DEBUG_ROUTE) {
+        // eslint-disable-next-line no-console
+        console.log("[route] after waypoints=", conn?.waypoints);
+      }
+      return conn;
+    };
+    const rerouteConnection = (connection) => {
+      if (!connection) return;
+      const boType = String(connection?.businessObject?.$type || connection?.type || "");
+      if (!boType.includes("SequenceFlow")) return;
+      const source = connection?.source;
+      const target = connection?.target;
+      if (!source || !target) return;
+      if (typeof modeling?.updateWaypoints !== "function") return;
+      const wps = routeFlow(source, target);
+      if (!wps) return;
+      try {
+        modeling.updateWaypoints(connection, wps);
+        requestAnimationFrame(() => {
+          try {
+            modeling.updateWaypoints(connection, wps);
+          } catch {
+            // ignore
+          }
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    modeler.__routeFlow = routeFlow;
+    modeler.__connectWithRouting = connectWithRouting;
 
     if (readOnly) {
       const commandStack = modeler.get("commandStack", false);
@@ -454,7 +598,21 @@ export default function MapViewer({
         );
       } else {
         const appendShape = (type, width, height) => {
+          const defaults = {
+            "bpmn:Task": "Procesný krok",
+            "bpmn:UserTask": "Procesný krok",
+            "bpmn:ServiceTask": "Procesný krok",
+            "bpmn:ExclusiveGateway": "Nová brána",
+            "bpmn:ParallelGateway": "Nová brána",
+            "bpmn:InclusiveGateway": "Nová brána",
+            "bpmn:Gateway": "Nová brána",
+            "bpmn:StartEvent": "Začiatok",
+            "bpmn:EndEvent": "Koniec",
+          };
           const shape = elementFactory.createShape({ type });
+          if (shape?.businessObject && defaults[type]) {
+            shape.businessObject.name = defaults[type];
+          }
           if (typeof width === "number" && typeof height === "number") {
             shape.width = width;
             shape.height = height;
@@ -462,13 +620,19 @@ export default function MapViewer({
           const shapeWidth = shape.width || width || 0;
           const shapeHeight = shape.height || height || 0;
           if (autoPlace && typeof autoPlace.append === "function") {
-            autoPlace.append(element, shape);
+            const created = autoPlace.append(element, shape);
+            if (created?.businessObject && defaults[type]) {
+              modeling.updateProperties(created, { name: defaults[type] });
+            }
             return;
           }
           const parent = element.parent || element;
           const x = (element.x || 0) + (element.width || 0) + 80;
           const y = (element.y || 0) + ((element.height || 0) / 2) - (shapeHeight / 2);
-          modeling.createShape(shape, { x, y }, parent);
+          const created = modeling.createShape(shape, { x, y }, parent);
+          if (created?.businessObject && defaults[type]) {
+            modeling.updateProperties(created, { name: defaults[type] });
+          }
         };
 
         container.appendChild(
@@ -494,7 +658,7 @@ export default function MapViewer({
 
         menu.appendChild(
           makeButton("Task", "bpmn-icon-task", {
-            onClick: () => appendShape("bpmn:Task", 190, 78),
+            onClick: () => appendShape("bpmn:Task", 100, 80),
             hideOnAction: false,
             className: "custom-context-pad__btn--menu",
           }),
@@ -833,10 +997,14 @@ export default function MapViewer({
       if (!element || element?.type === "label") return;
       const boType = element.businessObject?.$type || element.type;
       if (!String(boType).includes("SequenceFlow")) return;
+      rerouteConnection(element);
       const id = ensureEngineId(element);
       const sourceId = ensureEngineId(element.source);
       const targetId = ensureEngineId(element.target);
       if (!sourceId || !targetId) return;
+      if (id) {
+        nameCacheRef.current.set(String(id), element.businessObject?.name || "");
+      }
       emitEnginePatch({ type: "ADD_FLOW", id, sourceId, targetId });
     };
 
@@ -856,6 +1024,18 @@ export default function MapViewer({
       const element = event?.element;
       if (!element || element?.type === "label") return;
       const boType = element.businessObject?.$type || element.type;
+      const isSequenceFlow = String(boType).includes("SequenceFlow");
+      if (isSequenceFlow) {
+        const id = ensureEngineId(element);
+        if (!id) return;
+        const nextName = element.businessObject?.name || "";
+        const cacheKey = String(id);
+        const prevName = nameCacheRef.current.get(cacheKey);
+        if (prevName === nextName) return;
+        nameCacheRef.current.set(cacheKey, nextName);
+        emitEnginePatch({ type: "RENAME_FLOW", id, name: nextName });
+        return;
+      }
       const nodeType = mapNodeType(boType);
       const isLane = String(boType).includes("Lane");
       if (!nodeType && !isLane) return;
@@ -1040,6 +1220,12 @@ export default function MapViewer({
         const elementRegistry = modeler.get("elementRegistry");
         if (!overlays || !elementRegistry) return;
 
+        // Normalize existing sequence flows to center-based routing after full import.
+        elementRegistry
+          .getAll()
+          .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow"))
+          .forEach((conn) => rerouteConnection(conn));
+
         nameCacheRef.current.clear();
         laneCacheRef.current.clear();
         elementRegistry.getAll().forEach((el) => {
@@ -1055,6 +1241,10 @@ export default function MapViewer({
         laneHandleOverlayIdsRef.current.forEach((id) => overlays.remove(id));
         laneHandleOverlayIdsRef.current = [];
         laneHandleMapRef.current.clear();
+
+        if (typeof onXmlImported === "function") {
+          onXmlImported(modeler);
+        }
 
         const emitLaneOrder = (orderedNames) => {
           const handler = laneOrderChangeRef.current;
@@ -1405,6 +1595,9 @@ export default function MapViewer({
             </div>
           </div><div ref={containerRef} className="map-viewer__canvas" />
         {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
+        {overlayMessage ? (
+          <div className="map-viewer__status">{overlayMessage}</div>
+        ) : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
         {annotations?.length ? (
           <div className="map-viewer__annotations">

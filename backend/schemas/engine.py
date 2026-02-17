@@ -91,6 +91,17 @@ SCHEMA = {
 
 
 def validate_payload(payload: dict):
+    # Auto-fill missing/empty process name to avoid hard failures from UI-side placeholders.
+    try:
+        if isinstance(payload, dict):
+            name_val = payload.get("name")
+            if not str(name_val or "").strip():
+                fallback = str(payload.get("processId") or "").strip() or "Proces"
+                payload["name"] = fallback
+            if not str(payload.get("processId") or "").strip():
+                payload["processId"] = "proc_fallback"
+    except Exception:
+        pass
     try:
         validate(instance=payload, schema=SCHEMA)
     except ValidationError as e:

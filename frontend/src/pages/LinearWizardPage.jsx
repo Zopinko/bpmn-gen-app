@@ -9,6 +9,7 @@ import {
   saveWizardModel,
   loadWizardModel,
   renderEngineXml,
+  reflowLayout,
   listWizardModels,
   deleteWizardModel,
   renameWizardModel,
@@ -33,6 +34,8 @@ import {
   renameOrgNode,
 } from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
+import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
+import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
 
 const HELP_RULES = [
   {
@@ -89,6 +92,8 @@ const HELP_RULES = [
   },
 ];
 
+
+const STANDARD_TASK_SIZE = { width: 100, height: 80 };
 
 const LANE_SHAPE_OPTIONS = [
   {
@@ -176,11 +181,117 @@ const createEmptyProcessCardState = () => ({
   },
 });
 
+const PROCESS_TEMPLATES = [
+  {
+    id: "approval",
+    label: "Schválenie",
+    processName: "Schválenie žiadosti",
+    roles: "Klient\nPracovník\nManažér",
+    trigger: "Nová žiadosť od klienta",
+    input: "Žiadosť + údaje klienta",
+    output: "Schválená alebo zamietnutá žiadosť",
+  },
+  {
+    id: "complaint",
+    label: "Reklamácia",
+    processName: "Reklamácia tovaru",
+    roles: "Zákazník\nPodpora\nSklad",
+    trigger: "Zákazník podá reklamáciu",
+    input: "Reklamačný formulár + doklad",
+    output: "Ukončená reklamácia",
+  },
+  {
+    id: "onboarding",
+    label: "Nástup",
+    processName: "Nástup nového zamestnanca",
+    roles: "HR\nIT\nTímový líder",
+    trigger: "Nový zamestnanec nastupuje",
+    input: "Zmluva + požiadavky",
+    output: "Zamestnanec pripravený na prácu",
+  },
+];
+
+const LANE_TEMPLATES = [
+  {
+    id: "approve_basic",
+    label: "Žiadosť",
+    text:
+      "Prijmem žiadosť\n" +
+      "Overím identitu\n" +
+      "Ak identita nie je platná tak zamietnem žiadosť, inak pokračujem v spracovaní\n" +
+      "Spracujem žiadosť\n" +
+      "Oznámim výsledok žiadateľovi",
+  },
+  {
+    id: "complaint_basic",
+    label: "Reklamácia",
+    text:
+      "Prijmem reklamáciu\n" +
+      "Overím doklad o kúpe\n" +
+      "Ak doklad chýba tak vyžiadam doplnenie, inak pokračujem\n" +
+      "Posúdim stav výrobku\n" +
+      "Oznámim výsledok zákazníkovi",
+  },
+  {
+    id: "order_basic",
+    label: "Objednávka",
+    text:
+      "Prijmem objednávku\n" +
+      "Skontrolujem dostupnosť\n" +
+      "Ak nie je skladom tak ponúknem alternatívu, inak pokračujem\n" +
+      "Pripravím zásielku\n" +
+      "Odošlem zásielku zákazníkovi",
+  },
+  {
+    id: "invoice_basic",
+    label: "Faktúra",
+    text:
+      "Skontrolujem podklady\n" +
+      "Vystavím faktúru\n" +
+      "Ak sú údaje neúplné tak vyžiadam doplnenie, inak pokračujem\n" +
+      "Odošlem faktúru\n" +
+      "Zaznamenám odoslanie",
+  },
+  {
+    id: "onboarding_basic",
+    label: "Nástup",
+    text:
+      "Pripravím onboarding plán\n" +
+      "Zriadim prístupy\n" +
+      "Ak chýbajú podklady tak vyžiadam doplnenie, inak pokračujem\n" +
+      "Zabezpečím školenie\n" +
+      "Potvrdím nástup",
+  },
+];
+
 const splitLines = (text) =>
   (text || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+
+const normalizeEngineForBackend = (engine) => {
+  if (!engine) return engine;
+  const mapType = (raw) => {
+    if (!raw) return raw;
+    const base = String(raw).split(":").pop() || String(raw);
+    const lower = base.toLowerCase();
+    if (lower === "start") return "startEvent";
+    if (lower === "endevent" || lower === "end") return "endEvent";
+    if (lower === "task") return "task";
+    if (lower === "usertask") return "userTask";
+    if (lower === "servicetask") return "serviceTask";
+    if (lower === "exclusivegateway") return "exclusiveGateway";
+    if (lower === "parallelgateway") return "parallelGateway";
+    if (lower === "inclusivegateway") return "inclusiveGateway";
+    if (lower === "gateway") return "gateway";
+    return raw;
+  };
+  const nodes = Array.isArray(engine.nodes)
+    ? engine.nodes.map((n) => ({ ...n, type: mapType(n?.type) }))
+    : engine.nodes;
+  return { ...engine, nodes };
+};
 
 const applyEnginePatch = (prevEngine, patch) => {
   if (!prevEngine || !patch) return prevEngine;
@@ -233,6 +344,7 @@ const applyEnginePatch = (prevEngine, patch) => {
         type: "SequenceFlow",
         source: patch.sourceId,
         target: patch.targetId,
+        name: patch.name || "",
       });
       next.flows = flows;
       return next;
@@ -259,6 +371,14 @@ const applyEnginePatch = (prevEngine, patch) => {
       const idx = findFlowIndex(patch.id);
       if (idx < 0) return prevEngine;
       flows.splice(idx, 1);
+      next.flows = flows;
+      return next;
+    }
+    case "RENAME_FLOW": {
+      if (!patch.id) return prevEngine;
+      const idx = findFlowIndex(patch.id);
+      if (idx < 0) return prevEngine;
+      flows[idx] = { ...flows[idx], name: patch.name || "" };
       next.flows = flows;
       return next;
     }
@@ -324,11 +444,14 @@ const getLaneIdForFinding = (finding, index) => {
   return node?.laneId ? String(node.laneId) : null;
 };
 
+const isTaskLike = (node) => {
+  const t = String(node?.type || "").toLowerCase();
+  return t.includes("task") || t.includes("activity");
+};
+
 const getLaneTasks = (engineJson, laneId) => {
   const nodes = Array.isArray(engineJson?.nodes) ? engineJson.nodes : [];
-  return nodes.filter(
-    (n) => n?.laneId === laneId && /task/i.test(String(n?.type || "")),
-  );
+  return nodes.filter((n) => n?.laneId === laneId && isTaskLike(n));
 };
 
 const isLaneDone = (engineJson, laneId, findingsForLane) => {
@@ -389,6 +512,7 @@ const pickGuideCard = ({
   findings,
   activeLaneId,
   lastEditedLaneId,
+  uiContext,
 }) => {
   if (!engineJson) return null;
   const index = buildGuideIndex(engineJson);
@@ -423,7 +547,50 @@ const pickGuideCard = ({
   );
   if (!hasEmptyLane) {
     const { incoming, outgoing } = buildFlowAdjacency(index);
-    const taskNodes = index.nodes.filter((n) => /task/i.test(String(n?.type || "")));
+    const taskNodes = index.nodes.filter((n) => isTaskLike(n));
+    const hasEndEvent = index.nodes.some((n) =>
+      String(n?.type || "").toLowerCase().includes("end"),
+    );
+    const danglingNodes = index.nodes.filter((n) => {
+      const id = n?.id ? String(n.id) : "";
+      if (!id) return false;
+      const type = String(n?.type || "").toLowerCase();
+      if (type.includes("end")) return false;
+      const hasIn = (incoming.get(id) || 0) > 0;
+      const hasOut = (outgoing.get(id) || 0) > 0;
+      return hasIn && !hasOut;
+    });
+    const inReview = Boolean(uiContext?.mentorOpen || uiContext?.storyOpen);
+    if (!hasEndEvent && (danglingNodes.length > 0 || inReview)) {
+      const pickNode = ctxLaneId
+        ? danglingNodes.find((n) => String(n?.laneId || "") === ctxLaneId) ||
+          danglingNodes[0]
+        : danglingNodes[0];
+      if (pickNode) {
+        const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
+        const label = getNodeLabel(pickNode);
+        return {
+          key: `missing_end:${pickNode.id}`,
+          scope: laneId ? "lane" : "global",
+          laneId,
+          title: "Chýba koniec",
+          message:
+            `Bráško, chýba ti koniec procesu. Kam to má skončiť? ` +
+            `Klikni na tento krok a daj „Koniec sem“.`,
+          primary: {
+            label: "Na mape",
+            action: "FOCUS_NODE",
+            payload: { nodeId: pickNode.id, laneId },
+          },
+          secondary: { label: "Neskôr", action: "NOT_NOW" },
+          tertiary: {
+            label: "Koniec sem",
+            action: "CONNECT_END_HERE",
+            payload: { nodeId: pickNode.id },
+          },
+        };
+      }
+    }
     const pickTask = (predicate) => {
       if (!taskNodes.length) return null;
       if (ctxLaneId) {
@@ -448,15 +615,18 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Kam ďalej?",
-        message: `Aktivita „${label || "tento krok"}“ zatiaľ nikam nepokračuje. Skús pridať ďalší krok, aby bolo jasné, kam proces smeruje.`,
-        primary: laneId
-          ? {
-              label: "Do roly",
-              action: "OPEN_LANE",
-              payload: { laneId: laneId },
-            }
-          : null,
+        message: `Aktivita „${label || "tento krok"}“ zatiaľ nikam nepokračuje. Klikni na rolu na mape, zvoľ Prepojiť (Connect) a potiahni šípku na krok, ktorý nasleduje.`,
+        primary: {
+          label: "Na mape",
+          action: "FOCUS_NODE",
+          payload: { nodeId: missingOutgoingTask.id, laneId },
+        },
         secondary: { label: "Neskôr", action: "NOT_NOW" },
+        tertiary: {
+          label: "Koniec sem",
+          action: "CONNECT_END_HERE",
+          payload: { nodeId: missingOutgoingTask.id },
+        },
       };
     }
     const missingIncomingTask = pickTask((node) => {
@@ -473,20 +643,18 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Odkiaľ to prichádza?",
-        message: `Aktivita „${label || "tento krok"}“ nemá začiatok. Prepoj ju s predchádzajúcim krokom, aby tok dával zmysel.`,
-        primary: laneId
-          ? {
-              label: "Do roly",
-              action: "OPEN_LANE",
-              payload: { laneId: laneId },
-            }
-          : null,
+        message: `Aktivita „${label || "tento krok"}“ nemá začiatok. Klikni na rolu na mape, zvoľ Prepojiť (Connect) a potiahni šípku z kroku, ktorý má byť pred ňou.`,
+        primary: {
+          label: "Na mape",
+          action: "FOCUS_NODE",
+          payload: { nodeId: missingIncomingTask.id, laneId },
+        },
         secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
   }
 
-  const tasks = index.nodes.filter((n) => /task/i.test(String(n?.type || "")));
+  const tasks = index.nodes.filter((n) => isTaskLike(n));
   if (!tasks.length && index.lanes.length) {
     const firstLane = index.lanes[0];
     return {
@@ -563,6 +731,95 @@ const normalizeAscii = (value) =>
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+const normalizeText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const detectDecision = (line) => {
+  const text = normalizeText(line).trim();
+  return /^(ak|ked)\b/.test(text);
+};
+
+const detectParallel = (line) => {
+  const text = normalizeText(line);
+  return (
+    text.startsWith("zaroven") ||
+    text.startsWith("zároveň") ||
+    text.startsWith("subezne") ||
+    text.startsWith("súbežne") ||
+    text.startsWith("paralelne") ||
+    text.startsWith("naraz") ||
+    text.startsWith("popri tom") ||
+    text.startsWith("popritom") ||
+    text.includes(" zaroven ") ||
+    text.includes(" zároveň ") ||
+    text.includes(" subezne ") ||
+    text.includes(" súbežne ") ||
+    text.includes(" paralelne ") ||
+    text.includes(" naraz ") ||
+    text.includes(" popri tom ") ||
+    text.includes(" popritom ")
+  );
+};
+
+const countParallelSteps = (line) => {
+  const raw = String(line || "").trim();
+  if (!raw) return 0;
+  const normalized = normalizeText(raw);
+  const withoutPrefix = normalized
+    .replace(/^paralelne\s*[:,-]?\s*/i, "")
+    .replace(/^zaroven\s*[:,-]?\s*/i, "")
+    .replace(/^zároveň\s*[:,-]?\s*/i, "")
+    .replace(/^subezne\s*[:,-]?\s*/i, "")
+    .replace(/^súbežne\s*[:,-]?\s*/i, "")
+    .replace(/^naraz\s*[:,-]?\s*/i, "")
+    .replace(/^popri tom\s*[:,-]?\s*/i, "")
+    .replace(/^popritom\s*[:,-]?\s*/i, "");
+  const parts = withoutPrefix.includes(";")
+    ? withoutPrefix.split(";")
+    : withoutPrefix.split(",");
+  let steps = parts.map((p) => p.trim()).filter(Boolean);
+  if (steps.length <= 1) {
+    steps = withoutPrefix
+      .split(/\s+(?:a|aj)\s+/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
+  return steps.length;
+};
+
+const countStructures = (lines) => {
+  let decisions = 0;
+  let parallels = 0;
+  lines.forEach((line) => {
+    if (detectDecision(line)) decisions += 1;
+    if (detectParallel(line)) parallels += 1;
+  });
+  return { decisions, parallels };
+};
+
+const determineInlineHint = (lines) => {
+  const lastLine = [...lines].reverse().find((line) => line.trim());
+  if (!lastLine) return null;
+  const normalized = normalizeText(lastLine);
+  if (detectDecision(lastLine)) {
+    const message = normalized.includes(" inak ")
+      ? "Rozhodnutie rozpoznané. Ak chceš, vlož vzor."
+      : "Vyzerá to na rozhodnutie. Doplň vetvu INAK.";
+    return { message, templateType: "decision" };
+  }
+  if (detectParallel(lastLine)) {
+    const message =
+      countParallelSteps(lastLine) < 2
+        ? "Vyzerá to na paralelu. Pridaj aspoň 2 kroky a oddeľ ich , ; alebo „a“."
+        : "Paralela rozpoznaná. Ak chceš, vlož vzor.";
+    return { message, templateType: "parallel" };
+  }
+  return null;
+};
 
 const analyzeLaneLine = (lineText) => {
   const raw = String(lineText || "");
@@ -679,6 +936,9 @@ export default function LinearWizardPage() {
   const [laneInsertType, setLaneInsertType] = useState("task");
   const [laneInsertInputs, setLaneInsertInputs] = useState(() => createLaneInsertInputs());
   const modelerRef = useRef(null);
+  const engineJsonRef = useRef(null);
+  const relayoutSchedulerRef = useRef(null);
+  const [relayouting, setRelayouting] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -687,6 +947,7 @@ export default function LinearWizardPage() {
   const [pushModelLoadingIds, setPushModelLoadingIds] = useState(() => new Set());
   const [myOrgsEmpty, setMyOrgsEmpty] = useState(null);
   const [modelsSearch, setModelsSearch] = useState("");
+  const renderModeRef = useRef("full");
   const [orgsModalOpen, setOrgsModalOpen] = useState(false);
   const [myOrgs, setMyOrgs] = useState([]);
   const [myOrgsLoading, setMyOrgsLoading] = useState(false);
@@ -830,6 +1091,90 @@ export default function LinearWizardPage() {
   const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
   const [helpMode, setHelpMode] = useState("inline");
   const laneHelperItems = useMemo(() => analyzeLaneLines(laneDescription), [laneDescription]);
+  const laneLines = useMemo(
+    () =>
+      (laneDescription || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    [laneDescription],
+  );
+  const laneStructureCounts = useMemo(() => countStructures(laneLines), [laneLines]);
+  const inlineLaneHint = useMemo(() => determineInlineHint(laneLines), [laneLines]);
+  const hasLaneStructure =
+    laneStructureCounts.decisions > 0 || laneStructureCounts.parallels > 0;
+  const laneTextareaRef = useRef(null);
+  const [laneTemplateFlash, setLaneTemplateFlash] = useState(false);
+  const laneTemplateFlashTimerRef = useRef(null);
+  const logRenderMode = (mode, reason) => {
+    if (!window.__BPMNGEN_DEBUG_RENDER) return;
+    // eslint-disable-next-line no-console
+    console.log("[render]", mode, reason || "");
+  };
+
+  const setXmlFull = (nextXml, reason = "") => {
+    renderModeRef.current = "full";
+    logRenderMode("full", reason);
+    setXml(nextXml);
+  };
+
+  const markIncremental = (reason = "") => {
+    renderModeRef.current = "incremental";
+    logRenderMode("incremental", reason);
+  };
+
+  useEffect(() => {
+    engineJsonRef.current = engineJson;
+  }, [engineJson]);
+
+  if (!relayoutSchedulerRef.current) {
+    relayoutSchedulerRef.current = createRelayoutScheduler({
+      modelerRef,
+      engineJsonRef,
+      normalizeEngineForBackend,
+      reflowLayout,
+      setEngineJson,
+      setXmlFull,
+      setRelayouting,
+      setError,
+    });
+  }
+  const {
+    restoreRelayoutContext,
+    scheduleRelayoutKick,
+    cancelPendingRelayouts,
+    dispose: disposeRelayoutScheduler,
+  } = relayoutSchedulerRef.current;
+
+  useEffect(() => () => disposeRelayoutScheduler(), [disposeRelayoutScheduler]);
+
+  const applyProcessTemplate = (template) => {
+    if (!template) return;
+    setProcessCard((prev) => ({
+      ...prev,
+      generatorInput: {
+        ...prev.generatorInput,
+        processName: template.processName || "",
+        roles: template.roles || "",
+        trigger: template.trigger || "",
+        input: template.input || "",
+        output: template.output || "",
+      },
+    }));
+  };
+
+  const applyLaneTemplate = (template) => {
+    if (!template) return;
+    setLaneDescription(template.text || "");
+    setLaneTemplateFlash(true);
+    if (laneTemplateFlashTimerRef.current) {
+      window.clearTimeout(laneTemplateFlashTimerRef.current);
+    }
+    laneTemplateFlashTimerRef.current = window.setTimeout(() => {
+      setLaneTemplateFlash(false);
+    }, 900);
+  };
+
   const openSingleCard = (cardKey) => {
     setOrgOpen(cardKey === "org");
     setDrawerOpen(cardKey === "drawer");
@@ -870,6 +1215,8 @@ export default function LinearWizardPage() {
   const normalizeFlowTarget = (flow) => flow?.target || flow?.targetRef || flow?.to || null;
 
   const guideRequestIdRef = useRef(0);
+  const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
+  const guideModelLoadedKeyRef = useRef(null);
 
   const applyGuideFromFindings = useCallback(
     (findings, laneId = null, options = {}) => {
@@ -879,18 +1226,20 @@ export default function LinearWizardPage() {
         findings,
         activeLaneId: laneId || activeLaneId,
         lastEditedLaneId,
+        uiContext: { mentorOpen, storyOpen },
       });
       if (!card) {
         setGuideState(null);
-        return;
+        return null;
       }
       if (!force && wasGuideDismissedRecently(card.key)) {
         setGuideState(null);
-        return;
+        return null;
       }
       setGuideState(card);
+      return card;
     },
-    [engineJson, activeLaneId, lastEditedLaneId],
+    [engineJson, activeLaneId, lastEditedLaneId, mentorOpen, storyOpen],
   );
 
   const runGuideReview = useCallback(
@@ -920,6 +1269,27 @@ export default function LinearWizardPage() {
         setGuideState(null);
         return;
       }
+      const nodesCount = Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0;
+      const flowsCount = Array.isArray(engineJson?.flows) ? engineJson.flows.length : 0;
+      const lanesCount = Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0;
+      const laneText = (laneDescription || "").trim();
+      const signature = [
+        reason,
+        laneId || "",
+        engineJson?.processId || engineJson?.name || engineJson?.processName || "",
+        nodesCount,
+        flowsCount,
+        lanesCount,
+        laneText,
+      ].join("|");
+      const now = Date.now();
+      if (
+        guideLastSignatureRef.current.sig === signature &&
+        now - guideLastSignatureRef.current.ts < 1500
+      ) {
+        return;
+      }
+      guideLastSignatureRef.current = { sig: signature, ts: now };
       const requestId = ++guideRequestIdRef.current;
       let findings = [];
       try {
@@ -938,7 +1308,100 @@ export default function LinearWizardPage() {
       if (requestId !== guideRequestIdRef.current) return;
       setGuideFindings(findings);
       const forceGuide = reason === "skeleton_generated";
-      applyGuideFromFindings(findings, laneId, { force: forceGuide });
+      const currentCard = applyGuideFromFindings(findings, laneId, { force: forceGuide });
+      if (!currentCard) {
+        const modeler = modelerRef.current;
+        const elementRegistry = modeler?.get?.("elementRegistry");
+        if (elementRegistry) {
+          const all = elementRegistry.getAll();
+          const lanes = all.filter((el) =>
+            String(el?.businessObject?.$type || el?.type).includes("Lane"),
+          );
+          const shapes = all.filter((el) => {
+            const t = String(el?.businessObject?.$type || el?.type || "");
+            if (!t) return false;
+            if (
+              t.includes("Lane") ||
+              t.includes("Label") ||
+              t.includes("SequenceFlow") ||
+              t.includes("Participant")
+            ) {
+              return false;
+            }
+            return true;
+          });
+          if (lanes.length && shapes.length) {
+            const bounds = (els) => {
+              const xs = els.map((e) => e.x || 0);
+              const ys = els.map((e) => e.y || 0);
+              const ws = els.map((e) => (e.x || 0) + (e.width || 0));
+              const hs = els.map((e) => (e.y || 0) + (e.height || 0));
+              return {
+                minX: Math.min(...xs),
+                minY: Math.min(...ys),
+                maxX: Math.max(...ws),
+                maxY: Math.max(...hs),
+              };
+            };
+            const content = bounds(shapes);
+            const laneBounds = bounds(lanes);
+            const laneWidth = laneBounds.maxX - laneBounds.minX;
+            const laneHeight = laneBounds.maxY - laneBounds.minY;
+            const contentWidth = content.maxX - content.minX;
+            const contentHeight = content.maxY - content.minY;
+            const extraRight = laneBounds.maxX - content.maxX;
+            const extraBottom = laneBounds.maxY - content.maxY;
+            const extraLeft = content.minX - laneBounds.minX;
+            const extraTop = content.minY - laneBounds.minY;
+            const extraW = Math.max(extraRight, extraLeft);
+            const extraH = Math.max(extraBottom, extraTop);
+            const widthRatio = laneWidth / Math.max(1, contentWidth);
+            const heightRatio = laneHeight / Math.max(1, contentHeight);
+            const areaRatio =
+              (contentWidth * contentHeight) / Math.max(1, laneWidth * laneHeight);
+            if (window.__BPMNGEN_DEBUG_GUIDE) {
+              // eslint-disable-next-line no-console
+              console.log("[guide:oversize]", {
+                laneWidth,
+                laneHeight,
+                contentWidth,
+                contentHeight,
+                extraLeft,
+                extraRight,
+                extraTop,
+                extraBottom,
+                extraW,
+                extraH,
+                widthRatio,
+                heightRatio,
+                areaRatio,
+              });
+            }
+            if (
+              (extraW > 180 || extraH > 120) &&
+              (widthRatio > 1.2 || heightRatio > 1.2 || areaRatio < 0.7)
+            ) {
+              const card = {
+                key: "layout_oversize",
+                scope: "global",
+                title: "Zmenšiť plátno?",
+                message:
+                  "Na mape ostalo veľa prázdneho miesta. Klikni na okraj lane a potiahni ho dovnútra, aby obopínal kroky.",
+                secondary: { label: "Neskôr", action: "NOT_NOW" },
+              };
+              if (!wasGuideDismissedRecently(card.key)) {
+                setGuideState(card);
+              } else if (window.__BPMNGEN_DEBUG_GUIDE) {
+                // eslint-disable-next-line no-console
+                console.log("[guide:oversize] skipped (dismissed)");
+              }
+            } else if (window.__BPMNGEN_DEBUG_GUIDE) {
+              // eslint-disable-next-line no-console
+              console.log("[guide:oversize] not triggered");
+            }
+          }
+        }
+      }
     },
     [guideEnabled, processCard, engineJson, laneDescription, applyGuideFromFindings],
   );
@@ -955,6 +1418,17 @@ export default function LinearWizardPage() {
       (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
       hasEngineModel;
     if (hasProcessCard || hasEngineModel) {
+      const key = [
+        engineJson?.processId || "",
+        engineJson?.name || engineJson?.processName || "",
+        Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0,
+        Array.isArray(engineJson?.flows) ? engineJson.flows.length : 0,
+        Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0,
+        (generator.processName || "").trim(),
+        (generator.roles || "").trim(),
+      ].join("|");
+      if (guideModelLoadedKeyRef.current === key) return;
+      guideModelLoadedKeyRef.current = key;
       setGuideState(null);
       runGuideReview("model_loaded");
     }
@@ -1037,7 +1511,13 @@ export default function LinearWizardPage() {
       if (!sourceShape) return;
       const endShape = elementFactory.createShape({ type: "bpmn:EndEvent" });
       const position = { x: (sourceShape.x || 0) + 160, y: (sourceShape.y || 0) };
-      const createdEnd = modeling.createShape(endShape, position, sourceShape.parent);
+      const processParent = getProcessParent(elementRegistry);
+      if (!processParent) return;
+      const createdEnd = modeling.createShape(endShape, position, processParent);
+      const laneForSource = findLaneForNode(elementRegistry, sourceShape);
+      if (laneForSource && createdEnd) {
+        attachNodeToLane(laneForSource, createdEnd, modeling);
+      }
       modeling.connect(sourceShape, createdEnd, { type: "bpmn:SequenceFlow" });
       setGuideState(null);
       return;
@@ -1046,6 +1526,116 @@ export default function LinearWizardPage() {
       runConnectHeuristic();
       setGuideState(null);
       runGuideReview("connect_lanes");
+      return;
+    }
+    if (actionId === "FOCUS_NODE") {
+      const modeler = modelerRef.current;
+      if (!modeler) return;
+      const elementRegistry = modeler.get("elementRegistry");
+      const selection = modeler.get("selection");
+      const canvas = modeler.get("canvas");
+      const nodeId = payload?.nodeId;
+      const laneId = payload?.laneId;
+      const element = nodeId ? elementRegistry.get(nodeId) : null;
+      const laneEl = !element && laneId ? elementRegistry.get(laneId) : null;
+      const target = element || laneEl;
+      if (target) {
+        selection?.select(target);
+        if (typeof canvas?.zoom === "function") {
+          try {
+            canvas.zoom("fit-viewport", target);
+          } catch {
+            // ignore zoom errors
+          }
+        }
+        if (typeof canvas?.scrollToElement === "function") {
+          canvas.scrollToElement(target);
+        }
+      }
+      return;
+    }
+    if (actionId === "CONNECT_END_HERE") {
+      const modeler = modelerRef.current;
+      if (!modeler) return;
+      const elementRegistry = modeler.get("elementRegistry");
+      const modeling = modeler.get("modeling");
+      const elementFactory = modeler.get("elementFactory");
+      if (!elementRegistry || !modeling) return;
+      const nodeId = payload?.nodeId;
+      if (!nodeId) return;
+      const sourceShape = elementRegistry.get(nodeId);
+      if (!sourceShape) return;
+      const processParent = getProcessParent(elementRegistry);
+      if (!processParent) return;
+      const laneForSource = findLaneForNode(elementRegistry, sourceShape);
+      let endShape = elementRegistry
+        .getAll()
+        .find((el) => String(el?.businessObject?.$type || el?.type).includes("EndEvent"));
+      if (!endShape && elementFactory) {
+        try {
+          const endDef = elementFactory.createShape({ type: "bpmn:EndEvent" });
+          const sourceX = sourceShape.x || 0;
+          const sourceY = sourceShape.y || 0;
+          const sourceW = sourceShape.width || 0;
+          const sourceH = sourceShape.height || 0;
+          const endW = endDef.width || 36;
+          const endH = endDef.height || 36;
+          const position = {
+            x: sourceX + sourceW + 60,
+            y: sourceY + sourceH / 2 - endH / 2,
+          };
+          endShape = modeling.createShape(endDef, position, processParent);
+          if (laneForSource && endShape) {
+            attachNodeToLane(laneForSource, endShape, modeling);
+          }
+        } catch {
+          endShape = null;
+        }
+      }
+      if (!endShape) return;
+      const outgoing = Array.isArray(sourceShape.outgoing) ? [...sourceShape.outgoing] : [];
+      outgoing.forEach((conn) => {
+        try {
+          modeling.removeConnection(conn);
+        } catch {
+          // ignore remove errors
+        }
+      });
+      const incoming = Array.isArray(endShape.incoming) ? [...endShape.incoming] : [];
+      incoming.forEach((conn) => {
+        try {
+          modeling.removeConnection(conn);
+        } catch {
+          // ignore remove errors
+        }
+      });
+      try {
+        if (typeof modeling.moveShape === "function") {
+          const sourceX = sourceShape.x || 0;
+          const sourceY = sourceShape.y || 0;
+          const sourceW = sourceShape.width || 0;
+          const sourceH = sourceShape.height || 0;
+          const endW = endShape.width || 0;
+          const endH = endShape.height || 0;
+          const targetX = sourceX + sourceW + 60;
+          const targetY = sourceY + sourceH / 2 - endH / 2;
+          const dx = targetX - (endShape.x || 0);
+          const dy = targetY - (endShape.y || 0);
+          modeling.moveShape(endShape, { x: dx, y: dy }, processParent);
+          const label = endShape.label || elementRegistry.get(`${endShape.id}_label`);
+          if (label) {
+            modeling.moveShape(label, { x: dx, y: dy }, processParent);
+          }
+        }
+        modeling.connect(sourceShape, endShape, { type: "bpmn:SequenceFlow" });
+      } catch {
+        // ignore connect errors
+      }
+      setGuideState(null);
+      window.setTimeout(() => {
+        runGuideReview("end_added");
+      }, 200);
+      return;
     }
   };
 
@@ -1057,6 +1647,13 @@ export default function LinearWizardPage() {
       }
       setEngineJson((prev) => {
         const next = applyEnginePatch(prev, patch);
+        if (next && !String(next.name || "").trim()) {
+          const fallbackName =
+            String(processCard?.generatorInput?.processName || "").trim() ||
+            String(next.processId || "").trim() ||
+            "Proces";
+          next.name = fallbackName;
+        }
         if (patch?.type === "RENAME_LANE" && next?.lanes) {
           setProcessCard((prevCard) => ({
             ...prevCard,
@@ -1087,6 +1684,14 @@ export default function LinearWizardPage() {
       runGuideReview("initial");
     }
   }, [guideEnabled, engineJson, guideState, runGuideReview]);
+
+  useEffect(() => {
+    if (!guideEnabled) return;
+    if (!guideState?.key || !engineJson) return;
+    if (guideState.key.startsWith("task_no_")) {
+      runGuideReview("engine_change");
+    }
+  }, [guideEnabled, guideState, engineJson, runGuideReview]);
 
   const prevLaneOpenRef = useRef(laneOpen);
   const lastActiveLaneIdRef = useRef(null);
@@ -1609,7 +2214,7 @@ export default function LinearWizardPage() {
   const resetWizardState = () => {
     setProcessCard(createEmptyProcessCardState());
     setEngineJson(null);
-    setXml("");
+    setXmlFull("", "resetWizardState");
     setSelectedLane(null);
     setLaneDescription("");
     setModelSource({ kind: "sandbox" });
@@ -1688,7 +2293,7 @@ export default function LinearWizardPage() {
     if (!snapshot) return;
     undoInProgressRef.current = true;
     setEngineJson(snapshot.engine);
-    setXml(snapshot.xml);
+    setXmlFull(snapshot.xml, "undo_snapshot");
     lastSyncedXmlRef.current = snapshot.xml;
     if (Array.isArray(snapshot.engine?.lanes) && snapshot.engine.lanes.length) {
       setProcessCard((prev) => ({
@@ -1722,7 +2327,7 @@ export default function LinearWizardPage() {
       }));
       try {
         const updatedXml = await renderEngineXml(updatedEngine);
-        setXml(updatedXml);
+        setXmlFull(updatedXml, "applyLaneOrder");
       } catch (e) {
         const message = e?.message || "Nepodarilo sa nacitat modely.";
         setError(message);
@@ -1750,7 +2355,7 @@ export default function LinearWizardPage() {
         if (importedEngine) {
           setEngineJson(importedEngine);
           if (diagramXml !== xml) {
-            setXml(diagramXml);
+          setXmlFull(diagramXml, "applyLoadedModel:diagram");
           }
           if (Array.isArray(importedEngine.lanes) && importedEngine.lanes.length) {
             setProcessCard((prev) => ({
@@ -1864,14 +2469,14 @@ export default function LinearWizardPage() {
       }
       setEngineJson(generatedEngine);
       const xmlText = await renderEngineXml(generatedEngine);
-      setXml(xmlText);
+      setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
       runGuideReview("skeleton_generated");
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
       setError(message);
       setEngineJson(null);
-      setXml("");
+      setXmlFull("", "handleGenerate:clear");
     } finally {
       setIsLoading(false);
     }
@@ -2050,8 +2655,9 @@ export default function LinearWizardPage() {
     const selection = modeler.get("selection");
     const canvas = modeler.get("canvas");
     const laneElement = elementRegistry?.get(selectedLane.id);
+    const processParent = getProcessParent(elementRegistry);
 
-    if (!laneElement || !modeling || !elementFactory) {
+    if (!laneElement || !modeling || !elementFactory || !processParent) {
       setError("Lane sa nepodarilo najst.");
       return;
     }
@@ -2059,7 +2665,7 @@ export default function LinearWizardPage() {
     const gatewayType = blockType === "and" ? "bpmn:ParallelGateway" : "bpmn:ExclusiveGateway";
     const taskLabelBase = blockType === "and" ? "Paralela" : "Vetva";
     const gatewaySize = { width: 72, height: 72 };
-    const taskSize = { width: 190, height: 78 };
+    const taskSize = { ...STANDARD_TASK_SIZE };
     const gapX = 120;
     const branchOffset = taskSize.height + 20;
 
@@ -2108,10 +2714,15 @@ export default function LinearWizardPage() {
     const joinX = taskX + taskSize.width + gapX;
     const joinY = base.y;
 
-    const createdSplit = modeling.createShape(splitShape, splitPos, laneElement);
-    const createdTaskA = modeling.createShape(taskA, { x: taskX, y: taskATop }, laneElement);
-    const createdTaskB = modeling.createShape(taskB, { x: taskX, y: taskBTop }, laneElement);
-    const createdJoin = modeling.createShape(joinShape, { x: joinX, y: joinY }, laneElement);
+    const createdSplit = modeling.createShape(splitShape, splitPos, processParent);
+    const createdTaskA = modeling.createShape(taskA, { x: taskX, y: taskATop }, processParent);
+    const createdTaskB = modeling.createShape(taskB, { x: taskX, y: taskBTop }, processParent);
+    const createdJoin = modeling.createShape(joinShape, { x: joinX, y: joinY }, processParent);
+
+    attachNodeToLane(laneElement, createdSplit, modeling);
+    attachNodeToLane(laneElement, createdTaskA, modeling);
+    attachNodeToLane(laneElement, createdTaskB, modeling);
+    attachNodeToLane(laneElement, createdJoin, modeling);
 
     modeling.updateProperties(createdTaskA, { name: `${taskLabelBase} A` });
     modeling.updateProperties(createdTaskB, { name: `${taskLabelBase} B` });
@@ -2119,15 +2730,25 @@ export default function LinearWizardPage() {
     if (lastNode) {
       modeling.connect(lastNode, createdSplit);
     }
-    modeling.connect(createdSplit, createdTaskA);
-    modeling.connect(createdSplit, createdTaskB);
+    const flowA = modeling.connect(createdSplit, createdTaskA);
+    const flowB = modeling.connect(createdSplit, createdTaskB);
     modeling.connect(createdTaskA, createdJoin);
     modeling.connect(createdTaskB, createdJoin);
+    if (gatewayType === "bpmn:ExclusiveGateway") {
+      try {
+        modeling.updateProperties(flowA, { name: "Áno" });
+        modeling.updateProperties(flowB, { name: "Nie" });
+      } catch {
+        // ignore label update errors
+      }
+    }
 
     selection?.select(createdJoin);
     if (typeof canvas?.scrollToElement === "function") {
       canvas.scrollToElement(createdJoin);
     }
+
+    scheduleRelayoutKick("insert_block", 150);
 
     setError(null);
   };
@@ -2163,10 +2784,15 @@ export default function LinearWizardPage() {
 
   const collectLaneFlowNodes = (laneElement, elementRegistry) => {
     if (!laneElement || !elementRegistry) return [];
+    const laneBo = laneElement.businessObject;
+    const laneRefs = Array.isArray(laneBo?.flowNodeRef) ? laneBo.flowNodeRef : [];
+    const laneRefIds = new Set(laneRefs.map((ref) => String(ref?.id || ref)));
     return elementRegistry.getAll().filter((el) => {
       if (!el || el.type === "label") return false;
       const bo = el.businessObject;
       if (!bo?.$instanceOf?.("bpmn:FlowNode")) return false;
+      if (laneRefIds.has(String(bo?.id))) return true;
+      // Fallback for older diagrams where flow nodes were parented under lane.
       let parent = el.parent;
       while (parent) {
         if (parent.id === laneElement.id) return true;
@@ -2174,6 +2800,41 @@ export default function LinearWizardPage() {
       }
       return false;
     });
+  };
+
+  const getProcessParent = (elementRegistry) => {
+    if (!elementRegistry) return null;
+    const all = elementRegistry.getAll();
+    return all.find((el) => Array.isArray(el?.businessObject?.flowElements)) || null;
+  };
+
+  const attachNodeToLane = (laneElement, nodeElement, modeling) => {
+    if (!laneElement || !nodeElement || !modeling) return;
+    const laneBo = laneElement.businessObject;
+    const nodeBo = nodeElement.businessObject;
+    if (!laneBo || !nodeBo) return;
+    const existing = Array.isArray(laneBo.flowNodeRef) ? [...laneBo.flowNodeRef] : [];
+    if (!existing.some((ref) => ref?.id === nodeBo.id)) {
+      existing.push(nodeBo);
+      modeling.updateProperties(laneElement, { flowNodeRef: existing });
+    }
+  };
+
+  const findLaneForNode = (elementRegistry, nodeElement) => {
+    if (!elementRegistry || !nodeElement) return null;
+    const nodeBo = nodeElement.businessObject;
+    if (!nodeBo) return null;
+    const all = elementRegistry.getAll();
+    const lanes = all.filter((el) =>
+      String(el?.businessObject?.$type || el?.type || "").includes("Lane"),
+    );
+    return (
+      lanes.find((lane) =>
+        Array.isArray(lane?.businessObject?.flowNodeRef)
+          ? lane.businessObject.flowNodeRef.some((ref) => ref?.id === nodeBo.id)
+          : false,
+      ) || null
+    );
   };
 
   const getLastCreatedElement = (elementRegistry, engineJson) => {
@@ -2200,6 +2861,11 @@ export default function LinearWizardPage() {
     return allNodes.reduce((max, node) => Math.max(max, node.x || 0), 0);
   };
 
+  const getLaneCenterMidY = (laneElement) => {
+    const y = Number(laneElement?.y || 0);
+    const h = Number(laneElement?.height || 0);
+    return y + h / 2;
+  };
   const computeLaneInsertPosition = (
     laneElement,
     shape,
@@ -2209,12 +2875,13 @@ export default function LinearWizardPage() {
     globalRightmost,
   ) => {
     const paddingX = 60;
-    const paddingY = 30;
+    const paddingY = 0;
     const laneLeft = laneElement.x + paddingX;
     const laneTop = laneElement.y + paddingY;
     const laneBottom = laneElement.y + laneElement.height - shape.height - paddingY;
-    const centeredY = laneElement.y + (laneElement.height - shape.height) / 2;
-    const y = Math.min(laneBottom, Math.max(laneTop, centeredY));
+    const baselineMidY = getLaneCenterMidY(laneElement);
+    const desiredY = baselineMidY - shape.height / 2;
+    const y = Math.min(laneBottom, Math.max(laneTop, desiredY));
     let x = laneLeft;
 
     if (mode === "start" && firstNode) {
@@ -2313,8 +2980,9 @@ export default function LinearWizardPage() {
     const selection = modeler.get("selection");
     const canvas = modeler.get("canvas");
     const laneElement = elementRegistry?.get(selectedLane.id);
+    const processParent = getProcessParent(elementRegistry);
 
-    if (!laneElement || !modeling || !elementFactory) {
+    if (!laneElement || !modeling || !elementFactory || !processParent) {
       setError("Lane sa nepodarilo najst.");
       return;
     }
@@ -2323,7 +2991,12 @@ export default function LinearWizardPage() {
     const orderedNodes = [...laneNodes].sort((a, b) => (a.x || 0) - (b.x || 0));
     const firstNode = orderedNodes[0];
     const lastNode = orderedNodes[orderedNodes.length - 1];
-    const shape = elementFactory.createShape({ type: activeLaneShape.bpmnType });
+    const shapeProps = { type: activeLaneShape.bpmnType };
+    if (String(activeLaneShape.bpmnType || "").includes("Task")) {
+      shapeProps.width = STANDARD_TASK_SIZE.width;
+      shapeProps.height = STANDARD_TASK_SIZE.height;
+    }
+    const shape = elementFactory.createShape(shapeProps);
     const lastCreatedElement = getLastCreatedElement(elementRegistry, engineJson);
     const globalRightmost =
       typeof lastCreatedElement?.x === "number"
@@ -2337,7 +3010,8 @@ export default function LinearWizardPage() {
       lastNode,
       globalRightmost,
     );
-    const created = modeling.createShape(shape, position, laneElement);
+    const created = modeling.createShape(shape, position, processParent);
+    attachNodeToLane(laneElement, created, modeling);
 
     if (name) {
       modeling.updateProperties(created, { name });
@@ -2355,6 +3029,8 @@ export default function LinearWizardPage() {
     if (typeof canvas?.scrollToElement === "function") {
       canvas.scrollToElement(created);
     }
+
+    scheduleRelayoutKick("insert_shape", 150);
 
     setLaneInsertOpen(false);
     setError(null);
@@ -2455,6 +3131,7 @@ export default function LinearWizardPage() {
   useEffect(() => () => clearLanePreviewOverlays(), []);
 
   const handleAppendToLane = async () => {
+    if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
       setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
       return;
@@ -2463,25 +3140,73 @@ export default function LinearWizardPage() {
       setError("Vyber lane a doplň aspoň jednu aktivitu.");
       return;
     }
+    cancelPendingRelayouts();
+    clearLanePreviewOverlays();
     setIsLoading(true);
     setError(null);
     try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
+      const currentEngine = engineJsonRef.current || engineJson;
+      if (currentEngine && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(currentEngine, xml);
+      }
+      const laneIds = new Set((currentEngine?.lanes || []).map((l) => String(l?.id)));
+      const laneByName = new Map(
+        (currentEngine?.lanes || []).map((l) => [String(l?.name || ""), String(l?.id || "")]),
+      );
+      let laneId = selectedLane.id;
+      if (laneId && !laneIds.has(String(laneId))) {
+        const mapped = laneByName.get(String(laneId));
+        if (mapped) laneId = mapped;
+      }
+      if (selectedLane.name && (!laneId || !laneIds.has(String(laneId)))) {
+        const mapped = laneByName.get(String(selectedLane.name));
+        if (mapped) laneId = mapped;
+      }
+      const safeEngine = normalizeEngineForBackend(currentEngine);
+      if (!String(safeEngine?.name || "").trim()) {
+        const fallbackName =
+          String(processCard?.generatorInput?.processName || "").trim() ||
+          String(safeEngine?.processId || "").trim() ||
+          "Proces";
+        safeEngine.name = fallbackName;
+      }
+      if (!String(safeEngine?.processId || "").trim()) {
+        safeEngine.processId = `proc_${Date.now()}`;
       }
       const payload = {
-        lane_id: selectedLane.id,
+        lane_id: laneId,
         lane_name: selectedLane.name,
         description: laneDescription,
-        engine_json: engineJson,
+        engine_json: safeEngine,
       };
       const response = await appendLaneFromDescription(payload);
       const updatedEngine = response?.engine_json || engineJson;
-      setEngineJson(updatedEngine);
-      const updatedXml = await renderEngineXml(updatedEngine);
-      setXml(updatedXml);
-      setLaneDescription("");
-      runGuideReview("lane_batch_created", selectedLane.id);
+      const modeler = modelerRef.current;
+      const canPatchCanvas = Boolean(modeler && xml);
+
+      const applyEngineDiffToCanvas = (prevEngine, nextEngine, activeModeler) =>
+        applyIncrementalAppend({
+          prevEngine,
+          nextEngine,
+          modeler: activeModeler,
+          xml,
+          standardTaskSize: STANDARD_TASK_SIZE,
+          getLaneCenterMidY,
+          attachNodeToLane,
+        });
+
+      if (canPatchCanvas && applyEngineDiffToCanvas(currentEngine, updatedEngine, modeler)) {
+        setEngineJson(updatedEngine);
+        setHasUnsavedChanges(true);
+        setLaneDescription("");
+        clearLanePreviewOverlays();
+        runGuideReview("lane_batch_created", selectedLane.id);
+        setIsLoading(false);
+        return;
+      }
+
+      setError("Nepodarilo sa pridať kroky bez prepočtu mapy. Skús to ešte raz.");
+      return;
     } catch (e) {
       const message = e?.message || "Nepodarilo sa pridať aktivity do lane.";
       setError(message);
@@ -2549,6 +3274,51 @@ export default function LinearWizardPage() {
     }
   };
 
+  const insertLaneTemplate = useCallback((templateType) => {
+    const templates = {
+      decision: "Ak <podmienka> tak <krok>, inak <krok/koniec>",
+      parallel: "Zároveň <krok>, <krok> a <krok>",
+    };
+    const template = templates[templateType];
+    if (!template) return;
+    const textarea = laneTextareaRef.current;
+    setLaneDescription((prev) => {
+      const value = String(prev || "");
+      if (!textarea || typeof textarea.selectionStart !== "number") {
+        return value ? `${value}\n${template}` : template;
+      }
+      const start = textarea.selectionStart;
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const lineEndIdx = value.indexOf("\n", start);
+      const lineEnd = lineEndIdx === -1 ? value.length : lineEndIdx;
+      const next = `${value.slice(0, lineStart)}${template}${value.slice(lineEnd)}`;
+      window.requestAnimationFrame(() => {
+        try {
+          textarea.focus();
+          const rangeStart = lineStart;
+          const rangeEnd = lineStart + template.length;
+          textarea.setSelectionRange(rangeStart, rangeEnd);
+          if (laneTemplateFlashTimerRef.current) {
+            window.clearTimeout(laneTemplateFlashTimerRef.current);
+          }
+          setLaneTemplateFlash(true);
+          laneTemplateFlashTimerRef.current = window.setTimeout(() => {
+            try {
+              textarea.setSelectionRange(rangeEnd, rangeEnd);
+            } catch {
+              // ignore selection errors
+            }
+            setLaneTemplateFlash(false);
+            laneTemplateFlashTimerRef.current = null;
+          }, 1000);
+        } catch {
+          // ignore selection errors
+        }
+      });
+      return next;
+    });
+  }, []);
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
@@ -2573,6 +3343,8 @@ export default function LinearWizardPage() {
       saveLabel: saveLoading ? "Ukladám..." : "Uložiť",
       onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
+      onXmlImported: restoreRelayoutContext,
+      overlayMessage: relayouting ? "Zarovnávam layout…" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
       },
@@ -2590,6 +3362,8 @@ export default function LinearWizardPage() {
       reorderLanesByNames,
       insertLaneBlock,
       saveLoading,
+      relayouting,
+      restoreRelayoutContext,
       xml,
       modelSource,
       orgReadOnly,
@@ -2607,7 +3381,7 @@ export default function LinearWizardPage() {
       pushHistorySnapshot(engineJson, xml);
     }
     setEngineJson(loadedEngine);
-    setXml(diagram);
+    setXmlFull(diagram, "applyLoadedModel");
     setSelectedLane(null);
     setLaneDescription("");
     hydrateProcessCard(resp);
@@ -2627,7 +3401,7 @@ export default function LinearWizardPage() {
     setError(message);
     setInfo(null);
     setEngineJson(null);
-    setXml("");
+    setXmlFull("", "showMissingDiagram");
     setSelectedLane(null);
     setLaneDescription("");
     setProcessCard(createEmptyProcessCardState());
@@ -3994,7 +4768,7 @@ export default function LinearWizardPage() {
       const importedEngine = response?.engine_json || response;
       setEngineJson(importedEngine);
       const newXml = await renderEngineXml(importedEngine);
-      setXml(newXml);
+      setXmlFull(newXml, "importBpmn");
       setSelectedLane(null);
       setLaneDescription("");
       setInfo("BPMN model bol importovaný do Karty procesu.");
@@ -4110,7 +4884,7 @@ export default function LinearWizardPage() {
       const updatedEngine = response?.engine_json || engineJson;
       setEngineJson(updatedEngine);
       const updatedXml = await renderEngineXml(updatedEngine);
-      setXml(updatedXml);
+      setXmlFull(updatedXml, "mentorApplyFix");
       setMentorAppliedIds((prev) => (prev.includes(proposal.id) ? prev : [...prev, proposal.id]));
       setMentorDoneIds((prev) => (prev.includes(proposal.id) ? prev : [...prev, proposal.id]));
       setMentorStatus("Oprava bola aplikovana.");
@@ -4419,7 +5193,9 @@ export default function LinearWizardPage() {
                       {modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko"}
                     </span>
                   </div>
-                  <div className="process-card-description">Vyplň vstupy pre generovanie BPMN a meta údaje.</div>
+                  <div className="process-card-description">
+                    Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme mapu.
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -4433,19 +5209,31 @@ export default function LinearWizardPage() {
               <div className="process-card-body">
                 <section className="process-card-section">
                   <div className="process-card-section__title">
-                    <h2>Generovanie BPMN</h2>
-                    <span className="process-card-pill">Vstup</span>
+                    <h2>Začnime základom</h2>
+                    <span className="process-card-pill">Základ</span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    {PROCESS_TEMPLATES.map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        className="btn btn--small"
+                        onClick={() => applyProcessTemplate(template)}
+                      >
+                        Vzor: {template.label}
+                      </button>
+                    ))}
                   </div>
                   <label className="wizard-field">
-                    <span>Názov procesu</span>
+                    <span>Ako sa proces volá?</span>
                     <input
                       value={generatorInput.processName}
                       onChange={(e) => updateGeneratorInput("processName", e.target.value)}
-                      placeholder="Sem napíš názov procesu"
+                      placeholder="Napr. Schválenie žiadosti"
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Role / swimlanes (po jednej na riadok)</span>
+                    <span>Kto v ňom vystupuje? (každú rolu na nový riadok)</span>
                     <textarea
                       value={generatorInput.roles}
                       onChange={(e) => updateGeneratorInput("roles", e.target.value)}
@@ -4454,15 +5242,15 @@ export default function LinearWizardPage() {
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Spúšťač procesu</span>
+                    <span>Čo proces spúšťa?</span>
                     <input
                       value={generatorInput.trigger}
                       onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
-                      placeholder="Čo proces spustí?"
+                      placeholder="Napr. Nová žiadosť od klienta"
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Vstup</span>
+                    <span>S čím proces pracuje?</span>
                     <textarea
                       value={generatorInput.input}
                       onChange={(e) => updateGeneratorInput("input", e.target.value)}
@@ -4471,7 +5259,7 @@ export default function LinearWizardPage() {
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Výstup</span>
+                    <span>Čo má byť na konci?</span>
                     <textarea
                       value={generatorInput.output}
                       onChange={(e) => updateGeneratorInput("output", e.target.value)}
@@ -4772,17 +5560,96 @@ export default function LinearWizardPage() {
                               {guideState.secondary.label}
                             </button>
                           ) : null}
+                          {guideState?.tertiary ? (
+                            <button
+                              className="btn btn--small"
+                              type="button"
+                              onClick={() =>
+                                handleGuideAction(
+                                  guideState.tertiary.action,
+                                  guideState.tertiary.payload,
+                                )
+                              }
+                            >
+                              {guideState.tertiary.label}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ) : null}
                     <div className="wizard-lane-panel__section-title">Kroky role</div>
                     <span className="wizard-lane-panel__sub">Napíš kroky tejto role. Jeden riadok = jeden krok.</span>
+                    <div className="wizard-lane-tips">
+                      <div>
+                        •{" "}
+                        <span
+                          className="wizard-lane-tip-label"
+                          title="Jednoduchý krok, ktorý nasleduje po predchádzajúcom."
+                        >
+                          Bežný krok:
+                        </span>{" "}
+                        napíš jednu aktivitu na riadok.
+                      </div>
+                      <div>
+                        •{" "}
+                        <span
+                          className="wizard-lane-tip-label"
+                          title="Keď sa proces môže uberať dvoma smermi (áno/nie), použij rozhodnutie."
+                        >
+                          Rozhodnutie:
+                        </span>{" "}
+                        začni riadok slovom „Ak“ alebo „Keď“ (potom doplň „inak“).
+                      </div>
+                      <div>
+                        •{" "}
+                        <span
+                          className="wizard-lane-tip-label"
+                          title="Viac krokov prebieha naraz – každý z nich je vlastná vetva."
+                        >
+                          Paralela:
+                        </span>{" "}
+                        začni „Zároveň“ alebo „Paralelne“ (viac krokov oddeľ , ; alebo „a“).
+                      </div>
+                    </div>
+                    <div className="wizard-lane-structures">
+                      Rozpoznané: Rozhodnutia: {laneStructureCounts.decisions} | Paralely:{" "}
+                      {laneStructureCounts.parallels}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                      {LANE_TEMPLATES.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className="btn btn--small"
+                          onClick={() => applyLaneTemplate(template)}
+                        >
+                          Vzor: {template.label}
+                        </button>
+                      ))}
+                    </div>
                     <textarea
+                      ref={laneTextareaRef}
                       value={laneDescription}
                       onChange={(e) => updateLaneDescription(e.target.value)}
                       rows={6}
-                      className="wizard-lane-textarea"
+                      className={`wizard-lane-textarea ${
+                        inlineLaneHint || hasLaneStructure ? "wizard-lane-textarea--structure" : ""
+                      } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""}`}
                     />
+                    {inlineLaneHint ? (
+                      <div className="wizard-lane-inline-hint">
+                        <span>{inlineLaneHint.message}</span>
+                        {inlineLaneHint.templateType ? (
+                          <button
+                            type="button"
+                            className="btn btn--small wizard-lane-inline-btn"
+                            onClick={() => insertLaneTemplate(inlineLaneHint.templateType)}
+                          >
+                            Vložiť vzor
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <button
                       className="btn btn-primary lane-primary-btn"
                       type="button"
@@ -5187,6 +6054,20 @@ export default function LinearWizardPage() {
                       }
                     >
                       {guideState.secondary.label}
+                    </button>
+                  ) : null}
+                  {guideState?.tertiary ? (
+                    <button
+                      className="btn btn--small"
+                      type="button"
+                      onClick={() =>
+                        handleGuideAction(
+                          guideState.tertiary.action,
+                          guideState.tertiary.payload,
+                        )
+                      }
+                    >
+                      {guideState.tertiary.label}
                     </button>
                   ) : null}
                 </div>

@@ -8,7 +8,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Callable
 from uuid import uuid4
-from services.architect.normalize import postprocess_engine_json
+from services.architect.normalize import postprocess_engine_json, normalize_engine_payload
 from services.architect import _mk_question
 from services.controller_svc import validate_engine
 from schemas.wizard import (
@@ -280,9 +280,7 @@ def build_linear_engine_from_wizard(
     primary_lane_id = lanes[0]["id"]
 
     start_id = "start_1"
-    end_id = "end_1"
     start_label = (data.start_trigger or "Start").strip() or "Start"
-    end_label = (data.output or "End").strip() or "End"
 
     nodes: List[Dict[str, Any]] = [
         {
@@ -348,17 +346,7 @@ def build_linear_engine_from_wizard(
         )
         previous = task_id
 
-    nodes.append(
-        {"id": end_id, "type": "endEvent", "name": end_label, "laneId": primary_lane_id}
-    )
-    flows.append(
-        {
-            "id": f"flow_{previous}_to_{end_id}",
-            "source": previous,
-            "target": end_id,
-            "laneId": primary_lane_id,
-        }
-    )
+    # EndEvent is added later via Guide ("Koniec sem"/"Pridať koniec").
 
     process_id = f"{_slugify_process_id(process_name)}-{uuid4().hex[:8]}"
 
@@ -382,7 +370,12 @@ def build_linear_engine_from_wizard(
 
 def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, Any]:
     """Append linear tasks into a lane based on multiline description."""
-    engine = dict(data.engine_json or {})
+    engine = normalize_engine_payload(dict(data.engine_json or {}))
+    if not str(engine.get("name") or "").strip():
+        fallback = str(engine.get("processId") or "").strip() or "Proces"
+        engine["name"] = fallback
+    if not str(engine.get("processId") or "").strip():
+        engine["processId"] = f"proc_{uuid4().hex[:8]}"
     lanes = engine.get("lanes") or []
     nodes: List[Dict[str, Any]] = list(engine.get("nodes") or [])
     flows: List[Dict[str, Any]] = list(engine.get("flows") or [])
@@ -757,16 +750,16 @@ def _indent(elem, level: int = 0):
 # Jednoduchý auto-layout
 # -------------------------------
 def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
-    GRID_X = 250  # väčší horizontálny odstup medzi uzlami
-    GRID_Y = 180  # väčší vertikálny odstup (vzdušnejšie lane)
+    GRID_X = 200  # kompaktnejší horizontálny odstup medzi uzlami
+    GRID_Y = 160  # kompaktnejší vertikálny odstup
     BASE_LANE_X = 0  # offset lane od ľavého okraja poolu
     BASE_LANE_Y = 0  # lane začína hneď pri vrchu poolu
-    LANE_CONTENT_PAD = 80  # left padding before first node
+    LANE_CONTENT_PAD = 50  # menší left padding pred prvým uzlom
     ROW_MARGIN = 8
     POOL_PAD_X = 60
     POOL_PAD_Y = 0  # žiadny extra vertikálny padding – výška = súčet lanes
     MIN_LANE_HEIGHT = 200
-    GATEWAY_EXTRA_PADDING = 16
+    GATEWAY_EXTRA_PADDING = 8
     WAYPOINT_SPACING = 44
     LANE_MARGIN = 0
     SYSTEM_LANE_ID = "Lane_System"
@@ -780,10 +773,10 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         "parallelGateway": (50, 50),
         "inclusiveGateway": (50, 50),
         "eventBasedGateway": (50, 50),
-        "task": (190, 78),  # ~25% nižšie, stále široké
-        "userTask": (190, 78),
-        "serviceTask": (190, 78),
-        "subProcess": (240, 180),
+        "task": (100, 80),
+        "userTask": (100, 80),
+        "serviceTask": (100, 80),
+        "subProcess": (200, 140),
     }
     GATEWAY_TYPES = {
         "exclusiveGateway",
@@ -996,19 +989,19 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
 
     if levels:
         ordered_nodes = sorted(nodes_by_id, key=lambda nid: node_order.get(nid, 0))
-        running_max = None
+        running_max_by_lane: Dict[str, float] = {}
         for nid in ordered_nodes:
             lvl = levels.get(nid, 0)
-            if running_max is None:
-                running_max = lvl
+            lane_id = lane_for_node.get(nid, SYSTEM_LANE_ID)
+            current_max = running_max_by_lane.get(lane_id)
             is_isolated = not incoming.get(nid) and not adjacency.get(nid)
-            if is_isolated and running_max is not None and lvl < running_max:
-                levels[nid] = running_max
-                lvl = running_max
-            if running_max is None:
-                running_max = lvl
+            if is_isolated and current_max is not None and lvl < current_max:
+                levels[nid] = current_max
+                lvl = current_max
+            if current_max is None:
+                running_max_by_lane[lane_id] = lvl
             else:
-                running_max = max(running_max, lvl)
+                running_max_by_lane[lane_id] = max(current_max, lvl)
 
     lane_offsets = {
         lane_id: float(BASE_LANE_X + LANE_CONTENT_PAD) for lane_id in ordered_lanes
@@ -1019,6 +1012,7 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     lane_max_node_height = {lane_id: 0 for lane_id in ordered_lanes}
     lane_row_spacing = {}
     lane_has_nodes = {}
+    lane_has_gateway_branch = {}
 
     for lane_id in ordered_lanes:
         groups: Dict[int, List[str]] = defaultdict(list)
@@ -1071,6 +1065,54 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
             lane_max_node_height[lane_id] = 52
         lane_has_nodes[lane_id] = True
 
+    # Make gateway branches split vertically (prefer main on center, alt below).
+    flows_by_source: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for f in flows:
+        src = f.get("source")
+        if src:
+            flows_by_source[src].append(f)
+
+    for gw_id, outs in adjacency.items():
+        if node_type.get(gw_id) not in GATEWAY_TYPES:
+            continue
+        if len(outs) < 2:
+            continue
+        lane_id = lane_for_node.get(gw_id, SYSTEM_LANE_ID)
+        same_lane_targets = [
+            tid for tid in outs if lane_for_node.get(tid, SYSTEM_LANE_ID) == lane_id
+        ]
+        if len(same_lane_targets) < 2:
+            continue
+        same_lane_targets = sorted(same_lane_targets, key=lambda nid: node_order.get(nid, 0))
+
+        if node_type.get(gw_id) == "exclusiveGateway" and len(same_lane_targets) == 2:
+            candidates = flows_by_source.get(gw_id, [])
+            main_target = None
+            for f in candidates:
+                label = str(f.get("name") or f.get("label") or "").strip().lower()
+                if label in {"áno", "ano", "yes"}:
+                    main_target = f.get("target")
+                    break
+            if not main_target:
+                main_target = same_lane_targets[0]
+            alt_target = same_lane_targets[1] if same_lane_targets[0] == main_target else same_lane_targets[0]
+            row_index[main_target] = 0.0
+            row_index[alt_target] = 0.7
+            lane_row_counts[lane_id] = max(lane_row_counts.get(lane_id, 1), 2)
+            lane_has_gateway_branch[lane_id] = True
+            continue
+
+        offsets = []
+        k = 1.0
+        while len(offsets) < len(same_lane_targets):
+            offsets.extend([float(-k), float(k)])
+            k += 1
+        for tid, offset in zip(same_lane_targets, offsets):
+            if row_index.get(tid, 0.0) == 0.0:
+                row_index[tid] = float(offset)
+        lane_row_counts[lane_id] = max(lane_row_counts.get(lane_id, 1), len(same_lane_targets))
+        lane_has_gateway_branch[lane_id] = True
+
     lane_heights: Dict[str, float] = {}
     lane_y: Dict[str, float] = {}
     current_lane_y = float(BASE_LANE_Y)
@@ -1082,7 +1124,10 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         if lane_has_nodes.get(lane_id, False) and used_rows == 1:
             row_spacing = float(tallest + ROW_MARGIN)
         else:
-            row_spacing = float(max(GRID_Y, tallest + ROW_MARGIN))
+            base_spacing = float(max(GRID_Y, tallest + ROW_MARGIN))
+            if lane_has_gateway_branch.get(lane_id, False):
+                base_spacing = max(base_spacing, float(GRID_Y * 1.25))
+            row_spacing = base_spacing
         lane_row_spacing[lane_id] = row_spacing
         total_height = float(ROW_MARGIN * 2 + tallest)
         if used_rows > 1:
@@ -1111,7 +1156,7 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         x = float(lane_offset + col * GRID_X)
         # Štart event necháme blízko nasledujúceho uzla (inak je hrana zbytočne dlhá)
         if ntype == "startEvent":
-            task_ref_w = NODE_SIZES.get("task", (190, 78))[0]
+            task_ref_w = NODE_SIZES.get("task", (100, 80))[0]
             if task_ref_w > width:
                 x += float(task_ref_w - width)
         if ntype == "exclusiveGateway":
@@ -1119,6 +1164,8 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         row_spacing = lane_row_spacing.get(
             lane_id, max(GRID_Y, lane_max_node_height.get(lane_id, 52) + ROW_MARGIN)
         )
+        if lane_has_gateway_branch.get(lane_id, False):
+            lane_center_y -= row_spacing * 0.25
         # riadky sú rozmiestnené symetricky okolo stredu lane
         y = float(lane_center_y + row_value * row_spacing - height / 2)
         pos[nid] = (x, y, float(width), float(height))
@@ -1163,7 +1210,16 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     pool_y = 0.0
     has_lanes = bool(lanes)
     lane_x = pool_x + (POOL_HEADER_WIDTH if has_lanes else 16)
-    lane_width = float(max(620, max_x - lane_x + POOL_PAD_X))
+
+    lane_content_right: Dict[str, float] = {}
+    for nid, (x, y, w, h) in pos.items():
+        lane_id = lane_for_node.get(nid, SYSTEM_LANE_ID)
+        lane_content_right[lane_id] = max(lane_content_right.get(lane_id, 0.0), x + w)
+    content_max_x = max(lane_content_right.values(), default=max_x)
+
+    MIN_LANE_WIDTH = 620.0
+    LANE_PAD_RIGHT = 40.0
+    lane_width = float(max(MIN_LANE_WIDTH, content_max_x - lane_x + LANE_PAD_RIGHT))
     pool_w = lane_x + lane_width
     # výška poolu = suma lane výšok (už vrátane marginov) + prípadný padding (0)
     pool_h = float(current_lane_y + POOL_PAD_Y)
@@ -1795,6 +1851,128 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
         system_lane = {"id": system_lane_id, "name": system_lane_name}
         lanes.append(system_lane)
         lane_index[system_lane_id] = system_lane
+
+    # Clean flows that reference missing nodes.
+    node_ids = {n.get("id") for n in nodes if n.get("id")}
+    flows = [f for f in flows if f.get("source") in node_ids and f.get("target") in node_ids]
+
+    # Remove placeholder start->end flows once other steps exist.
+    node_type_map = {n["id"]: _normalize_node_type(n) for n in nodes if n.get("id")}
+    outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    incoming_by_tgt: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for f in flows:
+        src = f.get("source")
+        tgt = f.get("target")
+        if src:
+            outgoing_by_src[src].append(f)
+        if tgt:
+            incoming_by_tgt[tgt].append(f)
+
+    cleaned_flows: List[Dict[str, Any]] = []
+    for f in flows:
+        src = f.get("source")
+        tgt = f.get("target")
+        if (
+            src
+            and tgt
+            and node_type_map.get(src) == "startEvent"
+            and node_type_map.get(tgt) == "endEvent"
+        ):
+            other_out = any(
+                node_type_map.get(of.get("target")) != "endEvent"
+                for of in outgoing_by_src.get(src, [])
+                if of is not f
+            )
+            other_in = any(
+                node_type_map.get(of.get("source")) != "startEvent"
+                for of in incoming_by_tgt.get(tgt, [])
+                if of is not f
+            )
+            if other_out or other_in:
+                continue
+        cleaned_flows.append(f)
+    flows = cleaned_flows
+
+    node_order = {n.get("id"): idx for idx, n in enumerate(nodes) if n.get("id")}
+
+    # Ensure exclusive gateway branches have labels (Áno/Nie) when missing.
+    outgoing_by_src = defaultdict(list)
+    for f in flows:
+        src = f.get("source")
+        if src:
+            outgoing_by_src[src].append(f)
+    for src_id, flist in outgoing_by_src.items():
+        if node_type_map.get(src_id) != "exclusiveGateway":
+            continue
+        if len(flist) < 2:
+            continue
+        ordered = sorted(
+            flist, key=lambda f: node_order.get(f.get("target"), 10**9)
+        )
+        if len(ordered) >= 1 and not (ordered[0].get("name") or ordered[0].get("label")):
+            ordered[0]["name"] = "Áno"
+        if len(ordered) >= 2 and not (ordered[1].get("name") or ordered[1].get("label")):
+            ordered[1]["name"] = "Nie"
+
+    # Ensure EndEvent follows the last created step and sits in its lane.
+    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
+    end_nodes = [n for n in nodes if _normalize_node_type(n) == "endEvent" and n.get("id")]
+    if end_nodes:
+        end_node = end_nodes[-1]
+        end_id = end_node.get("id")
+        last_step = None
+        gateway_types = {
+            "exclusiveGateway",
+            "parallelGateway",
+            "inclusiveGateway",
+            "eventBasedGateway",
+        }
+        for n in reversed(nodes):
+            ntype = _normalize_node_type(n)
+            if ntype in {"endEvent", "startEvent"} or ntype in gateway_types:
+                continue
+            if n.get("id"):
+                last_step = n
+                break
+        if last_step and end_id:
+            if last_step.get("laneId"):
+                end_node["laneId"] = last_step["laneId"]
+            flows_to_end = [f for f in flows if f.get("target") == end_id]
+            flows = [f for f in flows if f.get("target") != end_id]
+            flow_ids = {f.get("id") for f in flows if f.get("id")}
+            existing = next(
+                (f for f in flows_to_end if f.get("source") == last_step.get("id")),
+                None,
+            )
+            if existing:
+                flows.append(existing)
+            else:
+                base_id = f"flow_{last_step.get('id')}_to_{end_id}"
+                fid = base_id if base_id not in flow_ids else f"flow_{uuid4().hex[:8]}"
+                flows.append({"id": fid, "source": last_step.get("id"), "target": end_id})
+
+    # Default labels for exclusive gateway branches (Áno/Nie) if missing.
+    node_type_map = {n.get("id"): _normalize_node_type(n) for n in nodes if n.get("id")}
+    outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for f in flows:
+        src = f.get("source")
+        if src:
+            outgoing_by_src[src].append(f)
+    for src_id, flist in outgoing_by_src.items():
+        if node_type_map.get(src_id) != "exclusiveGateway":
+            continue
+        if len(flist) != 2:
+            continue
+        if any((f.get("name") or f.get("label")) for f in flist):
+            continue
+        # order by target appearance to keep labels stable
+        ordered = sorted(
+            flist, key=lambda f: node_order.get(f.get("target"), 10**9)
+        )
+        if ordered:
+            ordered[0]["name"] = "Áno"
+        if len(ordered) > 1:
+            ordered[1]["name"] = "Nie"
 
     normalized_data = dict(data)
     normalized_data.update(
