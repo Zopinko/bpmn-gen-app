@@ -618,10 +618,10 @@ export default function MapViewer({
             "bpmn:Task": "Procesný krok",
             "bpmn:UserTask": "Procesný krok",
             "bpmn:ServiceTask": "Procesný krok",
-            "bpmn:ExclusiveGateway": "Nová brána",
-            "bpmn:ParallelGateway": "Nová brána",
-            "bpmn:InclusiveGateway": "Nová brána",
-            "bpmn:Gateway": "Nová brána",
+            "bpmn:ExclusiveGateway": "Nové rozhodnutie",
+            "bpmn:ParallelGateway": "Nové rozhodnutie",
+            "bpmn:InclusiveGateway": "Nové rozhodnutie",
+            "bpmn:Gateway": "Nové rozhodnutie",
             "bpmn:StartEvent": "Začiatok",
             "bpmn:EndEvent": "Koniec",
           };
@@ -943,7 +943,6 @@ export default function MapViewer({
       if (boType !== "bpmn:Lane") return;
       emitLaneOrder();
     };
-
     const emitCanvasEdit = (reason) => {
       if (skipDiagramChangeRef.current) return;
       const handler = diagramChangeRef.current;

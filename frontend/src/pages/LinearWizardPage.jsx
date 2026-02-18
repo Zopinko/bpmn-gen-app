@@ -463,17 +463,9 @@ const isLaneDone = (engineJson, laneId, findingsForLane) => {
 const pickNextLane = (engineJson, findings) => {
   const { lanes } = buildGuideIndex(engineJson);
   if (!lanes.length) return null;
-  const byRule = (ruleId) =>
-    findings.find((f) => normalizeGuideRuleId(f) === ruleId);
-  const emptyFinding = byRule("lane_is_empty");
-  if (emptyFinding) {
-    const laneId = emptyFinding?.target?.id;
-    return lanes.find((l) => l?.id === laneId) || null;
-  }
-  const disconnectedFinding = byRule("lane_is_disconnected");
-  if (disconnectedFinding) {
-    const laneId = disconnectedFinding?.target?.id;
-    return lanes.find((l) => l?.id === laneId) || null;
+  const emptyLane = lanes.find((lane) => getLaneTasks(engineJson, lane.id).length === 0);
+  if (emptyLane) {
+    return emptyLane;
   }
   for (const lane of lanes) {
     const laneFindings = findings.filter(
@@ -488,6 +480,13 @@ const pickNextLane = (engineJson, findings) => {
 
 const getNodeLabel = (node) =>
   String(node?.name || node?.label || node?.id || "").trim();
+
+const PLACEHOLDER_NODE_NAMES = new Set(["procesny krok", "nova brana", "nove rozhodnutie", "zaciatok", "koniec"]);
+
+const isPlaceholderNodeName = (value) => {
+  const normalized = normalizeText(value).trim();
+  return PLACEHOLDER_NODE_NAMES.has(normalized);
+};
 
 const buildFlowAdjacency = (index) => {
   const incoming = new Map();
@@ -513,6 +512,7 @@ const pickGuideCard = ({
   activeLaneId,
   lastEditedLaneId,
   uiContext,
+  modelSnapshot,
 }) => {
   if (!engineJson) return null;
   const index = buildGuideIndex(engineJson);
@@ -529,12 +529,30 @@ const pickGuideCard = ({
       : null;
     const chosen = hardInCtx || hardFindings[0];
     const laneIdForHard = getLaneIdForFinding(chosen, index);
+    const hardMessage = (() => {
+      const ruleId = normalizeGuideRuleId(chosen);
+      const rawMessage = String(chosen?.message || "");
+      const rawProposal = String(chosen?.proposal || "");
+      const combined = `${rawMessage} ${rawProposal}`.toLowerCase();
+      const isGatewaySingleOutgoing =
+        ruleId === "gateway_diverging_needs_two_outgoing" ||
+        (combined.includes("diverging gateway") && combined.includes("outgoing"));
+      if (isGatewaySingleOutgoing) {
+        return (
+          "Rozhodovací krok sa musí rozdeliť. " +
+          "Z tohto bodu zatiaľ vedie len jedna šípka. " +
+          "Pridaj ešte jednu možnosť (napr. „Áno / Nie“), " +
+          "alebo tento krok odstráň, ak sa proces nerozdeľuje."
+        );
+      }
+      return `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Mrkni na túto rolu a uprav to priamo tam.`;
+    })();
     return {
       key: `hard:${chosen.id}`,
       scope: laneIdForHard ? "lane" : "global",
       laneId: laneIdForHard || null,
       title: "Poďme to doladiť",
-      message: `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Mrkni na túto rolu a uprav to priamo tam.`,
+      message: hardMessage,
       primary: laneIdForHard
         ? { label: "Do roly", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
         : null,
@@ -575,8 +593,8 @@ const pickGuideCard = ({
           laneId,
           title: "Chýba koniec",
           message:
-            `Bráško, chýba ti koniec procesu. Kam to má skončiť? ` +
-            `Klikni na tento krok a daj „Koniec sem“.`,
+            "Chýba nám koniec procesu. Kam to má celé dopadnúť? " +
+            "Klikni na posledný krok a daj „Koniec sem“ — nech je proces uzavretý.",
           primary: {
             label: "Na mape",
             action: "FOCUS_NODE",
@@ -615,11 +633,11 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Kam ďalej?",
-        message: `Aktivita „${label || "tento krok"}“ zatiaľ nikam nepokračuje. Klikni na rolu na mape, zvoľ Prepojiť (Connect) a potiahni šípku na krok, ktorý nasleduje.`,
+        message: `Aktivita „${label || "tento krok"}“ nemá pokračovanie. Na mape klikni na krok → Prepojiť (Connect) → potiahni šípku na ďalší krok.`,
         primary: {
           label: "Na mape",
           action: "FOCUS_NODE",
-          payload: { nodeId: missingOutgoingTask.id, laneId },
+          payload: { nodeId: missingOutgoingTask.id, laneId, nodeName: label || "" },
         },
         secondary: { label: "Neskôr", action: "NOT_NOW" },
         tertiary: {
@@ -643,28 +661,35 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Odkiaľ to prichádza?",
-        message: `Aktivita „${label || "tento krok"}“ nemá začiatok. Klikni na rolu na mape, zvoľ Prepojiť (Connect) a potiahni šípku z kroku, ktorý má byť pred ňou.`,
+        message: `Aktivita „${label || "tento krok"}“ nemá predchodcu. Na mape klikni na krok pred tým → Prepojiť (Connect) → potiahni šípku sem.`,
         primary: {
           label: "Na mape",
           action: "FOCUS_NODE",
-          payload: { nodeId: missingIncomingTask.id, laneId },
+          payload: { nodeId: missingIncomingTask.id, laneId, nodeName: label || "" },
         },
         secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
   }
 
+  const getLaneTaskCount = (laneId) => {
+    if (modelSnapshot?.tasksPerLane instanceof Map) {
+      return modelSnapshot.tasksPerLane.get(String(laneId || "")) || 0;
+    }
+    return getLaneTasks(engineJson, laneId).length;
+  };
   const tasks = index.nodes.filter((n) => isTaskLike(n));
   if (!tasks.length && index.lanes.length) {
-    const firstLane = index.lanes[0];
+    const firstEmptyLane = index.lanes.find((lane) => getLaneTaskCount(lane.id) === 0) || null;
+    if (!firstEmptyLane) return null;
     return {
       key: "process_empty",
       scope: "global",
       title: "Pridajme prvé kroky",
       message:
-        "Čo presne robí táto rola? Skús napísať 2–3 kroky (každý na nový riadok). Potom z nich vytvoríme aktivity.",
-      primary: firstLane
-        ? { label: "Do roly", action: "OPEN_LANE", payload: { laneId: firstLane.id } }
+        "Super — kostra je hotová ✅ Role už sú pripravené. Teraz spolu dopíšeme do každej roly 2–3 kroky (každý na nový riadok). Z toho spravím aktivity a potom to pospájame do logiky. Tip: píš slovesom — Overím…, Skontrolujem…, Odošlem…",
+      primary: firstEmptyLane
+        ? { label: "Začať s rolou", action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
         : null,
       secondary: { label: "Neskôr", action: "NOT_NOW" },
     };
@@ -675,15 +700,17 @@ const pickGuideCard = ({
       (f) => getLaneIdForFinding(f, index) === ctxLaneId,
     );
     const laneDone = isLaneDone(engineJson, ctxLaneId, laneFindings);
-    const nextLane = pickNextLane(engineJson, findings);
+    const nextLane =
+      index.lanes.find((lane) => lane.id !== ctxLaneId && getLaneTaskCount(lane.id) === 0) ||
+      pickNextLane(engineJson, findings);
     if (laneDone && nextLane && nextLane.id !== ctxLaneId) {
       return {
         key: `lane_done:${ctxLaneId}->${nextLane.id}`,
         scope: "lane",
         laneId: ctxLaneId,
       title: "Ďalšia rola",
-      message: `Rola „${ctxLane.name || ctxLane.id}“ vyzerá dobre 👍 Môžeme sa presunúť na ďalšiu – „${nextLane.name || nextLane.id}“.`,
-      primary: { label: "Do roly", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
+      message: `Paráda — rola „${ctxLane.name || ctxLane.id}“ vyzerá hotová ✅ Poďme ďalej na „${nextLane.name || nextLane.id}“. Potom spravíme prepojenia a budeš mať plynulý proces.`,
+      primary: { label: "Pokračovať na ďalšiu rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
       secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
@@ -717,9 +744,88 @@ const pickGuideCard = ({
       scope: "global",
       title: "Prepojme role",
       message:
-        "Kroky máme, teraz ich spojme. Prepoj aktivity tak, aby proces plynule prechádzal medzi rolami.",
-      primary: { label: "Prepojenie", action: "CONNECT_LANES_HEURISTIC" },
+        "Kroky už máme 👍 Teraz z toho spravíme plynulý proces: prepoj aktivity tak, aby to tieklo od začiatku až po koniec (aj medzi rolami).",
+      primary: { label: "Prepojiť kroky", action: "CONNECT_LANES_HEURISTIC" },
       secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }
+
+  const { incoming, outgoing } = buildFlowAdjacency(index);
+  const hasEndEvent = index.nodes.some((n) =>
+    String(n?.type || "").toLowerCase().includes("end"),
+  );
+  const taskNodes = index.nodes.filter((n) => isTaskLike(n));
+  const hasDanglingTask = taskNodes.some((node) => {
+    const id = node?.id ? String(node.id) : "";
+    if (!id) return false;
+    const hasIn = (incoming.get(id) || 0) > 0;
+    const hasOut = (outgoing.get(id) || 0) > 0;
+    return !hasIn || !hasOut;
+  });
+  const hasHardFindings = findings.some((f) => f?.severity === "HARD");
+  const hasDisconnectedLanes =
+    typeof modelSnapshot?.lanesDisconnected === "boolean"
+      ? modelSnapshot.lanesDisconnected
+      : findings.some((f) => normalizeGuideRuleId(f) === "lane_is_disconnected");
+  const hasAnyEmptyLane = index.lanes.some((lane) => getLaneTaskCount(lane.id) === 0);
+  const isFullyConsistent =
+    !hasHardFindings &&
+    hasEndEvent &&
+    !hasDanglingTask &&
+    !hasAnyEmptyLane &&
+    !hasDisconnectedLanes;
+  const isPersistedOrOrg =
+    uiContext?.modelSourceKind === "org" || uiContext?.hasUnsavedChanges === false;
+
+  if (isFullyConsistent) {
+    const renamableNodes = index.nodes.filter((node) => {
+      const type = String(node?.type || "").toLowerCase();
+      if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
+        return false;
+      }
+      return isPlaceholderNodeName(node?.name || "");
+    });
+    if (renamableNodes.length) {
+      const pickNode = ctxLaneId
+        ? renamableNodes.find((node) => String(node?.laneId || "") === String(ctxLaneId)) || renamableNodes[0]
+        : renamableNodes[0];
+      const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
+      return {
+        key: `unnamed_node:${pickNode?.id || "any"}`,
+        scope: laneId ? "lane" : "global",
+        laneId,
+        title: "Pomenujme kroky",
+        message:
+          "Vyzerá to hotovo ✅ Ešte mrkni na názvy krokov — nech tam neostanú všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“. Premenuj ich tak, aby bolo hneď jasné, čo sa v procese deje.",
+        primary: pickNode?.id
+          ? { label: "Na mape", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          : null,
+        secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+  }
+
+  if (isFullyConsistent && !isPersistedOrOrg) {
+    return {
+      key: "process_ready_for_save",
+      scope: "global",
+      title: "Pripravené na uloženie",
+      message:
+        "Výborne — proces je konzistentný a pripravený ✅ Môžeš ho teraz uložiť alebo pokračovať v úpravách.",
+      primary: { label: "Uložiť proces", action: "SAVE_PROCESS" },
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }
+
+  if (isFullyConsistent && isPersistedOrOrg) {
+    return {
+      key: "process_complete",
+      scope: "global",
+      title: "Proces je hotový",
+      message:
+        "Perfektné 👏 Proces je hotový. Môžeme ho nechať v pieskovisku alebo ho presunúť do organizačnej štruktúry.",
+      primary: { label: "Presunúť do organizácie", action: "MOVE_TO_ORG" },
+      secondary: { label: "Zostať v pieskovisku", action: "STAY_IN_SANDBOX" },
     };
   }
 
@@ -1238,16 +1344,235 @@ export default function LinearWizardPage() {
   const guideRequestIdRef = useRef(0);
   const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
   const guideModelLoadedKeyRef = useRef(null);
+  const guideLastReasonRef = useRef("init");
+  const modelVersionRef = useRef(modelVersion);
+
+  useEffect(() => {
+    modelVersionRef.current = modelVersion;
+  }, [modelVersion]);
+
+  const collectGuideModelSnapshot = useCallback(() => {
+    const modeler = modelerRef.current;
+    const elementRegistry = modeler?.get?.("elementRegistry");
+    if (!elementRegistry?.getAll) return null;
+    const all = elementRegistry.getAll();
+    const lanes = all
+      .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("Lane"))
+      .map((laneEl) => {
+        const laneBo = laneEl?.businessObject;
+        const laneId = String(laneBo?.$attrs?.["data-engine-id"] || laneBo?.id || laneEl?.id || "");
+        return {
+          id: laneId,
+          name: String(laneBo?.name || laneId || ""),
+          _el: laneEl,
+        };
+      })
+      .filter((lane) => lane.id);
+    const tasksPerLane = new Map(lanes.map((lane) => [String(lane.id), 0]));
+    const nodes = [];
+    const flows = [];
+    const findLaneByNode = (nodeEl) => {
+      const lane = findLaneForNode(elementRegistry, nodeEl);
+      const laneBo = lane?.businessObject;
+      return String(laneBo?.$attrs?.["data-engine-id"] || laneBo?.id || lane?.id || "");
+    };
+
+    all.forEach((el) => {
+      if (!el || el.type === "label") return;
+      const type = String(el?.businessObject?.$type || el?.type || "");
+      if (type.includes("SequenceFlow")) {
+        const sourceId = String(el?.businessObject?.sourceRef?.id || el?.source?.id || "");
+        const targetId = String(el?.businessObject?.targetRef?.id || el?.target?.id || "");
+        flows.push({
+          id: String(el?.businessObject?.id || el?.id || ""),
+          source: sourceId,
+          target: targetId,
+          name: String(el?.businessObject?.name || ""),
+        });
+        return;
+      }
+      if (!el?.businessObject?.$instanceOf?.("bpmn:FlowNode")) return;
+      const nodeId = String(el?.businessObject?.id || el?.id || "");
+      if (!nodeId) return;
+      const laneId = findLaneByNode(el) || null;
+      const node = {
+        id: nodeId,
+        type,
+        name: String(el?.businessObject?.name || ""),
+        laneId,
+      };
+      nodes.push(node);
+      if (isTaskLike(node) && laneId) {
+        tasksPerLane.set(laneId, (tasksPerLane.get(laneId) || 0) + 1);
+      }
+    });
+
+    const incomingCount = new Map();
+    const outgoingCount = new Map();
+    nodes.forEach((node) => {
+      incomingCount.set(String(node.id), 0);
+      outgoingCount.set(String(node.id), 0);
+    });
+    flows.forEach((flow) => {
+      const sourceId = String(flow?.source || "");
+      const targetId = String(flow?.target || "");
+      if (sourceId) outgoingCount.set(sourceId, (outgoingCount.get(sourceId) || 0) + 1);
+      if (targetId) incomingCount.set(targetId, (incomingCount.get(targetId) || 0) + 1);
+    });
+
+    const taskNodes = nodes.filter((node) => isTaskLike(node));
+    const tasksMissingOutgoing = taskNodes
+      .filter((node) => (outgoingCount.get(String(node.id)) || 0) === 0)
+      .map((node) => String(node.id));
+    const tasksMissingIncoming = taskNodes
+      .filter((node) => (incomingCount.get(String(node.id)) || 0) === 0)
+      .map((node) => String(node.id));
+    const hasEndEvent = nodes.some((node) => String(node?.type || "").toLowerCase().includes("end"));
+    const laneByNodeId = new Map(nodes.map((node) => [String(node.id), String(node?.laneId || "")]));
+    const laneAdj = new Map(lanes.map((lane) => [String(lane.id), new Set()]));
+    flows.forEach((flow) => {
+      const sourceLane = laneByNodeId.get(String(flow?.source || "")) || "";
+      const targetLane = laneByNodeId.get(String(flow?.target || "")) || "";
+      if (!sourceLane || !targetLane || sourceLane === targetLane) return;
+      if (!laneAdj.has(sourceLane)) laneAdj.set(sourceLane, new Set());
+      if (!laneAdj.has(targetLane)) laneAdj.set(targetLane, new Set());
+      laneAdj.get(sourceLane).add(targetLane);
+      laneAdj.get(targetLane).add(sourceLane);
+    });
+    const lanesWithTasks = lanes.map((lane) => String(lane.id)).filter((laneId) => (tasksPerLane.get(laneId) || 0) > 0);
+    let lanesDisconnected = false;
+    if (lanesWithTasks.length > 1) {
+      const seen = new Set();
+      const stack = [lanesWithTasks[0]];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (!cur || seen.has(cur)) continue;
+        seen.add(cur);
+        const neighbors = laneAdj.get(cur);
+        if (!neighbors) continue;
+        neighbors.forEach((next) => {
+          if (!seen.has(next)) stack.push(next);
+        });
+      }
+      lanesDisconnected = lanesWithTasks.some((laneId) => !seen.has(laneId));
+    }
+
+    return {
+      totalTasks: taskNodes.length,
+      tasksPerLane,
+      hasEndEvent,
+      tasksMissingIncoming,
+      tasksMissingOutgoing,
+      lanesDisconnected,
+      engine: {
+        ...(engineJson || {}),
+        lanes: lanes.map(({ _el, ...lane }) => lane),
+        nodes,
+        flows,
+      },
+    };
+  }, [engineJson]);
+
+  const detectLayoutOversizeCard = useCallback(() => {
+    const modeler = modelerRef.current;
+    const elementRegistry = modeler?.get?.("elementRegistry");
+    if (!elementRegistry?.getAll) return null;
+    const all = elementRegistry.getAll();
+    const lanes = all.filter((el) =>
+      String(el?.businessObject?.$type || el?.type || "").includes("Lane"),
+    );
+    const shapes = all.filter((el) => {
+      const t = String(el?.businessObject?.$type || el?.type || "");
+      if (!t) return false;
+      if (
+        t.includes("Lane") ||
+        t.includes("Label") ||
+        t.includes("SequenceFlow") ||
+        t.includes("Participant")
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (!lanes.length || !shapes.length) return null;
+    const bounds = (els) => {
+      const xs = els.map((e) => e.x || 0);
+      const ys = els.map((e) => e.y || 0);
+      const ws = els.map((e) => (e.x || 0) + (e.width || 0));
+      const hs = els.map((e) => (e.y || 0) + (e.height || 0));
+      return {
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...ws),
+        maxY: Math.max(...hs),
+      };
+    };
+    const content = bounds(shapes);
+    const laneBounds = bounds(lanes);
+    const laneWidth = laneBounds.maxX - laneBounds.minX;
+    const laneHeight = laneBounds.maxY - laneBounds.minY;
+    const contentWidth = content.maxX - content.minX;
+    const contentHeight = content.maxY - content.minY;
+    const extraRight = laneBounds.maxX - content.maxX;
+    const extraBottom = laneBounds.maxY - content.maxY;
+    const extraLeft = content.minX - laneBounds.minX;
+    const extraTop = content.minY - laneBounds.minY;
+    const extraW = Math.max(extraRight, extraLeft);
+    const extraH = Math.max(extraBottom, extraTop);
+    const widthRatio = laneWidth / Math.max(1, contentWidth);
+    const heightRatio = laneHeight / Math.max(1, contentHeight);
+    const areaRatio =
+      (contentWidth * contentHeight) / Math.max(1, laneWidth * laneHeight);
+    if (window.__BPMNGEN_DEBUG_GUIDE) {
+      // eslint-disable-next-line no-console
+      console.log("[guide:oversize]", {
+        laneWidth,
+        laneHeight,
+        contentWidth,
+        contentHeight,
+        extraLeft,
+        extraRight,
+        extraTop,
+        extraBottom,
+        extraW,
+        extraH,
+        widthRatio,
+        heightRatio,
+        areaRatio,
+      });
+    }
+    const isOversized =
+      (extraW > 180 || extraH > 120) &&
+      (widthRatio > 1.2 || heightRatio > 1.2 || areaRatio < 0.7);
+    if (!isOversized) {
+      if (window.__BPMNGEN_DEBUG_GUIDE) {
+        // eslint-disable-next-line no-console
+        console.log("[guide:oversize] not triggered");
+      }
+      return null;
+    }
+    return {
+      key: "layout_oversize",
+      scope: "global",
+      title: "Mapa je hotová 👍",
+      message:
+        "Ak chceš upratať voľné miesto, klikni najprv na rolu alebo celý proces (prípadne použi tlačidlo na mape), aby sa označil.\nPotom môžeš potiahnuť jeho okraj a zmenšiť ho podľa obsahu.",
+      primary: { label: "Na mape", action: "FOCUS_OVERSIZE_TARGET" },
+      secondary: { label: "Neskôr", action: "NOT_NOW" },
+    };
+  }, []);
 
   const applyGuideFromFindings = useCallback(
     (findings, laneId = null, options = {}) => {
       const force = Boolean(options.force);
+      const guideEngine = options.guideEngine || engineJson;
       const card = pickGuideCard({
-        engineJson,
+        engineJson: guideEngine,
         findings,
         activeLaneId: laneId || activeLaneId,
         lastEditedLaneId,
-        uiContext: { mentorOpen, storyOpen },
+        modelSnapshot: options.modelSnapshot || null,
+        uiContext: { mentorOpen, storyOpen, hasUnsavedChanges, modelSourceKind: modelSource?.kind },
       });
       if (!card) {
         setGuideState(null);
@@ -1260,17 +1585,21 @@ export default function LinearWizardPage() {
       setGuideState(card);
       return card;
     },
-    [engineJson, activeLaneId, lastEditedLaneId, mentorOpen, storyOpen],
+    [engineJson, activeLaneId, lastEditedLaneId, mentorOpen, storyOpen, hasUnsavedChanges, modelSource?.kind],
   );
 
   const runGuideReview = useCallback(
     async (reason = "manual", laneId = null) => {
       if (!guideEnabled) return;
+      const runModelVersion = modelVersionRef.current;
+      guideLastReasonRef.current = reason;
+      const modelSnapshot = collectGuideModelSnapshot();
+      const guideEngine = modelSnapshot?.engine || engineJson;
       const generator = processCard?.generatorInput || {};
       const hasEngineModel =
-        Boolean((engineJson?.name || engineJson?.processName || "").trim()) ||
-        (Array.isArray(engineJson?.lanes) && engineJson.lanes.length > 0) ||
-        (Array.isArray(engineJson?.nodes) && engineJson.nodes.length > 0);
+        Boolean((guideEngine?.name || guideEngine?.processName || "").trim()) ||
+        (Array.isArray(guideEngine?.lanes) && guideEngine.lanes.length > 0) ||
+        (Array.isArray(guideEngine?.nodes) && guideEngine.nodes.length > 0);
       const hasProcessCard =
         (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
         hasEngineModel;
@@ -1286,18 +1615,18 @@ export default function LinearWizardPage() {
         });
         return;
       }
-      if (!engineJson) {
+      if (!guideEngine) {
         setGuideState(null);
         return;
       }
-      const nodesCount = Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0;
-      const flowsCount = Array.isArray(engineJson?.flows) ? engineJson.flows.length : 0;
-      const lanesCount = Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0;
+      const nodesCount = Array.isArray(guideEngine?.nodes) ? guideEngine.nodes.length : 0;
+      const flowsCount = Array.isArray(guideEngine?.flows) ? guideEngine.flows.length : 0;
+      const lanesCount = Array.isArray(guideEngine?.lanes) ? guideEngine.lanes.length : 0;
       const laneText = (laneDescription || "").trim();
       const signature = [
         reason,
         laneId || "",
-        engineJson?.processId || engineJson?.name || engineJson?.processName || "",
+        guideEngine?.processId || guideEngine?.name || guideEngine?.processName || "",
         nodesCount,
         flowsCount,
         lanesCount,
@@ -1316,7 +1645,7 @@ export default function LinearWizardPage() {
       try {
         const payload = {
           text: (laneDescription || "").trim() || null,
-          engine_json: engineJson,
+          engine_json: guideEngine,
           kb_version: null,
           telemetry: null,
           telemetry_id: null,
@@ -1327,104 +1656,38 @@ export default function LinearWizardPage() {
         findings = [];
       }
       if (requestId !== guideRequestIdRef.current) return;
+      if (modelVersionRef.current !== runModelVersion) return;
       setGuideFindings(findings);
       const forceGuide = reason === "skeleton_generated";
-      const currentCard = applyGuideFromFindings(findings, laneId, { force: forceGuide });
-      if (!currentCard) {
-        const modeler = modelerRef.current;
-        const elementRegistry = modeler?.get?.("elementRegistry");
-        if (elementRegistry) {
-          const all = elementRegistry.getAll();
-          const lanes = all.filter((el) =>
-            String(el?.businessObject?.$type || el?.type).includes("Lane"),
-          );
-          const shapes = all.filter((el) => {
-            const t = String(el?.businessObject?.$type || el?.type || "");
-            if (!t) return false;
-            if (
-              t.includes("Lane") ||
-              t.includes("Label") ||
-              t.includes("SequenceFlow") ||
-              t.includes("Participant")
-            ) {
-              return false;
-            }
-            return true;
-          });
-          if (lanes.length && shapes.length) {
-            const bounds = (els) => {
-              const xs = els.map((e) => e.x || 0);
-              const ys = els.map((e) => e.y || 0);
-              const ws = els.map((e) => (e.x || 0) + (e.width || 0));
-              const hs = els.map((e) => (e.y || 0) + (e.height || 0));
-              return {
-                minX: Math.min(...xs),
-                minY: Math.min(...ys),
-                maxX: Math.max(...ws),
-                maxY: Math.max(...hs),
-              };
-            };
-            const content = bounds(shapes);
-            const laneBounds = bounds(lanes);
-            const laneWidth = laneBounds.maxX - laneBounds.minX;
-            const laneHeight = laneBounds.maxY - laneBounds.minY;
-            const contentWidth = content.maxX - content.minX;
-            const contentHeight = content.maxY - content.minY;
-            const extraRight = laneBounds.maxX - content.maxX;
-            const extraBottom = laneBounds.maxY - content.maxY;
-            const extraLeft = content.minX - laneBounds.minX;
-            const extraTop = content.minY - laneBounds.minY;
-            const extraW = Math.max(extraRight, extraLeft);
-            const extraH = Math.max(extraBottom, extraTop);
-            const widthRatio = laneWidth / Math.max(1, contentWidth);
-            const heightRatio = laneHeight / Math.max(1, contentHeight);
-            const areaRatio =
-              (contentWidth * contentHeight) / Math.max(1, laneWidth * laneHeight);
-            if (window.__BPMNGEN_DEBUG_GUIDE) {
-              // eslint-disable-next-line no-console
-              console.log("[guide:oversize]", {
-                laneWidth,
-                laneHeight,
-                contentWidth,
-                contentHeight,
-                extraLeft,
-                extraRight,
-                extraTop,
-                extraBottom,
-                extraW,
-                extraH,
-                widthRatio,
-                heightRatio,
-                areaRatio,
-              });
-            }
-            if (
-              (extraW > 180 || extraH > 120) &&
-              (widthRatio > 1.2 || heightRatio > 1.2 || areaRatio < 0.7)
-            ) {
-              const card = {
-                key: "layout_oversize",
-                scope: "global",
-                title: "Zmenšiť plátno?",
-                message:
-                  "Na mape ostalo veľa prázdneho miesta. Klikni na okraj lane a potiahni ho dovnútra, aby obopínal kroky.",
-                secondary: { label: "Neskôr", action: "NOT_NOW" },
-              };
-              if (!wasGuideDismissedRecently(card.key)) {
-                setGuideState(card);
-              } else if (window.__BPMNGEN_DEBUG_GUIDE) {
-                // eslint-disable-next-line no-console
-                console.log("[guide:oversize] skipped (dismissed)");
-              }
-            } else if (window.__BPMNGEN_DEBUG_GUIDE) {
-              // eslint-disable-next-line no-console
-              console.log("[guide:oversize] not triggered");
-            }
-          }
+      const currentCard = applyGuideFromFindings(findings, laneId, {
+        force: forceGuide,
+        guideEngine,
+        modelSnapshot,
+      });
+      const oversizeCard = detectLayoutOversizeCard();
+      const canOverrideWithOversize =
+        !currentCard ||
+        currentCard?.key === "process_ready_for_save" ||
+        currentCard?.key === "process_complete" ||
+        String(currentCard?.key || "").startsWith("unnamed_node:");
+      if (oversizeCard && canOverrideWithOversize) {
+        if (!wasGuideDismissedRecently(oversizeCard.key)) {
+          setGuideState(oversizeCard);
+        } else if (window.__BPMNGEN_DEBUG_GUIDE) {
+          // eslint-disable-next-line no-console
+          console.log("[guide:oversize] skipped (dismissed)");
         }
       }
     },
-    [guideEnabled, processCard, engineJson, laneDescription, applyGuideFromFindings],
+    [
+      guideEnabled,
+      processCard,
+      engineJson,
+      laneDescription,
+      applyGuideFromFindings,
+      collectGuideModelSnapshot,
+      detectLayoutOversizeCard,
+    ],
   );
 
   useEffect(() => {
@@ -1498,13 +1761,37 @@ export default function LinearWizardPage() {
       setGuideState(null);
       return;
     }
+    if (actionId === "SAVE_PROCESS") {
+      await handleSaveModel();
+      setGuideState(null);
+      return;
+    }
+    if (actionId === "MOVE_TO_ORG") {
+      if (modelSource?.kind === "org") {
+        openSingleCard("org");
+        setGuideState(null);
+        return;
+      }
+      setModelsOpen(true);
+      setGuideState(null);
+      return;
+    }
+    if (actionId === "STAY_IN_SANDBOX") {
+      setGuideState(null);
+      return;
+    }
     if (actionId === "OPEN_LANE") {
       const laneIdValue = payload?.laneId;
       if (laneIdValue && engineJson?.lanes) {
-        const lane = engineJson.lanes.find((l) => l.id === laneIdValue);
+        const lane = engineJson.lanes.find((l) => String(l?.id || "") === String(laneIdValue));
         if (lane) {
           setSelectedLane(lane);
+          setActiveLaneId(String(lane.id));
+          setLastEditedLaneId(String(lane.id));
           openSingleCard("lane");
+          window.setTimeout(() => {
+            runGuideReview("cta_lane_opened", String(lane.id));
+          }, 0);
         }
       }
       setGuideState(null);
@@ -1534,11 +1821,22 @@ export default function LinearWizardPage() {
       if (!targetTaskId) return;
       const sourceShape = elementRegistry.get(targetTaskId);
       if (!sourceShape) return;
+      const configuredEndName = String(processCard?.generatorInput?.output || "").trim();
       const endShape = elementFactory.createShape({ type: "bpmn:EndEvent" });
+      if (configuredEndName && endShape?.businessObject) {
+        endShape.businessObject.name = configuredEndName;
+      }
       const position = { x: (sourceShape.x || 0) + 160, y: (sourceShape.y || 0) };
       const processParent = getProcessParent(elementRegistry);
       if (!processParent) return;
       const createdEnd = modeling.createShape(endShape, position, processParent);
+      if (configuredEndName && createdEnd) {
+        try {
+          modeling.updateProperties(createdEnd, { name: configuredEndName });
+        } catch {
+          // ignore name update errors
+        }
+      }
       const laneForSource = findLaneForNode(elementRegistry, sourceShape);
       if (laneForSource && createdEnd) {
         attachNodeToLane(laneForSource, createdEnd, modeling);
@@ -1553,16 +1851,84 @@ export default function LinearWizardPage() {
       runGuideReview("connect_lanes");
       return;
     }
+    if (actionId === "FOCUS_OVERSIZE_TARGET") {
+      const modeler = modelerRef.current;
+      if (!modeler) return;
+      const elementRegistry = modeler.get("elementRegistry");
+      const selection = modeler.get("selection");
+      const canvas = modeler.get("canvas");
+      if (!elementRegistry) return;
+      const getByIdOrEngineId = (id) => {
+        if (!id) return null;
+        const direct = elementRegistry.get(id);
+        if (direct) return direct;
+        return (
+          elementRegistry
+            .getAll()
+            .find((el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "") === String(id)) || null
+        );
+      };
+      const laneHintId = activeLaneId || selectedLane?.id || null;
+      const laneEl = laneHintId ? getByIdOrEngineId(laneHintId) : null;
+      const participantEl =
+        elementRegistry
+          .getAll()
+          .find((el) => String(el?.businessObject?.$type || el?.type || "").includes("Participant")) || null;
+      const target = laneEl || participantEl;
+      if (target) {
+        selection?.select(target);
+        try {
+          canvas?.zoom?.("fit-viewport", target);
+        } catch {
+          // ignore zoom errors
+        }
+        canvas?.scrollToElement?.(target);
+      }
+      setGuideState(null);
+      return;
+    }
     if (actionId === "FOCUS_NODE") {
       const modeler = modelerRef.current;
       if (!modeler) return;
       const elementRegistry = modeler.get("elementRegistry");
       const selection = modeler.get("selection");
       const canvas = modeler.get("canvas");
+      const getByIdOrEngineId = (id) => {
+        if (!id || !elementRegistry) return null;
+        const direct = elementRegistry.get(id);
+        if (direct) return direct;
+        return (
+          elementRegistry
+            .getAll()
+            .find((el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "") === String(id)) || null
+        );
+      };
       const nodeId = payload?.nodeId;
       const laneId = payload?.laneId;
-      const element = nodeId ? elementRegistry.get(nodeId) : null;
-      const laneEl = !element && laneId ? elementRegistry.get(laneId) : null;
+      const nodeName = String(payload?.nodeName || "").trim();
+      let element = nodeId ? getByIdOrEngineId(nodeId) : null;
+      const laneEl = laneId ? getByIdOrEngineId(laneId) : null;
+      if (!element && nodeName && elementRegistry) {
+        const all = elementRegistry.getAll();
+        const candidates = all.filter((el) => {
+          if (!el || el.type === "label") return false;
+          const boType = String(el?.businessObject?.$type || el?.type || "");
+          if (
+            !boType.includes("Task") &&
+            !boType.includes("Gateway") &&
+            !boType.includes("Event")
+          ) {
+            return false;
+          }
+          return String(el?.businessObject?.name || "").trim() === nodeName;
+        });
+        element =
+          candidates.find((el) => {
+            if (!laneEl) return true;
+            const laneForNode = findLaneForNode(elementRegistry, el);
+            return Boolean(laneForNode && laneForNode.id === laneEl.id);
+          }) || candidates[0] || null;
+      }
       const target = element || laneEl;
       if (target) {
         selection?.select(target);
@@ -1626,10 +1992,14 @@ export default function LinearWizardPage() {
         })),
       });
 
-      let sourceShape = getByIdOrEngineId(payload?.nodeId);
-      if (!sourceShape) {
-        const selected = selectedRaw.find((el) => isConnectableNode(el));
-        if (selected) sourceShape = selected;
+      const selected = selectedRaw.find((el) => isConnectableNode(el));
+      let sourceShape = selected || getByIdOrEngineId(payload?.nodeId);
+      const hasExplicitPayloadNode = Boolean(payload?.nodeId);
+      if (!sourceShape && hasExplicitPayloadNode) {
+        console.warn("[Guide][CONNECT_END_HERE] payload node unresolved; skip lane fallback", {
+          payloadNodeId: payload?.nodeId || null,
+        });
+        return;
       }
       if (!sourceShape) {
         const laneIdHint =
@@ -1677,10 +2047,14 @@ export default function LinearWizardPage() {
       const laneNodes = laneForSource
         ? collectLaneFlowNodes(laneForSource, elementRegistry)
         : [];
+      const configuredEndName = String(processCard?.generatorInput?.output || "").trim();
       let endShape = laneNodes.find((el) => isEndEvent(el)) || null;
       if (!endShape && elementFactory) {
         try {
           const endDef = elementFactory.createShape({ type: "bpmn:EndEvent" });
+          if (configuredEndName && endDef?.businessObject) {
+            endDef.businessObject.name = configuredEndName;
+          }
           const sourceX = sourceShape.x || 0;
           const sourceY = sourceShape.y || 0;
           const sourceW = sourceShape.width || 0;
@@ -1713,6 +2087,13 @@ export default function LinearWizardPage() {
       if (!endShape) {
         console.warn("[Guide][CONNECT_END_HERE] endShape unresolved");
         return;
+      }
+      if (configuredEndName) {
+        try {
+          modeling.updateProperties(endShape, { name: configuredEndName });
+        } catch {
+          // ignore name update errors
+        }
       }
       try {
         if (typeof modeling.moveShape === "function") {
@@ -1817,6 +2198,31 @@ export default function LinearWizardPage() {
     if (modelVersion <= 0) return;
     runGuideReview("model_change", activeLaneId || null);
   }, [guideEnabled, engineJson, modelVersion, activeLaneId, runGuideReview]);
+
+  useEffect(() => {
+    if (!guideEnabled) return;
+    if (typeof window === "undefined") return;
+    if (!window.__BPMNGEN_GUIDE_DEBUG) return;
+    const nodesCount = Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0;
+    const flowsCount = Array.isArray(engineJson?.flows) ? engineJson.flows.length : 0;
+    const lanesCount = Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0;
+    // eslint-disable-next-line no-console
+    console.log(
+      "[guide] state=%s reason=%s details=%o",
+      guideState?.key || "none",
+      guideLastReasonRef.current || "unknown",
+      {
+        scope: guideState?.scope || null,
+        laneId: guideState?.laneId || null,
+        findingsCount: Array.isArray(guideFindings) ? guideFindings.length : 0,
+        nodesCount,
+        flowsCount,
+        lanesCount,
+        activeLaneId: activeLaneId || null,
+        lastEditedLaneId: lastEditedLaneId || null,
+      },
+    );
+  }, [guideEnabled, guideState, guideFindings, engineJson, activeLaneId, lastEditedLaneId]);
 
   const prevLaneOpenRef = useRef(laneOpen);
   const lastActiveLaneIdRef = useRef(null);

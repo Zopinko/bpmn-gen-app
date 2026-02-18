@@ -183,8 +183,13 @@ export function applyIncrementalAppend({
   const positionEventLabel = (el) => {
     if (!el || !el.businessObject?.name) return;
     if (typeof modeling.updateLabel !== "function") return;
-    const w = Math.max(80, Math.round((el.businessObject.name || "").length * 6));
-    const h = 28;
+    const elType = String(el?.businessObject?.$type || el?.type || "");
+    const labelEl = el?.label || (Array.isArray(el?.labels) ? el.labels[0] : null);
+    const currentW = Number(labelEl?.width || 0);
+    const currentH = Number(labelEl?.height || 0);
+    const computedW = Math.max(80, Math.round((el.businessObject.name || "").length * 6));
+    const w = elType.includes("StartEvent") && currentW > 0 ? Math.max(computedW, currentW) : computedW;
+    const h = currentH > 0 ? currentH : 28;
     const bounds = {
       x: (el.x || 0) - w / 2 + (el.width || 0) / 2,
       y: (el.y || 0) + (el.height || 0) + 6,
@@ -214,12 +219,40 @@ export function applyIncrementalAppend({
       // ignore label placement errors
     }
   };
+  const getExternalLabel = (el) => {
+    if (!el) return null;
+    if (el.label) return el.label;
+    if (Array.isArray(el.labels) && el.labels.length) return el.labels[0];
+    return null;
+  };
 
   const createdByEngineId = new Map();
   const createdConnections = [];
   let nodeFailure = null;
   let flowFailure = null;
   let missingLaneWarned = false;
+  const touchedLaneIds = new Set(newNodes.map((n) => String(n?.laneId || "")).filter(Boolean));
+  const frozenStartLabelBounds = new Map();
+  touchedLaneIds.forEach((laneId) => {
+    const laneEl = laneById.get(laneId);
+    if (!laneEl) return;
+    const startsInLane = elementRegistry
+      .getAll()
+      .filter((el) => {
+        const type = String(el?.businessObject?.$type || el?.type || "");
+        return type.includes("StartEvent") && isInLane(el, laneEl);
+      });
+    startsInLane.forEach((startEl) => {
+      const labelEl = getExternalLabel(startEl);
+      if (!labelEl) return;
+      frozenStartLabelBounds.set(String(startEl.id || ""), {
+        x: Number(labelEl.x || 0),
+        y: Number(labelEl.y || 0),
+        width: Number(labelEl.width || 0),
+        height: Number(labelEl.height || 0),
+      });
+    });
+  });
   const nodeOrder = new Map(
     nextNodes
       .map((n, idx) => [String(n?.id || ""), idx])
@@ -806,6 +839,36 @@ export function applyIncrementalAppend({
       }
     });
   }
+
+  // Freeze existing StartEvent external label positions in touched lanes.
+  frozenStartLabelBounds.forEach((savedBounds, startId) => {
+    const startEl = elementRegistry.get(startId);
+    if (!startEl || !startEl.businessObject?.name) return;
+    const labelEl = getExternalLabel(startEl);
+    if (!labelEl) return;
+    const preferredY = Number(startEl.y || 0) + Number(startEl.height || 0) + 2;
+    const restoreBounds = {
+      ...savedBounds,
+      y: preferredY,
+    };
+    const currentBounds = {
+      x: Number(labelEl.x || 0),
+      y: Number(labelEl.y || 0),
+      width: Number(labelEl.width || 0),
+      height: Number(labelEl.height || 0),
+    };
+    const changed =
+      Math.abs(currentBounds.x - restoreBounds.x) > 0.5 ||
+      Math.abs(currentBounds.y - restoreBounds.y) > 0.5 ||
+      Math.abs(currentBounds.width - restoreBounds.width) > 0.5 ||
+      Math.abs(currentBounds.height - restoreBounds.height) > 0.5;
+    if (!changed) return;
+    try {
+      modeling.updateLabel(startEl, startEl.businessObject.name, restoreBounds);
+    } catch {
+      // ignore label restore errors
+    }
+  });
 
   return ok({
     createdNodes: createdByEngineId.size,
