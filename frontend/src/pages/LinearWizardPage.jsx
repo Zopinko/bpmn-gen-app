@@ -986,6 +986,7 @@ export default function LinearWizardPage() {
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
   const [activeLaneId, setActiveLaneId] = useState(null);
+  const [modelVersion, setModelVersion] = useState(0);
   const [lastEditedLaneId, setLastEditedLaneId] = useState(null);
   const [modelSource, setModelSource] = useState({ kind: "sandbox" });
   const [orgReadOnly, setOrgReadOnly] = useState(false);
@@ -1066,6 +1067,23 @@ export default function LinearWizardPage() {
   const [replyEditing, setReplyEditing] = useState({ noteId: null, replyId: null, text: "" });
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [lastExportedAt, setLastExportedAt] = useState(null);
+
+  const sampleSequenceFlowWaypoints = useCallback((activeModeler, limit = 5) => {
+    const elementRegistry = activeModeler?.get?.("elementRegistry");
+    if (!elementRegistry?.getAll) return [];
+    return elementRegistry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow"))
+      .slice(0, limit)
+      .map((conn) => ({
+        id: conn?.id || null,
+        name: conn?.businessObject?.name || "",
+        waypoints: (conn?.waypoints || []).map((pt) => ({
+          x: Number(pt?.x || 0),
+          y: Number(pt?.y || 0),
+        })),
+      }));
+  }, []);
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingNoteText, setEditingNoteText] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
@@ -1122,6 +1140,9 @@ export default function LinearWizardPage() {
     renderModeRef.current = "incremental";
     logRenderMode("incremental", reason);
   };
+  const bumpModelVersion = useCallback(() => {
+    setModelVersion((v) => v + 1);
+  }, []);
 
   useEffect(() => {
     engineJsonRef.current = engineJson;
@@ -1462,6 +1483,9 @@ export default function LinearWizardPage() {
   }, [engineJson]);
 
   const handleGuideAction = async (actionId, payload) => {
+    if (actionId === "CONNECT_END_HERE") {
+      console.log("[Guide] handleGuideAction click", { actionId, payload });
+    }
     if (!guideState || !actionId) return;
     if (actionId === "NOT_NOW") {
       dismissGuideCard(guideState.key);
@@ -1492,6 +1516,7 @@ export default function LinearWizardPage() {
       const elementRegistry = modeler.get("elementRegistry");
       const modeling = modeler.get("modeling");
       const elementFactory = modeler.get("elementFactory");
+      const selection = modeler.get("selection");
       if (!elementRegistry || !modeling || !elementFactory) return;
       const nodes = engineJson?.nodes || [];
       const tasks = nodes.filter((n) => /task/i.test(String(n?.type || "")));
@@ -1555,22 +1580,104 @@ export default function LinearWizardPage() {
       return;
     }
     if (actionId === "CONNECT_END_HERE") {
+      console.log("[Guide][CONNECT_END_HERE] start", { actionId, payload });
       const modeler = modelerRef.current;
-      if (!modeler) return;
+      if (!modeler) {
+        console.warn("[Guide][CONNECT_END_HERE] missing modelerRef.current");
+        return;
+      }
       const elementRegistry = modeler.get("elementRegistry");
       const modeling = modeler.get("modeling");
       const elementFactory = modeler.get("elementFactory");
-      if (!elementRegistry || !modeling) return;
-      const nodeId = payload?.nodeId;
-      if (!nodeId) return;
-      const sourceShape = elementRegistry.get(nodeId);
-      if (!sourceShape) return;
+      const selection = modeler.get("selection");
+      if (!elementRegistry || !modeling) {
+        console.warn("[Guide][CONNECT_END_HERE] missing services", {
+          hasElementRegistry: Boolean(elementRegistry),
+          hasModeling: Boolean(modeling),
+          hasElementFactory: Boolean(elementFactory),
+          hasSelection: Boolean(selection),
+        });
+        return;
+      }
+      const getByIdOrEngineId = (id) => {
+        if (!id) return null;
+        const direct = elementRegistry.get(id);
+        if (direct) return direct;
+        return (
+          elementRegistry
+            .getAll()
+            .find(
+              (el) =>
+                String(el?.businessObject?.$attrs?.["data-engine-id"] || "") ===
+                String(id),
+            ) || null
+        );
+      };
+      const isFlowNode = (el) => Boolean(el?.businessObject?.$instanceOf?.("bpmn:FlowNode"));
+      const isEndEvent = (el) =>
+        String(el?.businessObject?.$type || el?.type || "").includes("EndEvent");
+      const isConnectableNode = (el) => isFlowNode(el) && !isEndEvent(el);
+      const selectedRaw = selection?.get?.() || [];
+      console.log("[Guide][CONNECT_END_HERE] selection", {
+        count: selectedRaw.length,
+        items: selectedRaw.map((el) => ({
+          id: el?.id,
+          type: el?.businessObject?.$type || el?.type || "",
+        })),
+      });
+
+      let sourceShape = getByIdOrEngineId(payload?.nodeId);
+      if (!sourceShape) {
+        const selected = selectedRaw.find((el) => isConnectableNode(el));
+        if (selected) sourceShape = selected;
+      }
+      if (!sourceShape) {
+        const laneIdHint =
+          payload?.laneId || activeLaneId || selectedLane?.id || lastEditedLaneId || null;
+        const laneEl = getByIdOrEngineId(laneIdHint);
+        if (laneEl) {
+          const laneNodes = collectLaneFlowNodes(laneEl, elementRegistry)
+            .filter((el) => isConnectableNode(el))
+            .sort((a, b) => (a.x || 0) - (b.x || 0));
+          const taskNodes = laneNodes.filter((el) =>
+            String(el?.businessObject?.$type || el?.type || "").includes("Task"),
+          );
+          sourceShape =
+            (taskNodes.length
+              ? taskNodes[taskNodes.length - 1]
+              : laneNodes[laneNodes.length - 1]) || null;
+        }
+      }
+      if (!sourceShape) {
+        console.warn("[Guide][CONNECT_END_HERE] sourceShape unresolved", {
+          payloadNodeId: payload?.nodeId || null,
+          payloadLaneId: payload?.laneId || null,
+          activeLaneId: activeLaneId || null,
+          selectedLaneId: selectedLane?.id || null,
+          lastEditedLaneId: lastEditedLaneId || null,
+        });
+        return;
+      }
       const processParent = getProcessParent(elementRegistry);
-      if (!processParent) return;
       const laneForSource = findLaneForNode(elementRegistry, sourceShape);
-      let endShape = elementRegistry
-        .getAll()
-        .find((el) => String(el?.businessObject?.$type || el?.type).includes("EndEvent"));
+      const createParent = laneForSource || processParent;
+      console.log("[Guide][CONNECT_END_HERE] resolved source/parents", {
+        sourceId: sourceShape?.id || null,
+        sourceType: sourceShape?.businessObject?.$type || sourceShape?.type || "",
+        sourceLaneId: laneForSource?.id || null,
+        processParentId: processParent?.id || null,
+        processParentType: processParent?.businessObject?.$type || processParent?.type || "",
+        createParentId: createParent?.id || null,
+        createParentType: createParent?.businessObject?.$type || createParent?.type || "",
+      });
+      if (!createParent) {
+        console.warn("[Guide][CONNECT_END_HERE] missing create parent");
+        return;
+      }
+      const laneNodes = laneForSource
+        ? collectLaneFlowNodes(laneForSource, elementRegistry)
+        : [];
+      let endShape = laneNodes.find((el) => isEndEvent(el)) || null;
       if (!endShape && elementFactory) {
         try {
           const endDef = elementFactory.createShape({ type: "bpmn:EndEvent" });
@@ -1584,31 +1691,29 @@ export default function LinearWizardPage() {
             x: sourceX + sourceW + 60,
             y: sourceY + sourceH / 2 - endH / 2,
           };
-          endShape = modeling.createShape(endDef, position, processParent);
+          console.log("[Guide][CONNECT_END_HERE] createShape input", {
+            position,
+            source: { id: sourceShape?.id || null, x: sourceX, y: sourceY, w: sourceW, h: sourceH },
+            endDef: { width: endW, height: endH },
+          });
+          endShape = modeling.createShape(endDef, position, createParent);
+          console.log("[Guide][CONNECT_END_HERE] createShape output", {
+            id: endShape?.id || null,
+            type: endShape?.businessObject?.$type || endShape?.type || "",
+            inRegistry: Boolean(endShape?.id ? elementRegistry.get(endShape.id) : null),
+          });
           if (laneForSource && endShape) {
             attachNodeToLane(laneForSource, endShape, modeling);
           }
-        } catch {
+        } catch (error) {
+          console.error("[Guide][CONNECT_END_HERE] createShape failed", error);
           endShape = null;
         }
       }
-      if (!endShape) return;
-      const outgoing = Array.isArray(sourceShape.outgoing) ? [...sourceShape.outgoing] : [];
-      outgoing.forEach((conn) => {
-        try {
-          modeling.removeConnection(conn);
-        } catch {
-          // ignore remove errors
-        }
-      });
-      const incoming = Array.isArray(endShape.incoming) ? [...endShape.incoming] : [];
-      incoming.forEach((conn) => {
-        try {
-          modeling.removeConnection(conn);
-        } catch {
-          // ignore remove errors
-        }
-      });
+      if (!endShape) {
+        console.warn("[Guide][CONNECT_END_HERE] endShape unresolved");
+        return;
+      }
       try {
         if (typeof modeling.moveShape === "function") {
           const sourceX = sourceShape.x || 0;
@@ -1621,17 +1726,29 @@ export default function LinearWizardPage() {
           const targetY = sourceY + sourceH / 2 - endH / 2;
           const dx = targetX - (endShape.x || 0);
           const dy = targetY - (endShape.y || 0);
-          modeling.moveShape(endShape, { x: dx, y: dy }, processParent);
+          console.log("[Guide][CONNECT_END_HERE] move endShape", { dx, dy, targetX, targetY });
+          modeling.moveShape(endShape, { x: dx, y: dy }, createParent);
           const label = endShape.label || elementRegistry.get(`${endShape.id}_label`);
           if (label) {
-            modeling.moveShape(label, { x: dx, y: dy }, processParent);
+            modeling.moveShape(label, { x: dx, y: dy }, createParent);
           }
         }
-        modeling.connect(sourceShape, endShape, { type: "bpmn:SequenceFlow" });
-      } catch {
-        // ignore connect errors
+        const alreadyLinked = Array.isArray(sourceShape.outgoing)
+          ? sourceShape.outgoing.some((conn) => conn?.target?.id === endShape.id)
+          : false;
+        if (!alreadyLinked) {
+          console.log("[Guide][CONNECT_END_HERE] connecting", {
+            sourceId: sourceShape?.id || null,
+            targetId: endShape?.id || null,
+          });
+          modeling.connect(sourceShape, endShape, { type: "bpmn:SequenceFlow" });
+          console.log("[Guide][CONNECT_END_HERE] connect success");
+        }
+      } catch (error) {
+        console.error("[Guide][CONNECT_END_HERE] move/connect failed", error);
       }
       setGuideState(null);
+      bumpModelVersion();
       window.setTimeout(() => {
         runGuideReview("end_added");
       }, 200);
@@ -1666,6 +1783,7 @@ export default function LinearWizardPage() {
         return next;
       });
       setHasUnsavedChanges(true);
+      bumpModelVersion();
       if (guideEnabled) {
         if (guidePatchTimerRef.current) {
           window.clearTimeout(guidePatchTimerRef.current);
@@ -1675,7 +1793,7 @@ export default function LinearWizardPage() {
         }, 500);
       }
     },
-    [guideEnabled, runGuideReview],
+    [guideEnabled, runGuideReview, bumpModelVersion],
   );
 
   useEffect(() => {
@@ -1692,6 +1810,13 @@ export default function LinearWizardPage() {
       runGuideReview("engine_change");
     }
   }, [guideEnabled, guideState, engineJson, runGuideReview]);
+
+  useEffect(() => {
+    if (!guideEnabled) return;
+    if (!engineJson) return;
+    if (modelVersion <= 0) return;
+    runGuideReview("model_change", activeLaneId || null);
+  }, [guideEnabled, engineJson, modelVersion, activeLaneId, runGuideReview]);
 
   const prevLaneOpenRef = useRef(laneOpen);
   const lastActiveLaneIdRef = useRef(null);
@@ -2337,7 +2462,118 @@ export default function LinearWizardPage() {
   );
 
   const handleDiagramChange = useCallback(
-    async (diagramXml) => {
+    async (diagramXmlOrEvent) => {
+      if (
+        diagramXmlOrEvent &&
+        typeof diagramXmlOrEvent === "object" &&
+        diagramXmlOrEvent.kind === "canvas_edit"
+      ) {
+        bumpModelVersion();
+        const modeler = modelerRef.current;
+        const elementRegistry = modeler?.get?.("elementRegistry");
+        if (!elementRegistry || !engineJson) return;
+
+        const laneElements = elementRegistry
+          .getAll()
+          .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("Lane"));
+
+        const laneMetas = laneElements
+          .map((el) => {
+            const engineId = String(el?.businessObject?.$attrs?.["data-engine-id"] || "").trim();
+            const boId = String(el?.businessObject?.id || "").trim();
+            const elementId = String(el?.id || "").trim();
+            const name = String(el?.businessObject?.name || "").trim();
+            const keys = [engineId, boId, elementId].filter(Boolean);
+            return {
+              keys,
+              name,
+              y: Number(el?.y || 0),
+            };
+          })
+          .sort((a, b) => a.y - b.y);
+
+        const findLaneMetaForModelLane = (lane) => {
+          const laneId = String(lane?.id || "").trim();
+          const laneName = String(lane?.name || "").trim();
+          let found = null;
+          if (laneId) {
+            found = laneMetas.find((meta) => meta.keys.includes(laneId)) || null;
+          }
+          if (!found && laneName) {
+            found = laneMetas.find((meta) => meta.name === laneName) || null;
+          }
+          return found;
+        };
+
+        const prevLanes = Array.isArray(engineJson?.lanes) ? engineJson.lanes : [];
+        let nextLanes = prevLanes
+          .map((lane) => {
+            const match = findLaneMetaForModelLane(lane);
+            if (!match) return null;
+            return {
+              ...lane,
+              name: match.name || lane.name || lane.id,
+            };
+          })
+          .filter(Boolean);
+
+        if (!nextLanes.length && laneMetas.length) {
+          nextLanes = laneMetas.map((meta, idx) => {
+            const fallbackId = meta.keys[0] || `lane_${idx + 1}`;
+            return {
+              id: fallbackId,
+              name: meta.name || fallbackId,
+            };
+          });
+        }
+
+        const laneIds = new Set(nextLanes.map((lane) => String(lane?.id || "")).filter(Boolean));
+        const activeLaneDeleted = activeLaneId && !laneIds.has(String(activeLaneId));
+        const selectedLaneDeleted = selectedLane?.id && !laneIds.has(String(selectedLane.id));
+        const lastEditedLaneDeleted = lastEditedLaneId && !laneIds.has(String(lastEditedLaneId));
+
+        if (activeLaneDeleted || selectedLaneDeleted) {
+          setLaneOpen(false);
+          setLaneInsertOpen(false);
+        }
+        if (activeLaneDeleted) {
+          setActiveLaneId(null);
+        }
+        if (selectedLaneDeleted) {
+          setSelectedLane(null);
+        }
+        if (lastEditedLaneDeleted) {
+          setLastEditedLaneId(null);
+        }
+
+        const lanesChanged =
+          nextLanes.length !== prevLanes.length ||
+          nextLanes.some((lane, idx) => {
+            const prev = prevLanes[idx];
+            return !prev || String(prev.id || "") !== String(lane.id || "") || String(prev.name || "") !== String(lane.name || "");
+          });
+
+        if (lanesChanged) {
+          setEngineJson((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              lanes: nextLanes,
+            };
+          });
+          setProcessCard((prev) => ({
+            ...prev,
+            generatorInput: {
+              ...prev.generatorInput,
+              roles: nextLanes.map((lane) => lane.name || lane.id).join("\n"),
+            },
+          }));
+          setHasUnsavedChanges(true);
+        }
+        return;
+      }
+
+      const diagramXml = typeof diagramXmlOrEvent === "string" ? diagramXmlOrEvent : "";
       pendingDiagramXmlRef.current = diagramXml;
       if (!diagramXml || !diagramXml.trim()) return;
       if (syncInFlightRef.current) return;
@@ -2381,7 +2617,15 @@ export default function LinearWizardPage() {
         }
       }
     },
-    [engineJson, pushHistorySnapshot, xml],
+    [
+      activeLaneId,
+      bumpModelVersion,
+      engineJson,
+      lastEditedLaneId,
+      pushHistorySnapshot,
+      selectedLane,
+      xml,
+    ],
   );
 
   const findLaneIndex = (laneRef, lanes) => {
@@ -2471,7 +2715,6 @@ export default function LinearWizardPage() {
       const xmlText = await renderEngineXml(generatedEngine);
       setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
-      runGuideReview("skeleton_generated");
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
       setError(message);
@@ -3195,19 +3438,40 @@ export default function LinearWizardPage() {
           attachNodeToLane,
         });
 
-      if (canPatchCanvas && applyEngineDiffToCanvas(currentEngine, updatedEngine, modeler)) {
+      const mapIncrementalReasonToMessage = (reason) => {
+        if (!reason) return "Nepodarilo sa pridať kroky bez prepočtu mapy.";
+        if (reason === "missing_process_parent") return "Chýba pool/proces pre vloženie krokov.";
+        if (reason === "missing_required_node") return "Niektorý krok v mape chýba (pravdepodobne bol zmazaný).";
+        if (reason === "connect_failed" || reason === "connect_exception") return "Prepojenie krokov zablokovali BPMN pravidlá.";
+        if (reason === "create_shape_failed" || reason === "create_shape_exception") return "Nepodarilo sa vytvoriť nové kroky v lane.";
+        if (reason === "missing_modeler_services") return "Editor mapy nie je pripravený.";
+        if (reason === "invalid_input") return "Neplatné dáta pre pridanie krokov.";
+        return `Nepodarilo sa pridať kroky (${reason}).`;
+      };
+
+      const incrementalResult = canPatchCanvas
+        ? applyEngineDiffToCanvas(currentEngine, updatedEngine, modeler)
+        : { ok: false, reason: "canvas_patch_unavailable", details: { canPatchCanvas } };
+
+      if (incrementalResult?.ok) {
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
         clearLanePreviewOverlays();
-        runGuideReview("lane_batch_created", selectedLane.id);
+        bumpModelVersion();
         setIsLoading(false);
         return;
       }
 
-      setError("Nepodarilo sa pridať kroky bez prepočtu mapy. Skús to ešte raz.");
+      console.error("[append-lane] incremental append failed (non-exception)", {
+        canPatchCanvas,
+        result: incrementalResult,
+      });
+      const errorMessage = mapIncrementalReasonToMessage(incrementalResult?.reason);
+      setError(errorMessage);
       return;
     } catch (e) {
+      console.error("[append-lane] incremental append failed (exception)", e);
       const message = e?.message || "Nepodarilo sa pridať aktivity do lane.";
       setError(message);
     } finally {
@@ -3244,6 +3508,15 @@ export default function LinearWizardPage() {
     try {
       if (!modelerRef.current?.saveXML) {
         throw new Error("Modeler nie je inicializovaný.");
+      }
+      if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_LAYOUT_STABILITY) {
+        // eslint-disable-next-line no-console
+        console.log("[layout-stability] save source", { source: "modeler.saveXML" });
+        // eslint-disable-next-line no-console
+        console.log(
+          "[layout-stability] before save samples",
+          sampleSequenceFlowWaypoints(modelerRef.current),
+        );
       }
       const { xml: diagramXml } = await modelerRef.current.saveXML({ format: true });
       const payload = {
@@ -3319,6 +3592,14 @@ export default function LinearWizardPage() {
     });
   }, []);
 
+  const handleXmlImported = useCallback(
+    (modeler) => {
+      restoreRelayoutContext(modeler);
+      bumpModelVersion();
+    },
+    [restoreRelayoutContext, bumpModelVersion],
+  );
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
@@ -3334,7 +3615,7 @@ export default function LinearWizardPage() {
       readOnly: modelSource?.kind === "org" && orgReadOnly,
       onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
       onLaneOrderChange: reorderLanesByNames,
-      onDiagramChange: undefined,
+      onDiagramChange: handleDiagramChange,
       onUndo: handleUndo,
       canUndo: historyCount > 0,
       onSave: handleSaveModel,
@@ -3343,7 +3624,7 @@ export default function LinearWizardPage() {
       saveLabel: saveLoading ? "Ukladám..." : "Uložiť",
       onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
-      onXmlImported: restoreRelayoutContext,
+      onXmlImported: handleXmlImported,
       overlayMessage: relayouting ? "Zarovnávam layout…" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
@@ -3363,7 +3644,7 @@ export default function LinearWizardPage() {
       insertLaneBlock,
       saveLoading,
       relayouting,
-      restoreRelayoutContext,
+      handleXmlImported,
       xml,
       modelSource,
       orgReadOnly,
@@ -5564,12 +5845,16 @@ export default function LinearWizardPage() {
                             <button
                               className="btn btn--small"
                               type="button"
-                              onClick={() =>
+                              onClick={() => {
+                                console.log("[Guide] tertiary click", {
+                                  action: guideState?.tertiary?.action,
+                                  payload: guideState?.tertiary?.payload || null,
+                                });
                                 handleGuideAction(
                                   guideState.tertiary.action,
                                   guideState.tertiary.payload,
-                                )
-                              }
+                                );
+                              }}
                             >
                               {guideState.tertiary.label}
                             </button>
@@ -6056,20 +6341,24 @@ export default function LinearWizardPage() {
                       {guideState.secondary.label}
                     </button>
                   ) : null}
-                  {guideState?.tertiary ? (
-                    <button
-                      className="btn btn--small"
-                      type="button"
-                      onClick={() =>
-                        handleGuideAction(
-                          guideState.tertiary.action,
-                          guideState.tertiary.payload,
-                        )
-                      }
-                    >
-                      {guideState.tertiary.label}
-                    </button>
-                  ) : null}
+                    {guideState?.tertiary ? (
+                      <button
+                        className="btn btn--small"
+                        type="button"
+                        onClick={() => {
+                          console.log("[Guide] tertiary click", {
+                            action: guideState?.tertiary?.action,
+                            payload: guideState?.tertiary?.payload || null,
+                          });
+                          handleGuideAction(
+                            guideState.tertiary.action,
+                            guideState.tertiary.payload,
+                          );
+                        }}
+                      >
+                        {guideState.tertiary.label}
+                      </button>
+                    ) : null}
                 </div>
               </div>
             ) : null}

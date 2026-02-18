@@ -14,12 +14,27 @@ export function applyIncrementalAppend({
   getLaneCenterMidY,
   attachNodeToLane,
 }) {
-  if (!prevEngine || !nextEngine || !modeler || !xml) return false;
+  const fail = (reason, details = null) => ({ ok: false, reason, details });
+  const ok = (details = null) => ({ ok: true, details });
+  if (!prevEngine || !nextEngine || !modeler || !xml) {
+    return fail("invalid_input", {
+      hasPrevEngine: Boolean(prevEngine),
+      hasNextEngine: Boolean(nextEngine),
+      hasModeler: Boolean(modeler),
+      hasXml: Boolean(xml),
+    });
+  }
   const elementRegistry = modeler.get("elementRegistry");
   const modeling = modeler.get("modeling");
   const elementFactory = modeler.get("elementFactory");
   const canvas = modeler.get("canvas");
-  if (!elementRegistry || !modeling || !elementFactory) return false;
+  if (!elementRegistry || !modeling || !elementFactory) {
+    return fail("missing_modeler_services", {
+      hasElementRegistry: Boolean(elementRegistry),
+      hasModeling: Boolean(modeling),
+      hasElementFactory: Boolean(elementFactory),
+    });
+  }
   const routeFlow = modeler.__routeFlow;
 
   const prevNodes = Array.isArray(prevEngine.nodes) ? prevEngine.nodes : [];
@@ -33,10 +48,11 @@ export function applyIncrementalAppend({
   const newNodes = nextNodes.filter((n) => n?.id && !prevNodeIds.has(String(n.id)));
   const newFlows = nextFlows.filter((f) => f?.id && !prevFlowIds.has(String(f.id)));
 
-  if (!newNodes.length && !newFlows.length) return true;
+  if (!newNodes.length && !newFlows.length) return ok({ reason: "no_changes" });
 
   const allElements = elementRegistry.getAll();
   const getEngineIdAttr = (el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "");
+  const getBoType = (el) => String(el?.businessObject?.$type || el?.type || "");
 
   const findElementByEngineId = (engineId) => {
     if (!engineId) return null;
@@ -70,10 +86,75 @@ export function applyIncrementalAppend({
     );
   };
 
-  const findProcessParent = () =>
-    allElements.find((el) => Array.isArray(el?.businessObject?.flowElements)) || null;
-  const processParent = findProcessParent();
-  const rootParent = typeof canvas?.getRootElement === "function" ? canvas.getRootElement() : null;
+  const resolveProcessContext = () => {
+    const rootEl = typeof canvas?.getRootElement === "function" ? canvas.getRootElement() : null;
+    const rootType = getBoType(rootEl);
+    let participantEl = null;
+    let processBo = null;
+
+    if (rootType.includes("Collaboration")) {
+      participantEl =
+        elementRegistry
+          .getAll()
+          .find((el) => getBoType(el).includes("Participant")) || null;
+      processBo = participantEl?.businessObject?.processRef || null;
+    } else if (rootType.includes("Process")) {
+      processBo = rootEl?.businessObject || null;
+    } else {
+      participantEl =
+        elementRegistry
+          .getAll()
+          .find((el) => getBoType(el).includes("Participant")) || null;
+      processBo = participantEl?.businessObject?.processRef || null;
+    }
+
+    if (!processBo && participantEl) {
+      try {
+        const moddle = modeler.get("moddle");
+        const definitions = participantEl?.businessObject?.$parent || rootEl?.businessObject?.$parent || null;
+        if (moddle?.create && definitions) {
+          const processId = `Process_${Date.now()}`;
+          const createdProcess = moddle.create("bpmn:Process", { id: processId });
+          if (Array.isArray(definitions.rootElements)) {
+            definitions.rootElements.push(createdProcess);
+          } else {
+            definitions.rootElements = [createdProcess];
+          }
+          participantEl.businessObject.processRef = createdProcess;
+          processBo = createdProcess;
+        }
+      } catch {
+        // fallback to failure payload below
+      }
+    }
+
+    if (!processBo) {
+      return fail("missing_process_parent", {
+        rootType,
+        hasRootEl: Boolean(rootEl),
+        participantFound: Boolean(participantEl),
+        processRefFound: Boolean(participantEl?.businessObject?.processRef),
+      });
+    }
+
+    if (!Array.isArray(processBo.flowElements)) {
+      processBo.flowElements = [];
+    }
+
+    return {
+      ok: true,
+      rootEl,
+      rootType,
+      participantEl,
+      processBo,
+    };
+  };
+
+  const processContext = resolveProcessContext();
+  if (!processContext?.ok) {
+    return processContext;
+  }
+  const { rootEl, participantEl } = processContext;
 
   const computeLaneRightmost = (laneEl) => {
     const nodes = allElements.filter((el) => isFlowNode(el) && isInLane(el, laneEl));
@@ -136,7 +217,9 @@ export function applyIncrementalAppend({
 
   const createdByEngineId = new Map();
   const createdConnections = [];
-  let hasNodeError = false;
+  let nodeFailure = null;
+  let flowFailure = null;
+  let missingLaneWarned = false;
   const nodeOrder = new Map(
     nextNodes
       .map((n, idx) => [String(n?.id || ""), idx])
@@ -276,6 +359,9 @@ export function applyIncrementalAppend({
     const sourceEl = incomingFlow ? findElementByEngineId(incomingFlow.source) : null;
     const laneId = node?.laneId ? String(node.laneId) : null;
     const laneEl = laneId ? laneById.get(laneId) : null;
+    const laneStillExists = laneEl?.id ? elementRegistry.get(laneEl.id) : null;
+    const laneForPlacement = laneStillExists || null;
+    const laneMissing = Boolean(laneId) && !laneForPlacement;
 
     const bpmnType = toBpmnType(node);
     const shapeProps = { type: bpmnType, id: node.id };
@@ -291,8 +377,26 @@ export function applyIncrementalAppend({
     }
 
     try {
-      const parent = laneEl?.parent || processParent || rootParent || sourceEl?.parent || null;
-      if (!parent) throw new Error("missing-parent");
+      if (laneMissing && !missingLaneWarned) {
+        console.warn("[incrementalAppend] lane not found -> skipping lane assignment, creating in process", {
+          laneId,
+        });
+        missingLaneWarned = true;
+      }
+      const visualParent = laneForPlacement || participantEl || rootEl;
+      if (!visualParent) {
+        nodeFailure = {
+          reason: "missing_process_parent",
+          details: {
+            nodeId: node?.id || null,
+            laneId: laneId || null,
+            rootType: processContext?.rootType || "",
+            participantFound: Boolean(participantEl),
+            processRefFound: Boolean(processContext?.processBo),
+          },
+        };
+        return;
+      }
       let x = null;
       let y = null;
       let isAltBranch = false;
@@ -328,17 +432,17 @@ export function applyIncrementalAppend({
         }
       }
 
-      if (laneEl) {
-        const laneKey = laneId || String(laneEl.id);
-        const cursorX = getLaneCursor(laneKey, laneEl);
+      if (laneForPlacement) {
+        const laneKey = laneId || String(laneForPlacement.id);
+        const cursorX = getLaneCursor(laneKey, laneForPlacement);
         if (!forceBranchColumn) {
           const desiredX = x ?? cursorX;
           x = desiredX < cursorX ? cursorX : desiredX;
         }
-        const laneTop = laneEl.y;
-        const laneBottom = laneEl.y + laneEl.height - (shape.height || 80);
-        const baselineMidY = getBaselineMidY(laneEl);
-        const branchMidY = getBranchMidY(laneEl, shape.height || 80);
+        const laneTop = laneForPlacement.y;
+        const laneBottom = laneForPlacement.y + laneForPlacement.height - (shape.height || 80);
+        const baselineMidY = getBaselineMidY(laneForPlacement);
+        const branchMidY = getBranchMidY(laneForPlacement, shape.height || 80);
         const targetMidY = isAltBranch ? branchMidY : baselineMidY;
         y = Math.min(laneBottom, Math.max(laneTop, targetMidY - (shape.height || 80) / 2));
         const nextCursor = Math.max(cursorX, x + (shape.width || 100) + H_GAP);
@@ -348,7 +452,14 @@ export function applyIncrementalAppend({
         y = y ?? 120;
       }
 
-      const created = modeling.createShape(shape, { x, y }, parent);
+      const created = modeling.createShape(shape, { x, y }, visualParent);
+      if (!created) {
+        nodeFailure = {
+          reason: "create_shape_failed",
+          details: { nodeId: node?.id || null, laneId: laneId || null, type: bpmnType },
+        };
+        return;
+      }
       if (created?.businessObject) {
         const attrs = ensureAttrs(created.businessObject);
         if (attrs) attrs["data-engine-id"] = String(node.id);
@@ -358,8 +469,16 @@ export function applyIncrementalAppend({
       }
       if (created) {
         createdByEngineId.set(String(node.id), created);
-        if (laneEl) {
-          attachNodeToLane(laneEl, created, modeling);
+        if (laneForPlacement) {
+          try {
+            attachNodeToLane(laneForPlacement, created, modeling);
+          } catch (error) {
+            console.warn("[incrementalAppend] attachNodeToLane failed", {
+              laneId: laneForPlacement?.id || null,
+              nodeId: node?.id || null,
+              error,
+            });
+          }
         }
         const createdType = String(created.businessObject?.$type || created.type || "");
         if (createdType.includes("StartEvent") || createdType.includes("EndEvent")) {
@@ -368,23 +487,49 @@ export function applyIncrementalAppend({
           positionGatewayLabel(created);
         }
       }
-    } catch {
-      hasNodeError = true;
+    } catch (error) {
+      nodeFailure = {
+        reason: "create_shape_exception",
+        details: { nodeId: node?.id || null, laneId: laneId || null, error: String(error?.message || error) },
+      };
     }
   });
 
-  if (hasNodeError) return false;
+  if (nodeFailure) return fail(nodeFailure.reason, nodeFailure.details);
 
-  newFlows.forEach((flow) => {
+  for (const flow of newFlows) {
     const source = createdByEngineId.get(String(flow.source)) || findElementByEngineId(flow.source);
     const target = createdByEngineId.get(String(flow.target)) || findElementByEngineId(flow.target);
-    if (!source || !target) return;
+    if (!source || !target) {
+      flowFailure = {
+        reason: "missing_required_node",
+        details: {
+          flowId: flow?.id || null,
+          sourceId: flow?.source || null,
+          targetId: flow?.target || null,
+          hasSource: Boolean(source),
+          hasTarget: Boolean(target),
+        },
+      };
+      break;
+    }
     const already = Array.isArray(source.outgoing)
       ? source.outgoing.some((c) => c?.target?.id === target.id)
       : false;
-    if (already) return;
+    if (already) continue;
     try {
       const connection = modeling.connect(source, target, { type: "bpmn:SequenceFlow" });
+      if (!connection) {
+        flowFailure = {
+          reason: "connect_failed",
+          details: {
+            flowId: flow?.id || null,
+            sourceId: source?.id || null,
+            targetId: target?.id || null,
+          },
+        };
+        break;
+      }
       if (connection?.businessObject) {
         const attrs = ensureAttrs(connection.businessObject);
         if (attrs) attrs["data-engine-id"] = String(flow.id);
@@ -401,10 +546,21 @@ export function applyIncrementalAppend({
         }
         createdConnections.push(connection);
       }
-    } catch {
-      // ignore connect errors
+    } catch (error) {
+      flowFailure = {
+        reason: "connect_exception",
+        details: {
+          flowId: flow?.id || null,
+          sourceId: source?.id || null,
+          targetId: target?.id || null,
+          error: String(error?.message || error),
+        },
+      };
+      break;
     }
-  });
+  }
+
+  if (flowFailure) return fail(flowFailure.reason, flowFailure.details);
 
   const newNodeIds = new Set(newNodes.map((n) => String(n?.id || "")).filter(Boolean));
   const newNodesByLane = new Map();
@@ -542,8 +698,8 @@ export function applyIncrementalAppend({
       (commonSuccessor.x || 0) - GATEWAY_MERGE_RUNWAY,
     );
     const mergeY = baselineMidY - mergeSize / 2;
-    const parent = gatewayEl.parent || processParent || rootParent;
-    if (!parent) return;
+    const visualParent = laneEl || participantEl || rootEl;
+    if (!visualParent) return;
 
     let mergeGateway = null;
     try {
@@ -552,7 +708,7 @@ export function applyIncrementalAppend({
         width: mergeSize,
         height: mergeSize,
       });
-      mergeGateway = modeling.createShape(mergeShape, { x: mergeX, y: mergeY }, parent);
+      mergeGateway = modeling.createShape(mergeShape, { x: mergeX, y: mergeY }, visualParent);
       if (laneEl && mergeGateway) {
         attachNodeToLane(laneEl, mergeGateway, modeling);
       }
@@ -651,5 +807,8 @@ export function applyIncrementalAppend({
     });
   }
 
-  return true;
+  return ok({
+    createdNodes: createdByEngineId.size,
+    createdConnections: createdConnections.length,
+  });
 }

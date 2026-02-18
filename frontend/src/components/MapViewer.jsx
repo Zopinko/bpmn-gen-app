@@ -70,6 +70,21 @@ export default function MapViewer({
   const laneDragStartMapRef = useRef(new Map());
   const nameCacheRef = useRef(new Map());
   const laneCacheRef = useRef(new Map());
+  const sampleSequenceFlowWaypoints = (registry, limit = 5) => {
+    if (!registry?.getAll) return [];
+    return registry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow"))
+      .slice(0, limit)
+      .map((conn) => ({
+        id: conn?.id || null,
+        name: conn?.businessObject?.name || "",
+        waypoints: (conn?.waypoints || []).map((pt) => ({
+          x: Number(pt?.x || 0),
+          y: Number(pt?.y || 0),
+        })),
+      }));
+  };
 
   const emitEnginePatch = (patch) => {
     if (typeof onEngineJsonPatch !== "function") return;
@@ -342,6 +357,7 @@ export default function MapViewer({
 
     modeler.__routeFlow = routeFlow;
     modeler.__connectWithRouting = connectWithRouting;
+    modeler.__rerouteConnection = rerouteConnection;
 
     if (readOnly) {
       const commandStack = modeler.get("commandStack", false);
@@ -928,24 +944,25 @@ export default function MapViewer({
       emitLaneOrder();
     };
 
-    const handleDiagramChanged = () => {
+    const emitCanvasEdit = (reason) => {
       if (skipDiagramChangeRef.current) return;
       const handler = diagramChangeRef.current;
       if (typeof handler !== "function") return;
-      if (!modelerRef.current?.saveXML) return;
-    if (changeTimerRef.current) {
-      clearTimeout(changeTimerRef.current);
-    }
-    changeTimerRef.current = setTimeout(async () => {
-      try {
-        const { xml: currentXml } = await modelerRef.current.saveXML({ format: true });
-        lastSavedXmlRef.current = currentXml || "";
-        handler(currentXml);
-      } catch {
-        // ignore sync errors from temporary model states
+      handler({
+        kind: "canvas_edit",
+        ts: Date.now(),
+        reason,
+      });
+    };
+
+    const handleDiagramChanged = () => {
+      if (changeTimerRef.current) {
+        clearTimeout(changeTimerRef.current);
       }
-    }, 400);
-  };
+      changeTimerRef.current = setTimeout(() => {
+        emitCanvasEdit("command_stack_changed");
+      }, 120);
+    };
 
     const handleViewboxChanged = (event) => {
       if (event?.viewbox) {
@@ -989,6 +1006,7 @@ export default function MapViewer({
       nameCacheRef.current.delete(String(id));
       laneCacheRef.current.delete(String(id));
       emitEnginePatch({ type: "REMOVE_NODE", id });
+      emitCanvasEdit("shape_removed");
     };
 
     const handleConnectionAdded = (event) => {
@@ -1034,6 +1052,7 @@ export default function MapViewer({
         if (prevName === nextName) return;
         nameCacheRef.current.set(cacheKey, nextName);
         emitEnginePatch({ type: "RENAME_FLOW", id, name: nextName });
+        emitCanvasEdit("element_changed");
         return;
       }
       const nodeType = mapNodeType(boType);
@@ -1048,6 +1067,7 @@ export default function MapViewer({
       nameCacheRef.current.set(cacheKey, nextName);
       if (isLane) {
         emitEnginePatch({ type: "RENAME_LANE", id, name: nextName });
+        emitCanvasEdit("element_changed");
         return;
       }
       const nextLaneId = findLaneEngineId(element, elementRegistry);
@@ -1057,6 +1077,7 @@ export default function MapViewer({
         emitEnginePatch({ type: "UPDATE_NODE_LANE", id, laneId: nextLaneId });
       }
       emitEnginePatch({ type: "RENAME_NODE", id, name: nextName });
+      emitCanvasEdit("element_changed");
     };
 
     if (eventBus) {
@@ -1136,6 +1157,7 @@ export default function MapViewer({
       clearContextPad();
       stopGhostStyling();
       hideLaneHandles();
+      modeler.__rerouteConnection = null;
       if (changeTimerRef.current) {
         clearTimeout(changeTimerRef.current);
         changeTimerRef.current = null;
@@ -1219,12 +1241,33 @@ export default function MapViewer({
         const overlays = modeler.get("overlays");
         const elementRegistry = modeler.get("elementRegistry");
         if (!overlays || !elementRegistry) return;
+        const debugLayoutStability =
+          typeof window !== "undefined" && Boolean(window.__BPMNGEN_DEBUG_LAYOUT_STABILITY);
+        const shouldRerouteOnImport =
+          typeof window !== "undefined" && Boolean(window.__BPMNGEN_REROUTE_ON_IMPORT);
+        if (debugLayoutStability) {
+          // eslint-disable-next-line no-console
+          console.log("[layout-stability] importXML loaded samples", sampleSequenceFlowWaypoints(elementRegistry));
+        }
 
-        // Normalize existing sequence flows to center-based routing after full import.
-        elementRegistry
-          .getAll()
-          .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow"))
-          .forEach((conn) => rerouteConnection(conn));
+        // Keep import geometry stable by default. Enable reroute explicitly only when needed.
+        if (shouldRerouteOnImport) {
+          // eslint-disable-next-line no-console
+          console.warn("[layout] reroute on import enabled; will modify saved geometry");
+          const rerouteConnection = modeler.__rerouteConnection;
+          elementRegistry
+            .getAll()
+            .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow"))
+            .forEach((conn) => {
+              if (typeof rerouteConnection === "function") {
+                rerouteConnection(conn);
+              }
+            });
+          if (debugLayoutStability) {
+            // eslint-disable-next-line no-console
+            console.log("[layout-stability] importXML after reroute samples", sampleSequenceFlowWaypoints(elementRegistry));
+          }
+        }
 
         nameCacheRef.current.clear();
         laneCacheRef.current.clear();
