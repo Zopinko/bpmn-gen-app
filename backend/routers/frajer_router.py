@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from schemas.frajer_schemas import FrajerRequest, FrajerResponse
 from services.architect.normalize import (
@@ -15,30 +15,8 @@ from services.architect.normalize import (
 from services.bpmn_svc import generate_bpmn_from_json
 from services.frajer_kb_engine import FrajerKB
 from services.frajer_services import draft_engine_json_from_text
-from services.frajer_ai import FrajerAIService, FrajerAIServiceError
 
 router = APIRouter(prefix="/frajer", tags=["Frajer"])
-_frajer_ai_service = FrajerAIService()
-
-
-class FrajerAIGenerateRequest(BaseModel):
-    text: str
-    language: Literal["sk", "en"] = "sk"
-
-
-class FrajerAIGenerateResponse(BaseModel):
-    engine_json: Dict[str, Any]
-    meta: Dict[str, Any]
-
-
-class FrajerAIStatusResponse(BaseModel):
-    ok: bool
-    provider: str
-    model: Optional[str] = None
-    api_key_present: bool = False
-    duration_ms: Optional[int] = None
-    error: Optional[str] = None
-    details: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PreviewEngineRequest(BaseModel):
@@ -64,30 +42,6 @@ def frajer_message(request: FrajerRequest) -> FrajerResponse:
     ej = _normalize_node_names(ej)
     engine_json = postprocess_engine_json(ej, locale="sk")
     return FrajerResponse(engine_json=engine_json)
-
-
-@router.post("/ai-generate", response_model=FrajerAIGenerateResponse)
-def frajer_ai_generate(payload: FrajerAIGenerateRequest) -> FrajerAIGenerateResponse:
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Text must not be empty.")
-    language = (payload.language or "sk").strip().lower() or "sk"
-    try:
-        engine_json, meta = _frajer_ai_service.generate(text=text, language=language)
-    except FrajerAIServiceError as exc:
-        detail: Any
-        if exc.warnings:
-            detail = {"message": str(exc), "warnings": exc.warnings}
-        else:
-            detail = str(exc)
-        raise HTTPException(status_code=exc.status_code, detail=detail)
-    return FrajerAIGenerateResponse(engine_json=engine_json, meta=meta)
-
-
-@router.get("/ai-status", response_model=FrajerAIStatusResponse)
-def frajer_ai_status() -> FrajerAIStatusResponse:
-    status = _frajer_ai_service.status()
-    return FrajerAIStatusResponse(**status)
 
 
 # ---------------- helpers ----------------

@@ -9,7 +9,6 @@ from routers.auth_router import router as auth_router
 from routers.generate_router import router as generate_router
 from routers.org_model_router import router as org_model_router
 from routers.orgs_router import router as orgs_router
-from routers.nl_router import router as nl_router
 from routers.frajer_router import router as frajer_router
 from routers.mentor_router import router as mentor_router
 from routers.telemetry_router import router as telemetry_router
@@ -35,7 +34,6 @@ def create_app() -> FastAPI:
     app.include_router(orgs_router)
     app.include_router(org_model_router)
     app.include_router(generate_router)
-    app.include_router(nl_router)
     app.include_router(frajer_router)
     app.include_router(mentor_router)
     app.include_router(telemetry_router)

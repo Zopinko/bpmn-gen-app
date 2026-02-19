@@ -17,10 +17,7 @@ try:
     from services.project_notes_storage import load_project_notes, save_project_notes
 except ModuleNotFoundError:
     from backend.services.project_notes_storage import load_project_notes, save_project_notes
-from schemas.nl import NLProcess
-from routers.nl_router import simple_to_engine
 from schemas.engine import validate_payload, validate_xml
-from services.architect.normalize import normalize_engine_payload
 from services.engine_normalizer import find_gateway_warnings
 from schemas.wizard import (
     LaneAppendRequest,
@@ -310,41 +307,25 @@ async def reflow_layout(payload: dict = Body(...)):
 @router.post("/autogenerate")
 async def autogenerate(payload: dict = Body(...)):
     """
-    Komfortný endpoint:
-    - prijme celé NLResponse (ako ho vráti /nl/message)
-    - automaticky si vyberie engine_json alebo simple_json
-    - vygeneruje BPMN XML a vráti ho ako download
+    Convenience endpoint:
+    - expects payload with engine_json
+    - generates BPMN XML and returns it as download
     """
-
-    engine = None
-
-    # 1) Ak je v payload engine_json, použijeme ho priamo
-    if isinstance(payload.get("engine_json"), dict):
-        engine = payload["engine_json"]
-
-    # 2) Ak je len simple_json, prekonvertujeme
-    elif isinstance(payload.get("simple_json"), dict):
-        simple_obj = NLProcess.model_validate(payload["simple_json"])
-        engine = simple_to_engine(simple_obj)
-
-    # 3) Ak nemáme nič, error
+    engine = payload.get("engine_json") if isinstance(payload, dict) else None
     if not isinstance(engine, dict):
         raise HTTPException(
             status_code=400,
-            detail="Payload musí obsahovať engine_json alebo simple_json (object).",
+            detail="Payload musi obsahovat engine_json (object).",
         )
 
-    # 4) Normalizácia (auto processId + aliasy node typov)
     engine = normalize_engine_payload(engine)
 
-    # Optional: warn ak gateway nemá prítok/odtok
     for w in find_gateway_warnings(engine.get("nodes", []), engine.get("flows", [])):
         try:
             logger.warning(w)
         except NameError:
             print(f"[GW-WARN] {w}")
 
-    # 5) Validácia + BPMN generovanie
     validate_payload(engine)
     try:
         xml = generate_bpmn_from_json(engine)
