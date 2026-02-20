@@ -208,6 +208,7 @@ const LANE_TEMPLATES = [
     text:
       "Prijmem žiadosť\n" +
       "Overím identitu\n" +
+      "Paralelne: overím bonitu; skontrolujem register dlžníkov; pripravím návrh podmienok\n" +
       "Ak identita nie je platná tak zamietnem žiadosť, inak pokračujem v spracovaní\n" +
       "Spracujem žiadosť\n" +
       "Oznámim výsledok žiadateľovi",
@@ -251,6 +252,15 @@ const LANE_TEMPLATES = [
       "Ak chýbajú podklady tak vyžiadam doplnenie, inak pokračujem\n" +
       "Zabezpečím školenie\n" +
       "Potvrdím nástup",
+  },
+  {
+    id: "parallel_only_basic",
+    label: "Paralelný blok",
+    text:
+      "Prijmem podnet\n" +
+      "Paralelne: skontrolujem dokumenty; overím údaje; pripravím návrh riešenia\n" +
+      "Zlúčim výsledky paralelných krokov\n" +
+      "Ukončím spracovanie",
   },
 ];
 
@@ -3369,9 +3379,7 @@ export default function LinearWizardPage() {
     const selection = modeler.get("selection");
     const canvas = modeler.get("canvas");
     const laneElement = elementRegistry?.get(selectedLane.id);
-    const processParent = getProcessParent(elementRegistry);
-
-    if (!laneElement || !modeling || !elementFactory || !processParent) {
+    if (!laneElement || !modeling || !elementFactory) {
       setError("Lane sa nepodarilo najst.");
       return;
     }
@@ -3428,10 +3436,10 @@ export default function LinearWizardPage() {
     const joinX = taskX + taskSize.width + gapX;
     const joinY = base.y;
 
-    const createdSplit = modeling.createShape(splitShape, splitPos, processParent);
-    const createdTaskA = modeling.createShape(taskA, { x: taskX, y: taskATop }, processParent);
-    const createdTaskB = modeling.createShape(taskB, { x: taskX, y: taskBTop }, processParent);
-    const createdJoin = modeling.createShape(joinShape, { x: joinX, y: joinY }, processParent);
+    const createdSplit = modeling.createShape(splitShape, splitPos, laneElement);
+    const createdTaskA = modeling.createShape(taskA, { x: taskX, y: taskATop }, laneElement);
+    const createdTaskB = modeling.createShape(taskB, { x: taskX, y: taskBTop }, laneElement);
+    const createdJoin = modeling.createShape(joinShape, { x: joinX, y: joinY }, laneElement);
 
     attachNodeToLane(laneElement, createdSplit, modeling);
     attachNodeToLane(laneElement, createdTaskA, modeling);
@@ -3456,6 +3464,7 @@ export default function LinearWizardPage() {
         // ignore label update errors
       }
     }
+    fitLaneHeightAfterInsert(laneElement, modeler, modeling);
 
     selection?.select(createdJoin);
     if (typeof canvas?.scrollToElement === "function") {
@@ -3465,6 +3474,87 @@ export default function LinearWizardPage() {
     scheduleRelayoutKick("insert_block", 150);
 
     setError(null);
+  };
+  const fitLaneHeightAfterInsert = (laneElement, modeler, modeling) => {
+    if (!laneElement?.id || !modeler || !modeling) return;
+    const PADDING_BOTTOM = 100;
+    const EXTRA_MARGIN = 10;
+    const MIN_LANE_HEIGHT = 220;
+    const elementRegistry = modeler.get("elementRegistry");
+    if (!elementRegistry) return;
+    const currentLane = elementRegistry.get(laneElement.id);
+    if (!currentLane) return;
+    const oldTop = Number(currentLane.y || 0);
+    const oldHeight = Number(currentLane.height || 0);
+    const oldBottom = oldTop + oldHeight;
+    const laneLeft = Number(currentLane.x || 0);
+    const laneRight = laneLeft + Number(currentLane.width || 0);
+    const laneNodes = elementRegistry
+      .getAll()
+      .filter((el) => {
+        if (!el || el.type === "label") return false;
+        const bo = el.businessObject;
+        if (!bo?.$instanceOf?.("bpmn:FlowNode")) return false;
+        const cx = Number(el.x || 0) + Number(el.width || 0) / 2;
+        const cy = Number(el.y || 0) + Number(el.height || 0) / 2;
+        return cx >= laneLeft && cx <= laneRight && cy >= oldTop && cy <= oldBottom;
+      });
+    if (!laneNodes.length) return;
+    const maxBottomRaw = laneNodes.reduce(
+      (maxY, el) => Math.max(maxY, Number(el.y || 0) + Number(el.height || 0)),
+      oldBottom,
+    );
+    const maxBottom = maxBottomRaw + EXTRA_MARGIN;
+    const computedHeight = Math.ceil((maxBottom - oldTop) + PADDING_BOTTOM);
+    const neededHeight = Math.max(MIN_LANE_HEIGHT, computedHeight);
+    if (neededHeight <= oldHeight + 1) return;
+    const deltaY = neededHeight - oldHeight;
+    try {
+      if (typeof modeling.resizeShape === "function") {
+        modeling.resizeShape(currentLane, {
+          x: Number(currentLane.x || 0),
+          y: oldTop,
+          width: Number(currentLane.width || 0),
+          height: neededHeight,
+        });
+      } else {
+        modeling.updateProperties(currentLane, { height: neededHeight });
+      }
+    } catch {
+      return;
+    }
+    const refreshedLane = elementRegistry.get(currentLane.id) || currentLane;
+    const allLanes = elementRegistry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("Lane"));
+    const lanesBelow = allLanes
+      .filter((ln) => ln.id !== refreshedLane.id && Number(ln.y || 0) >= oldBottom - 1)
+      .sort((a, b) => Number(a.y || 0) - Number(b.y || 0));
+    lanesBelow.forEach((ln) => {
+      try {
+        if (typeof modeling.moveShape === "function") {
+          modeling.moveShape(ln, { x: 0, y: deltaY }, ln.parent || refreshedLane.parent);
+        }
+      } catch {
+        // ignore lane shift errors
+      }
+    });
+    const container = refreshedLane.parent || null;
+    if (!container) return;
+    const cX = Number(container.x || 0);
+    const cY = Number(container.y || 0);
+    const cW = Number(container.width || 0);
+    const cH = Number(container.height || 0);
+    if (!(cW > 0 && cH > 0)) return;
+    try {
+      if (typeof modeling.resizeShape === "function") {
+        modeling.resizeShape(container, { x: cX, y: cY, width: cW, height: cH + deltaY });
+      } else {
+        modeling.updateProperties(container, { height: cH + deltaY });
+      }
+    } catch {
+      // ignore container resize errors
+    }
   };
 
   const isReadOnlyMode = modelSource?.kind === "org" && orgReadOnly;

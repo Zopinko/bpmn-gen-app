@@ -259,12 +259,18 @@ export function applyIncrementalAppend({
       .filter(([id]) => Boolean(id)),
   );
   const H_GAP = 90;
+  const PARALLEL_DX = 170;
+  const PARALLEL_BRANCH_GAP = 95;
+  const XOR_BRANCH_GAP = 110;
+  const PAD_Y = 40;
   const TASK_TO_TASK_GAP = 90;
   const GATEWAY_TO_TASK_GAP = 110;
-  const GATEWAY_BRANCH_GAP_X = 120;
-  const GATEWAY_MERGE_MIN_GAP = 75;
-  const GATEWAY_MERGE_RUNWAY = 120;
   const BRANCH_OFFSET = 120;
+  const LANE_BOTTOM_PADDING_DEFAULT = 50;
+  const BOTTOM_MARGIN_XOR = 40;
+  const BOTTOM_MARGIN_AND = 70;
+  const LANE_EXTRA_MARGIN = 10;
+  const MIN_LANE_HEIGHT = 220;
   const laneCursorById = new Map();
   const getBaselineMidY = (laneEl) => {
     if (!laneEl) return 0;
@@ -275,7 +281,7 @@ export function applyIncrementalAppend({
   const getBranchMidY = (laneEl, nodeHeight) => {
     const baselineMidY = getBaselineMidY(laneEl);
     const maxOffset = laneEl.y + laneEl.height - baselineMidY - nodeHeight / 2;
-    const effectiveBranchOffset = Math.max(0, Math.min(BRANCH_OFFSET, maxOffset));
+    const effectiveBranchOffset = Math.max(0, Math.min(PARALLEL_BRANCH_GAP, maxOffset));
     return baselineMidY + effectiveBranchOffset;
   };
   const getElementLane = (el) => {
@@ -321,7 +327,67 @@ export function applyIncrementalAppend({
     }
 
     const isExclusiveGateway = srcType.includes("ExclusiveGateway");
+    const isParallelGateway = srcType.includes("ParallelGateway");
+    if (isParallelGateway) {
+      const srcAttrs = source?.businessObject?.$attrs || {};
+      const tgtAttrs = target?.businessObject?.$attrs || {};
+      const parallelSplitId = String(srcAttrs["data-parallel-split-id"] || source?.id || "");
+      const targetSplitId = String(tgtAttrs["data-parallel-split-id"] || "");
+      const targetJoinSplitId = String(tgtAttrs["data-parallel-join-id"] || "");
+      const isSplitToBranch = Boolean(targetSplitId && parallelSplitId && targetSplitId === parallelSplitId);
+      const isBranchToJoin = Boolean(targetJoinSplitId && parallelSplitId && targetJoinSplitId === parallelSplitId);
+      const splitExitX = srcRight + 30;
+      if (isSplitToBranch) {
+        return [
+          { x: srcRight, y: srcMidY },
+          { x: splitExitX, y: srcMidY },
+          { x: splitExitX, y: tgtMidY },
+          { x: tgtLeft, y: tgtMidY },
+        ];
+      }
+      if (isBranchToJoin) {
+        const joinBusX = tgtLeft - 30;
+        return [
+          { x: srcRight, y: srcMidY },
+          { x: joinBusX, y: srcMidY },
+          { x: joinBusX, y: tgtMidY },
+          { x: tgtLeft, y: tgtMidY },
+        ];
+      }
+    }
+
     if (isExclusiveGateway) {
+      const srcXorSplitId = String(srcAttrs["data-xor-split-id"] || source?.id || "");
+      const tgtXorSplitId = String(tgtAttrs["data-xor-split-id"] || "");
+      const tgtXorJoinId = String(tgtAttrs["data-xor-join-id"] || "");
+      const isXorSplitToBranch = Boolean(tgtXorSplitId && srcXorSplitId && tgtXorSplitId === srcXorSplitId);
+      const isXorBranchToJoin = Boolean(tgtXorJoinId && srcXorSplitId && tgtXorJoinId === srcXorSplitId);
+      if (isXorSplitToBranch) {
+        const branchIndex = Number(tgtAttrs["data-xor-branch-index"]);
+        const isNoBranch = Number.isFinite(branchIndex) ? branchIndex > 0 : false;
+        if (!isNoBranch) {
+          return [
+            { x: srcRight, y: srcMidY },
+            { x: tgtLeft, y: srcMidY },
+          ];
+        }
+        const srcBottomX = sx + sw / 2;
+        const srcBottomY = sy + sh;
+        return [
+          { x: srcBottomX, y: srcBottomY },
+          { x: srcBottomX, y: tgtMidY },
+          { x: tgtLeft, y: tgtMidY },
+        ];
+      }
+      if (isXorBranchToJoin) {
+        const joinBusX = tgtLeft - 30;
+        return [
+          { x: srcRight, y: srcMidY },
+          { x: joinBusX, y: srcMidY },
+          { x: joinBusX, y: tgtMidY },
+          { x: tgtLeft, y: tgtMidY },
+        ];
+      }
       const laneForRoute = srcLane || tgtLane;
       const baselineY = laneForRoute ? getBaselineMidY(laneForRoute) : srcMidY;
       const isAlt = tgtAttrs["data-branch"] === "alt" || connName === "nie" || connName === "no" || connName === "false";
@@ -373,6 +439,75 @@ export function applyIncrementalAppend({
     nextFlows.find(
       (f) => String(f?.source || "") === String(sourceId || "") && String(f?.target || "") === String(targetId || ""),
     ) || null;
+  const isParallelGatewayType = (rawType) => String(rawType || "").toLowerCase().includes("parallelgateway");
+  const isExclusiveGatewayType = (rawType) => String(rawType || "").toLowerCase().includes("exclusivegateway");
+  const nextNodeById = new Map(
+    nextNodes
+      .map((n) => [String(n?.id || ""), n])
+      .filter(([id]) => Boolean(id)),
+  );
+  const parallelSplitTargetsById = new Map();
+  const xorSplitTargetsById = new Map();
+  nextNodes.forEach((node) => {
+    const nodeId = String(node?.id || "");
+    if (!nodeId) return;
+    if (!isParallelGatewayType(node?.type)) return;
+    const outgoing = nextFlows.filter((f) => String(f?.source || "") === nodeId);
+    if (outgoing.length < 2) return;
+    const targets = outgoing
+      .map((f) => String(f?.target || ""))
+      .filter(Boolean)
+      .sort((a, b) => (nodeOrder.get(a) ?? 0) - (nodeOrder.get(b) ?? 0));
+    if (targets.length >= 2) {
+      parallelSplitTargetsById.set(nodeId, targets);
+    }
+  });
+  nextNodes.forEach((node) => {
+    const nodeId = String(node?.id || "");
+    if (!nodeId) return;
+    if (!isExclusiveGatewayType(node?.type)) return;
+    const outgoing = nextFlows.filter((f) => String(f?.source || "") === nodeId);
+    if (outgoing.length < 2) return;
+    const targets = outgoing
+      .map((f) => String(f?.target || ""))
+      .filter(Boolean)
+      .sort((a, b) => (nodeOrder.get(a) ?? 0) - (nodeOrder.get(b) ?? 0));
+    if (targets.length >= 2) {
+      xorSplitTargetsById.set(nodeId, targets);
+    }
+  });
+  const findParallelSplitForTarget = (targetNodeId) => {
+    const targetId = String(targetNodeId || "");
+    if (!targetId) return null;
+    for (const [splitId, targets] of parallelSplitTargetsById.entries()) {
+      const idx = targets.indexOf(targetId);
+      if (idx >= 0) {
+        return { splitId, branchIndex: idx, branchCount: targets.length };
+      }
+    }
+    return null;
+  };
+  const findXorSplitForTarget = (targetNodeId) => {
+    const targetId = String(targetNodeId || "");
+    if (!targetId) return null;
+    for (const [splitId, targets] of xorSplitTargetsById.entries()) {
+      const idx = targets.indexOf(targetId);
+      if (idx >= 0) {
+        return { splitId, branchIndex: idx, branchCount: targets.length };
+      }
+    }
+    return null;
+  };
+  const computeParallelBranchMidY = (laneEl, branchIndex) => {
+    const baseY = getBaselineMidY(laneEl);
+    const offset = branchIndex * PARALLEL_BRANCH_GAP;
+    return baseY + offset;
+  };
+  const computeXorBranchMidY = (laneEl, branchIndex) => {
+    const baseY = getBaselineMidY(laneEl);
+    const offset = branchIndex * XOR_BRANCH_GAP;
+    return baseY + offset;
+  };
 
   const getConnectionLabel = (sourceEl, targetEl) => {
     if (!sourceEl || !targetEl) return "";
@@ -381,20 +516,61 @@ export function applyIncrementalAppend({
     return String(match?.businessObject?.name || "");
   };
 
-  const sortedNewNodes = [...newNodes].sort((a, b) => {
-    const av = nodeOrder.get(String(a?.id || "")) ?? 0;
-    const bv = nodeOrder.get(String(b?.id || "")) ?? 0;
-    return av - bv;
-  });
+  const sortNewNodesTopologically = () => {
+    const ids = new Set(newNodes.map((n) => String(n?.id || "")).filter(Boolean));
+    const indegree = new Map();
+    const outgoing = new Map();
+    ids.forEach((id) => {
+      indegree.set(id, 0);
+      outgoing.set(id, []);
+    });
+    nextFlows.forEach((flow) => {
+      const sourceId = String(flow?.source || "");
+      const targetId = String(flow?.target || "");
+      if (!ids.has(sourceId) || !ids.has(targetId)) return;
+      outgoing.get(sourceId).push(targetId);
+      indegree.set(targetId, (indegree.get(targetId) || 0) + 1);
+    });
+    const queue = [...ids]
+      .filter((id) => (indegree.get(id) || 0) === 0)
+      .sort((a, b) => (nodeOrder.get(a) ?? 0) - (nodeOrder.get(b) ?? 0));
+    const result = [];
+    while (queue.length) {
+      const id = queue.shift();
+      result.push(id);
+      const succ = outgoing.get(id) || [];
+      succ.forEach((nextId) => {
+        const nextIn = (indegree.get(nextId) || 0) - 1;
+        indegree.set(nextId, nextIn);
+        if (nextIn === 0) {
+          queue.push(nextId);
+          queue.sort((a, b) => (nodeOrder.get(a) ?? 0) - (nodeOrder.get(b) ?? 0));
+        }
+      });
+    }
+    if (result.length !== ids.size) {
+      return [...newNodes].sort((a, b) => {
+        const av = nodeOrder.get(String(a?.id || "")) ?? 0;
+        const bv = nodeOrder.get(String(b?.id || "")) ?? 0;
+        return av - bv;
+      });
+    }
+    return result
+      .map((id) => nextNodeById.get(id))
+      .filter(Boolean);
+  };
+  const sortedNewNodes = sortNewNodesTopologically();
 
   sortedNewNodes.forEach((node) => {
-    const incomingFlow = nextFlows.find((f) => String(f?.target) === String(node.id));
+    const incomingFlowsForNode = nextFlows.filter((f) => String(f?.target) === String(node.id));
+    const incomingFlow = incomingFlowsForNode[0] || null;
     const sourceEl = incomingFlow ? findElementByEngineId(incomingFlow.source) : null;
     const laneId = node?.laneId ? String(node.laneId) : null;
     const laneEl = laneId ? laneById.get(laneId) : null;
     const laneStillExists = laneEl?.id ? elementRegistry.get(laneEl.id) : null;
-    const laneForPlacement = laneStillExists || null;
-    const laneMissing = Boolean(laneId) && !laneForPlacement;
+    const sourceLaneFallback = sourceEl ? getElementLane(sourceEl) : null;
+    const laneForPlacement = laneStillExists || sourceLaneFallback || null;
+    const laneMissing = Boolean(laneId) && !laneStillExists;
 
     const bpmnType = toBpmnType(node);
     const shapeProps = { type: bpmnType, id: node.id };
@@ -434,6 +610,12 @@ export function applyIncrementalAppend({
       let y = null;
       let isAltBranch = false;
       let forceBranchColumn = false;
+      let parallelBranchInfo = null;
+      let isParallelJoin = false;
+      let parallelJoinSplitId = "";
+      let xorBranchInfo = null;
+      let isXorJoin = false;
+      let xorJoinSplitId = "";
 
       if (sourceEl) {
         const srcType = String(sourceEl?.businessObject?.$type || sourceEl?.type || "");
@@ -449,19 +631,70 @@ export function applyIncrementalAppend({
           const branchLabel = engineLabel || existingLabel;
           isAltBranch = isNoBranchLabel(branchLabel);
 
-          const isExclusiveGateway = srcType.includes("ExclusiveGateway");
-          if (isExclusiveGateway) {
-            const outgoingFromGateway = nextFlows.filter(
-              (f) => String(f?.source || "") === String(incomingFlow.source || ""),
-            );
-            const isImmediateBranchTarget = outgoingFromGateway.some(
-              (f) => String(f?.target || "") === String(node.id || ""),
-            );
-            if (outgoingFromGateway.length === 2 && isImmediateBranchTarget) {
-              forceBranchColumn = true;
-              x = (sourceEl.x || 0) + (sourceEl.width || 0) + GATEWAY_BRANCH_GAP_X;
-            }
-          }
+        }
+      }
+      parallelBranchInfo = findParallelSplitForTarget(node.id);
+      if (parallelBranchInfo?.splitId) {
+        const splitEl = findElementByEngineId(parallelBranchInfo.splitId);
+        if (splitEl) {
+          x = (splitEl.x || 0) + PARALLEL_DX;
+          forceBranchColumn = true;
+        }
+      }
+      xorBranchInfo = findXorSplitForTarget(node.id);
+      if (xorBranchInfo?.splitId) {
+        const splitEl = findElementByEngineId(xorBranchInfo.splitId);
+        if (splitEl) {
+          x = (splitEl.x || 0) + PARALLEL_DX;
+          forceBranchColumn = true;
+        }
+      }
+      const incomingBranchMeta = incomingFlowsForNode
+        .map((flow) => findElementByEngineId(flow?.source))
+        .filter(Boolean)
+        .map((srcEl) => {
+          const attrs = srcEl?.businessObject?.$attrs || {};
+          return {
+            splitId: String(attrs["data-parallel-split-id"] || ""),
+            branchIndex: String(attrs["data-parallel-branch-index"] || ""),
+            source: srcEl,
+          };
+        })
+        .filter((meta) => meta.splitId && meta.branchIndex !== "");
+      const incomingXorMeta = incomingFlowsForNode
+        .map((flow) => findElementByEngineId(flow?.source))
+        .filter(Boolean)
+        .map((srcEl) => {
+          const attrs = srcEl?.businessObject?.$attrs || {};
+          return {
+            splitId: String(attrs["data-xor-split-id"] || ""),
+            branchIndex: String(attrs["data-xor-branch-index"] || ""),
+            source: srcEl,
+          };
+        })
+        .filter((meta) => meta.splitId && meta.branchIndex !== "");
+      if (incomingBranchMeta.length >= 2) {
+        const bySplit = new Map();
+        incomingBranchMeta.forEach((meta) => {
+          if (!bySplit.has(meta.splitId)) bySplit.set(meta.splitId, new Set());
+          bySplit.get(meta.splitId).add(meta.branchIndex);
+        });
+        const winning = [...bySplit.entries()].find(([, branchSet]) => branchSet.size >= 2);
+        if (winning) {
+          isParallelJoin = true;
+          parallelJoinSplitId = winning[0];
+        }
+      }
+      if (incomingXorMeta.length >= 2) {
+        const bySplit = new Map();
+        incomingXorMeta.forEach((meta) => {
+          if (!bySplit.has(meta.splitId)) bySplit.set(meta.splitId, new Set());
+          bySplit.get(meta.splitId).add(meta.branchIndex);
+        });
+        const winning = [...bySplit.entries()].find(([, branchSet]) => branchSet.size >= 2);
+        if (winning) {
+          isXorJoin = true;
+          xorJoinSplitId = winning[0];
         }
       }
 
@@ -472,11 +705,63 @@ export function applyIncrementalAppend({
           const desiredX = x ?? cursorX;
           x = desiredX < cursorX ? cursorX : desiredX;
         }
-        const laneTop = laneForPlacement.y;
-        const laneBottom = laneForPlacement.y + laneForPlacement.height - (shape.height || 80);
+        const laneTop = laneForPlacement.y + PAD_Y;
+        const laneBottom = laneForPlacement.y + laneForPlacement.height - (shape.height || 80) - PAD_Y;
         const baselineMidY = getBaselineMidY(laneForPlacement);
         const branchMidY = getBranchMidY(laneForPlacement, shape.height || 80);
-        const targetMidY = isAltBranch ? branchMidY : baselineMidY;
+        let targetMidY = isAltBranch ? branchMidY : baselineMidY;
+        if (parallelBranchInfo) {
+          targetMidY = computeParallelBranchMidY(
+            laneForPlacement,
+            parallelBranchInfo.branchIndex,
+          );
+        } else if (xorBranchInfo) {
+          targetMidY = computeXorBranchMidY(
+            laneForPlacement,
+            xorBranchInfo.branchIndex,
+          );
+        } else if (incomingBranchMeta.length === 1 && !isParallelJoin) {
+          // Keep branch chain aligned on the same branch Y until merge.
+          const src = incomingBranchMeta[0].source;
+          targetMidY = (src.y || 0) + (src.height || 0) / 2;
+          if (sourceEl) {
+            x = (sourceEl.x || 0) + PARALLEL_DX;
+            forceBranchColumn = true;
+          }
+        } else if (isParallelJoin) {
+          targetMidY = baselineMidY;
+          const branchSources = incomingBranchMeta
+            .filter((meta) => meta.splitId === parallelJoinSplitId)
+            .map((meta) => meta.source);
+          const maxSourceX = branchSources.reduce(
+            (maxX, src) => Math.max(maxX, (src.x || 0)),
+            0,
+          );
+          if (maxSourceX > 0) {
+            x = maxSourceX + PARALLEL_DX;
+            forceBranchColumn = true;
+          }
+        } else if (incomingXorMeta.length === 1 && !isXorJoin) {
+          const src = incomingXorMeta[0].source;
+          targetMidY = (src.y || 0) + (src.height || 0) / 2;
+          if (sourceEl) {
+            x = (sourceEl.x || 0) + PARALLEL_DX;
+            forceBranchColumn = true;
+          }
+        } else if (isXorJoin) {
+          targetMidY = baselineMidY;
+          const branchSources = incomingXorMeta
+            .filter((meta) => meta.splitId === xorJoinSplitId)
+            .map((meta) => meta.source);
+          const maxSourceX = branchSources.reduce(
+            (maxX, src) => Math.max(maxX, (src.x || 0)),
+            0,
+          );
+          if (maxSourceX > 0) {
+            x = maxSourceX + PARALLEL_DX;
+            forceBranchColumn = true;
+          }
+        }
         y = Math.min(laneBottom, Math.max(laneTop, targetMidY - (shape.height || 80) / 2));
         const nextCursor = Math.max(cursorX, x + (shape.width || 100) + H_GAP);
         setLaneCursor(laneKey, nextCursor);
@@ -498,6 +783,26 @@ export function applyIncrementalAppend({
         if (attrs) attrs["data-engine-id"] = String(node.id);
         if (isAltBranch && attrs) {
           attrs["data-branch"] = "alt";
+        }
+        if (attrs) {
+          if (parallelBranchInfo?.splitId) {
+            attrs["data-parallel-split-id"] = parallelBranchInfo.splitId;
+            attrs["data-parallel-branch-index"] = String(parallelBranchInfo.branchIndex);
+          } else if (incomingBranchMeta.length === 1 && !isParallelJoin) {
+            attrs["data-parallel-split-id"] = incomingBranchMeta[0].splitId;
+            attrs["data-parallel-branch-index"] = incomingBranchMeta[0].branchIndex;
+          } else if (isParallelJoin && parallelJoinSplitId) {
+            attrs["data-parallel-join-id"] = parallelJoinSplitId;
+          }
+          if (xorBranchInfo?.splitId) {
+            attrs["data-xor-split-id"] = xorBranchInfo.splitId;
+            attrs["data-xor-branch-index"] = String(xorBranchInfo.branchIndex);
+          } else if (incomingXorMeta.length === 1 && !isXorJoin) {
+            attrs["data-xor-split-id"] = incomingXorMeta[0].splitId;
+            attrs["data-xor-branch-index"] = incomingXorMeta[0].branchIndex;
+          } else if (isXorJoin && xorJoinSplitId) {
+            attrs["data-xor-join-id"] = xorJoinSplitId;
+          }
         }
       }
       if (created) {
@@ -666,102 +971,6 @@ export function applyIncrementalAppend({
     }
   });
 
-  // Add a visual merge gateway for XOR splits to avoid long branch bridge lines.
-  const createConnection = (source, target) => {
-    if (!source || !target) return null;
-    const already = Array.isArray(source.outgoing)
-      ? source.outgoing.some((c) => c?.target?.id === target.id)
-      : false;
-    if (already) return null;
-    const conn = modeling.connect(source, target, { type: "bpmn:SequenceFlow" });
-    if (conn) {
-      createdConnections.push(conn);
-    }
-    return conn;
-  };
-  const removeConnection = (conn) => {
-    if (!conn) return;
-    try {
-      modeling.removeConnection(conn);
-    } catch {
-      // ignore remove errors
-    }
-  };
-  const exclusiveGateways = elementRegistry
-    .getAll()
-    .filter((el) => String(el?.businessObject?.$type || el?.type || "").includes("ExclusiveGateway"));
-  exclusiveGateways.forEach((gatewayEl) => {
-    const outgoing = Array.isArray(gatewayEl.outgoing) ? gatewayEl.outgoing : [];
-    if (outgoing.length < 2) return;
-    const branchTargets = outgoing.map((c) => c?.target).filter(Boolean);
-    if (branchTargets.length < 2) return;
-
-    const successorCounts = new Map();
-    branchTargets.forEach((branchEl) => {
-      const branchOutgoing = Array.isArray(branchEl?.outgoing) ? branchEl.outgoing : [];
-      branchOutgoing.forEach((conn) => {
-        const succ = conn?.target;
-        if (!succ?.id) return;
-        const key = String(succ.id);
-        successorCounts.set(key, (successorCounts.get(key) || 0) + 1);
-      });
-    });
-    const commonSuccessorId = [...successorCounts.entries()].find(
-      ([, count]) => count >= branchTargets.length,
-    )?.[0];
-    if (!commonSuccessorId) return;
-    const commonSuccessor = elementRegistry.get(commonSuccessorId);
-    if (!commonSuccessor) return;
-    const alreadyMerged = Array.isArray(commonSuccessor.incoming)
-      ? commonSuccessor.incoming.some((conn) => {
-          const srcType = String(conn?.source?.businessObject?.$type || conn?.source?.type || "");
-          const srcIncoming = Array.isArray(conn?.source?.incoming) ? conn.source.incoming.length : 0;
-          return srcType.includes("ExclusiveGateway") && srcIncoming >= 2;
-        })
-      : false;
-    if (alreadyMerged) return;
-
-    const laneEl = laneElements.find((ln) => isInLane(gatewayEl, ln)) || null;
-    const baselineMidY = laneEl
-      ? getBaselineMidY(laneEl)
-      : (gatewayEl.y || 0) + (gatewayEl.height || 0) / 2;
-    const mergeSize = 50;
-    const mergeX = Math.max(
-      (gatewayEl.x || 0) + (gatewayEl.width || 0) + GATEWAY_MERGE_MIN_GAP,
-      (commonSuccessor.x || 0) - GATEWAY_MERGE_RUNWAY,
-    );
-    const mergeY = baselineMidY - mergeSize / 2;
-    const visualParent = laneEl || participantEl || rootEl;
-    if (!visualParent) return;
-
-    let mergeGateway = null;
-    try {
-      const mergeShape = elementFactory.createShape({
-        type: "bpmn:ExclusiveGateway",
-        width: mergeSize,
-        height: mergeSize,
-      });
-      mergeGateway = modeling.createShape(mergeShape, { x: mergeX, y: mergeY }, visualParent);
-      if (laneEl && mergeGateway) {
-        attachNodeToLane(laneEl, mergeGateway, modeling);
-      }
-    } catch {
-      mergeGateway = null;
-    }
-    if (!mergeGateway) return;
-
-    branchTargets.forEach((branchEl) => {
-      const directToCommon = (Array.isArray(branchEl?.outgoing) ? branchEl.outgoing : []).find(
-        (conn) => conn?.target?.id === commonSuccessor.id,
-      );
-      if (directToCommon) {
-        removeConnection(directToCommon);
-      }
-      createConnection(branchEl, mergeGateway);
-    });
-    createConnection(mergeGateway, commonSuccessor);
-  });
-
   // Safety snap only for newly created nodes.
   const extraRerouteNodeIds = new Set();
   newNodesByLane.forEach((laneNodes, laneId) => {
@@ -775,7 +984,25 @@ export function applyIncrementalAppend({
       if (!h) return;
       const baselineMidY = getBaselineMidY(laneEl);
       const branchMidY = getBranchMidY(laneEl, h);
-      const targetMidY = attrs["data-branch"] === "alt" ? branchMidY : baselineMidY;
+      let targetMidY = attrs["data-branch"] === "alt" ? branchMidY : baselineMidY;
+      const parallelSplitId = String(attrs["data-parallel-split-id"] || "");
+      const parallelBranchIndexRaw = attrs["data-parallel-branch-index"];
+      if (parallelSplitId && parallelBranchIndexRaw !== undefined && parallelBranchIndexRaw !== null) {
+        const branchIndex = Number(parallelBranchIndexRaw);
+        const branchCount = (parallelSplitTargetsById.get(parallelSplitId) || []).length;
+        if (Number.isFinite(branchIndex) && branchCount > 1) {
+          targetMidY = computeParallelBranchMidY(laneEl, branchIndex);
+        }
+      }
+      const xorSplitId = String(attrs["data-xor-split-id"] || "");
+      const xorBranchIndexRaw = attrs["data-xor-branch-index"];
+      if (xorSplitId && xorBranchIndexRaw !== undefined && xorBranchIndexRaw !== null) {
+        const branchIndex = Number(xorBranchIndexRaw);
+        const branchCount = (xorSplitTargetsById.get(xorSplitId) || []).length;
+        if (Number.isFinite(branchIndex) && branchCount > 1) {
+          targetMidY = computeXorBranchMidY(laneEl, branchIndex);
+        }
+      }
       const desiredY = targetMidY - h / 2;
       const dy = desiredY - (el.y || 0);
       if (Math.abs(dy) < 0.5) return;
@@ -813,6 +1040,126 @@ export function applyIncrementalAppend({
       }
       positionEventLabel(el);
     });
+  });
+  const laneBottomMarginById = new Map();
+  const registerLaneMargin = (laneId, margin) => {
+    if (!laneId) return;
+    const key = String(laneId);
+    const prev = laneBottomMarginById.get(key) || 0;
+    laneBottomMarginById.set(key, Math.max(prev, margin));
+  };
+  newNodes.forEach((node) => {
+    const laneKey = String(node?.laneId || "");
+    const nodeId = String(node?.id || "");
+    const nodeType = String(node?.type || "").toLowerCase();
+    if (!laneKey || !nodeId || !nodeType.includes("gateway")) return;
+    const outCount = nextFlows.filter((f) => String(f?.source || "") === nodeId).length;
+    const inCount = nextFlows.filter((f) => String(f?.target || "") === nodeId).length;
+    if (outCount < 2 && inCount < 2) return;
+    if (nodeType.includes("parallel")) {
+      registerLaneMargin(laneKey, BOTTOM_MARGIN_AND);
+      return;
+    }
+    if (nodeType.includes("exclusive")) {
+      registerLaneMargin(laneKey, BOTTOM_MARGIN_XOR);
+      return;
+    }
+    registerLaneMargin(laneKey, LANE_BOTTOM_PADDING_DEFAULT);
+  });
+
+  const fitLaneHeight = (laneEl, bottomMargin) => {
+    const currentLane = laneEl?.id ? elementRegistry.get(laneEl.id) : null;
+    if (!currentLane) return;
+    const oldTop = Number(currentLane.y || 0);
+    const oldHeight = Number(currentLane.height || 0);
+    const oldBottom = oldTop + oldHeight;
+    const laneLeft = Number(currentLane.x || 0);
+    const laneRight = laneLeft + Number(currentLane.width || 0);
+    const laneBottom = oldBottom;
+    const laneBo = currentLane.businessObject;
+    const laneNodeIds = new Set(
+      (Array.isArray(laneBo?.flowNodeRef) ? laneBo.flowNodeRef : [])
+        .map((ref) => String(ref?.id || ref))
+        .filter(Boolean),
+    );
+    const nodesInLane = elementRegistry
+      .getAll()
+      .filter((el) => {
+        if (!isFlowNode(el) || el.type === "label") return false;
+        if (el.parent?.id === currentLane.id) return true;
+        const boId = String(el?.businessObject?.id || el?.id || "");
+        if (laneNodeIds.has(boId)) return true;
+        const cx = Number(el.x || 0) + Number(el.width || 0) / 2;
+        const cy = Number(el.y || 0) + Number(el.height || 0) / 2;
+        return cx >= laneLeft && cx <= laneRight && cy >= oldTop && cy <= laneBottom + 500;
+      });
+    if (!nodesInLane.length) return;
+    const maxBottomRaw = nodesInLane.reduce(
+      (maxY, el) => Math.max(maxY, Number(el.y || 0) + Number(el.height || 0)),
+      oldBottom,
+    );
+    const maxBottom = maxBottomRaw + LANE_EXTRA_MARGIN;
+    const free = oldBottom - maxBottom;
+    if (free >= bottomMargin) return;
+    const delta = Math.ceil(bottomMargin - free);
+    const neededHeight = Math.max(MIN_LANE_HEIGHT, oldHeight + delta);
+    if (neededHeight <= oldHeight + 1) return;
+    const deltaY = neededHeight - oldHeight;
+    try {
+      if (typeof modeling.resizeShape === "function") {
+        modeling.resizeShape(currentLane, {
+          x: Number(currentLane.x || 0),
+          y: oldTop,
+          width: Number(currentLane.width || 0),
+          height: neededHeight,
+        });
+      } else {
+        modeling.updateProperties(currentLane, { height: neededHeight });
+      }
+    } catch {
+      return;
+    }
+    const refreshedLane = elementRegistry.get(currentLane.id) || currentLane;
+    const lanesBelow = laneElements
+      .map((ln) => (ln?.id ? elementRegistry.get(ln.id) || ln : ln))
+      .filter((other) => other && other.id !== refreshedLane.id && Number(other.y || 0) >= oldBottom - 1)
+      .sort((a, b) => Number(a.y || 0) - Number(b.y || 0));
+    lanesBelow.forEach((ln) => {
+      try {
+        if (typeof modeling.moveShape === "function") {
+          modeling.moveShape(ln, { x: 0, y: deltaY }, ln.parent || refreshedLane.parent);
+        }
+      } catch {
+        // ignore lane shift errors
+      }
+    });
+    const container = refreshedLane.parent || null;
+    if (!container) return;
+    const cX = Number(container.x || 0);
+    const cY = Number(container.y || 0);
+    const cW = Number(container.width || 0);
+    const cH = Number(container.height || 0);
+    if (!(cW > 0 && cH > 0)) return;
+    try {
+      if (typeof modeling.resizeShape === "function") {
+        modeling.resizeShape(container, { x: cX, y: cY, width: cW, height: cH + deltaY });
+      } else {
+        modeling.updateProperties(container, { height: cH + deltaY });
+      }
+    } catch {
+      // ignore container resize errors
+    }
+  };
+
+  // Grow touched lanes downward when branch layout needs extra vertical space.
+  const touchedLanes = [...laneBottomMarginById.keys()]
+    .map((laneId) => laneById.get(laneId))
+    .filter(Boolean)
+    .sort((a, b) => Number(a?.y || 0) - Number(b?.y || 0));
+  touchedLanes.forEach((laneEl) => {
+    const laneKey = String(laneEl?.businessObject?.$attrs?.["data-engine-id"] || laneEl?.id || "");
+    const margin = laneBottomMarginById.get(laneKey) || LANE_BOTTOM_PADDING_DEFAULT;
+    fitLaneHeight(laneEl, margin);
   });
 
   if (typeof modeling.updateWaypoints === "function" && typeof routeFlow === "function") {
