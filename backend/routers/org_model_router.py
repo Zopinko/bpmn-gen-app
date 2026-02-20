@@ -12,6 +12,7 @@ from services.org_model_storage import (
     get_tree,
     move_node,
     rename_node,
+    set_process_model_ref,
 )
 
 
@@ -144,5 +145,23 @@ def delete_org_node(node_id: str, org_id: str | None = None, current_user: AuthU
         org_id = _resolve_org_id(current_user, org_id)
         delete_node(org_id=org_id, node_id=node_id)
         return {"ok": True, "tree": get_tree(org_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.patch("/process/{node_id}/model-ref")
+def update_process_model_ref(
+    node_id: str,
+    payload: dict = Body(...),
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    model_id = payload.get("modelId")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise HTTPException(status_code=400, detail="modelId je povinny.")
+    try:
+        org_id = _resolve_org_id(current_user, org_id)
+        node = set_process_model_ref(org_id=org_id, node_id=node_id, model_id=model_id.strip())
+        return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

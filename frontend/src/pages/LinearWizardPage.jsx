@@ -16,7 +16,10 @@ import {
   pushSandboxModelToOrg,
   listMyOrgs,
   createOrg,
+  getOrgInviteLink,
   loadOrgModel,
+  listOrgModels,
+  createOrgModelVersion,
   saveOrgModel,
   getProjectNotes,
   saveProjectNotes,
@@ -32,6 +35,7 @@ import {
   getOrgModel,
   moveOrgNode,
   renameOrgNode,
+  updateOrgProcessModelRef,
 } from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
 import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
@@ -70,20 +74,6 @@ const HELP_RULES = [
     syntax: "Paralelne: <krok>; <krok>; <krok>",
     example: "Paralelne: priprav zmluvu; over identitu; nastav splatky",
     template: "Paralelne: <krok1>; <krok2>; <krok3>",
-    fields: [
-      { key: "krok1", label: "Krok 1", token: "krok1", placeholder: "napr. priprav zmluvu" },
-      { key: "krok2", label: "Krok 2", token: "krok2", placeholder: "napr. over identitu" },
-      { key: "krok3", label: "Krok 3", token: "krok3", placeholder: "napr. nastav splatky" },
-    ],
-  },
-  {
-    id: "and_free",
-    title: "Paralelne kroky (AND) - volny text",
-    description: "Paralelne vykonavane kroky zapisane prirodzene.",
-    iconClass: "bpmn-icon-gateway-parallel",
-    syntax: "Zaroven/Sucasne <krok>, <krok> a <krok>",
-    example: "Zaroven priprav zmluvu, over identitu a nastav splatky",
-    template: "Zaroven <krok1>, <krok2> a <krok3>",
     fields: [
       { key: "krok1", label: "Krok 1", token: "krok1", placeholder: "napr. priprav zmluvu" },
       { key: "krok2", label: "Krok 2", token: "krok2", placeholder: "napr. over identitu" },
@@ -944,7 +934,7 @@ const analyzeLaneLine = (lineText) => {
     }
     return {
       type: "xor",
-      badge: "XOR",
+      badge: "ROZHODNUTIE",
       hint: "Rozhodnutie: „Ak <podmienka> tak <krok>, inak <krok/koniec>“.",
       warning,
       success: warning ? "" : "Super, toto je rozhodnutie v procese.",
@@ -975,7 +965,7 @@ const analyzeLaneLine = (lineText) => {
     const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky (oddeľ ich ;, , alebo slovom „a“)." : "";
     return {
       type: "and",
-      badge: "AND",
+      badge: "PARALELNE",
       hint: "Paralela: „Paralelne: krok; krok; krok“ alebo „Zároveň krok, krok a krok“.",
       warning,
       success: warning ? "" : "Super, toto je paralelné rozdelenie.",
@@ -984,7 +974,7 @@ const analyzeLaneLine = (lineText) => {
 
   return {
     type: "task",
-    badge: "TASK",
+    badge: "KROK",
     hint: "Toto bude bežný krok v procese.",
     warning: "",
     success: "",
@@ -1071,6 +1061,11 @@ export default function LinearWizardPage() {
   const [addMemberLoading, setAddMemberLoading] = useState(false);
   const [addMemberError, setAddMemberError] = useState(null);
   const [addMemberInfo, setAddMemberInfo] = useState(null);
+  const [inviteOrgId, setInviteOrgId] = useState("");
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
   const [orgMembersOpen, setOrgMembersOpen] = useState(false);
   const [orgMembers, setOrgMembers] = useState([]);
   const [orgMembersLoading, setOrgMembersLoading] = useState(false);
@@ -1114,6 +1109,12 @@ export default function LinearWizardPage() {
   const [expandedOrgFolders, setExpandedOrgFolders] = useState({ root: true });
   const [orgMenuNodeId, setOrgMenuNodeId] = useState(null);
   const [orgMenuAnchor, setOrgMenuAnchor] = useState(null);
+  const [orgVersionsOpen, setOrgVersionsOpen] = useState(false);
+  const [orgVersionsNode, setOrgVersionsNode] = useState(null);
+  const [orgVersionsItems, setOrgVersionsItems] = useState([]);
+  const [orgVersionsLoading, setOrgVersionsLoading] = useState(false);
+  const [orgVersionsError, setOrgVersionsError] = useState(null);
+  const [orgVersionPreview, setOrgVersionPreview] = useState(null);
   const [orgMoveModalOpen, setOrgMoveModalOpen] = useState(false);
   const [orgMoveNode, setOrgMoveNode] = useState(null);
   const [orgMoveTargetFolderId, setOrgMoveTargetFolderId] = useState("root");
@@ -1131,6 +1132,7 @@ export default function LinearWizardPage() {
   const [orgPushConflictName, setOrgPushConflictName] = useState("");
   const [orgPushConflictSelectedId, setOrgPushConflictSelectedId] = useState(null);
   const [orgPushOverwriteConfirmOpen, setOrgPushOverwriteConfirmOpen] = useState(false);
+  const [orgEditConfirmOpen, setOrgEditConfirmOpen] = useState(false);
   const [orgToast, setOrgToast] = useState("");
   const orgToastTimerRef = useRef(null);
   const orgTreeRef = useRef(null);
@@ -1214,6 +1216,16 @@ export default function LinearWizardPage() {
   );
   const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
   const [helpMode, setHelpMode] = useState("inline");
+  const [helpAccordionOpen, setHelpAccordionOpen] = useState(() => ({
+    task: false,
+    xor: false,
+    and_strict: false,
+  }));
+  const [helpIntent, setHelpIntent] = useState(null);
+  const [activeHelpSection, setActiveHelpSection] = useState("");
+  const [helpHighlightSection, setHelpHighlightSection] = useState("");
+  const helpSectionRefs = useRef({});
+  const helpFirstInputRefs = useRef({});
   const laneHelperItems = useMemo(() => analyzeLaneLines(laneDescription), [laneDescription]);
   const laneLines = useMemo(
     () =>
@@ -1228,6 +1240,9 @@ export default function LinearWizardPage() {
   const hasLaneStructure =
     laneStructureCounts.decisions > 0 || laneStructureCounts.parallels > 0;
   const laneTextareaRef = useRef(null);
+  const lanePanelScrollRef = useRef(null);
+  const [laneTemplateChoice, setLaneTemplateChoice] = useState("");
+  const [laneHelpTipDismissed, setLaneHelpTipDismissed] = useState(false);
   const [laneTemplateFlash, setLaneTemplateFlash] = useState(false);
   const laneTemplateFlashTimerRef = useRef(null);
   const logRenderMode = (mode, reason) => {
@@ -1293,6 +1308,7 @@ export default function LinearWizardPage() {
   const applyLaneTemplate = (template) => {
     if (!template) return;
     setLaneDescription(template.text || "");
+    setHasUnsavedChanges(true);
     setLaneTemplateFlash(true);
     if (laneTemplateFlashTimerRef.current) {
       window.clearTimeout(laneTemplateFlashTimerRef.current);
@@ -1300,6 +1316,20 @@ export default function LinearWizardPage() {
     laneTemplateFlashTimerRef.current = window.setTimeout(() => {
       setLaneTemplateFlash(false);
     }, 900);
+    const roleName = selectedLane?.name || selectedLane?.id || "rola";
+    setInfo(`Vložené do roly: ${roleName}`);
+    window.requestAnimationFrame(() => {
+      const textarea = laneTextareaRef.current;
+      if (!textarea) return;
+      try {
+        textarea.focus();
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+        textarea.scrollTop = textarea.scrollHeight;
+      } catch {
+        // ignore focus/selection errors
+      }
+    });
   };
 
   const openSingleCard = (cardKey) => {
@@ -1309,6 +1339,34 @@ export default function LinearWizardPage() {
     setStoryOpen(cardKey === "story");
     setMentorOpen(cardKey === "mentor");
     setLaneOpen(cardKey === "lane");
+  };
+  const mapHelpIntentTypeToSection = (type) => {
+    if (type === "XOR") return "xor";
+    if (type === "AND") return "and_strict";
+    return "task";
+  };
+  const inferLaneHelpIntentType = () => {
+    const lastItem = laneHelperItems.length ? laneHelperItems[laneHelperItems.length - 1] : null;
+    if (lastItem?.type === "xor") return "XOR";
+    if (lastItem?.type === "and") return "AND";
+    if (lastItem?.warning) {
+      const warning = String(lastItem.warning || "").toLowerCase();
+      if (warning.includes("inak") || warning.includes("tak")) return "XOR";
+      if (warning.includes("paralel") || warning.includes("kroky")) return "AND";
+    }
+    return "TASK";
+  };
+  const openLaneHelper = (intent = null) => {
+    setHelpInsertTarget({
+      type: "lane",
+      laneId: selectedLane?.id,
+      laneName: selectedLane?.name || selectedLane?.id,
+    });
+    setLaneHelpTipDismissed(true);
+    if (intent?.type) {
+      setHelpIntent({ type: intent.type, nonce: Date.now() });
+    }
+    openSingleCard("help");
   };
   const toggleSingleCard = (cardKey) => {
     const isOpen =
@@ -2260,6 +2318,35 @@ export default function LinearWizardPage() {
     }
   }, [selectedLane]);
 
+  useEffect(() => {
+    if (!selectedLane?.id) return;
+    if (lanePanelScrollRef.current) {
+      lanePanelScrollRef.current.scrollTop = 0;
+    }
+    setLaneTemplateChoice("");
+    setLaneHelpTipDismissed(false);
+  }, [selectedLane?.id]);
+
+  useEffect(() => {
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    const canvas = modeler.get("canvas");
+    const elementRegistry = modeler.get("elementRegistry");
+    if (!canvas || !elementRegistry) return;
+    const allElements = elementRegistry.getAll?.() || [];
+    allElements
+      .filter((element) => element?.businessObject?.$type === "bpmn:Lane")
+      .forEach((laneElement) => {
+        canvas.removeMarker(laneElement.id, "lane-selected");
+      });
+    if (selectedLane?.id) {
+      const laneElement = elementRegistry.get(selectedLane.id);
+      if (laneElement?.businessObject?.$type === "bpmn:Lane") {
+        canvas.addMarker(laneElement.id, "lane-selected");
+      }
+    }
+  }, [selectedLane, modelVersion]);
+
   const headerStepperState = useMemo(
     () => ({
       processName:
@@ -2463,11 +2550,31 @@ export default function LinearWizardPage() {
   };
 
   const insertHelpExample = (text) => {
-    setLaneDescription((prev) => appendLine(prev, text));
+    const snippet = String(text || "").trim();
+    if (!snippet) return;
+    setLaneDescription((prev) => {
+      const current = String(prev || "");
+      if (!current.trim()) return snippet;
+      return `${current.trimEnd()}\n${snippet}`;
+    });
     setHasUnsavedChanges(true);
+    const roleName = helpInsertTarget?.laneName || helpInsertTarget?.laneId || "rola";
+    setInfo(`Vložené do roly: ${roleName}`);
     if (helpInsertTarget?.type === "lane") {
       openSingleCard("lane");
     }
+    window.requestAnimationFrame(() => {
+      const textarea = laneTextareaRef.current;
+      if (!textarea) return;
+      try {
+        textarea.focus();
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+        textarea.scrollTop = textarea.scrollHeight;
+      } catch {
+        // ignore focus/selection errors
+      }
+    });
   };
 
   const findOrgProcessMatchesByName = (tree, name) => {
@@ -2526,131 +2633,89 @@ export default function LinearWizardPage() {
   };
 
   const renderHelpList = () => (
-    <div className="wizard-help-list">
+    <div className="wizard-help-accordion">
       {HELP_RULES.map((rule) => {
-        const segments = buildHelpTemplateSegments(rule);
-        const fieldsByToken = (rule.fields || []).reduce((acc, field) => {
-          acc[field.token] = field;
-          return acc;
-        }, {});
-        const isActive = helpActiveRuleId === rule.id;
+        const isOpen = Boolean(helpAccordionOpen[rule.id]);
+        const tag =
+          rule.id === "task"
+            ? "Krok"
+            : rule.id === "xor"
+              ? "Rozhodnutie"
+              : rule.id.includes("and")
+                ? "Paralelne"
+                : "Pravidlo";
         return (
-          <div key={rule.title} className="wizard-help-item">
-            <div className="wizard-help-head">
-              <div className="wizard-help-head__title">
-                <strong>{rule.title}</strong>
+          <section
+            key={rule.id}
+            ref={(el) => {
+              if (el) {
+                helpSectionRefs.current[rule.id] = el;
+              }
+            }}
+            className={`wizard-help-acc-item ${isOpen ? "is-open" : ""} ${activeHelpSection === rule.id ? "is-active" : ""} ${helpHighlightSection === rule.id ? "helper-highlight" : ""}`}
+          >
+            <button
+              type="button"
+              className="wizard-help-acc-head"
+              onClick={() => setHelpAccordionOpen((prev) => ({ ...prev, [rule.id]: !prev[rule.id] }))}
+            >
+              <div className="wizard-help-acc-head__left">
+                {rule.iconClass ? <span className={`wizard-help-icon ${rule.iconClass}`} aria-hidden="true" /> : null}
+                <span className="wizard-help-acc-title">{rule.title}</span>
+                <span className="wizard-help-acc-tag">{tag}</span>
               </div>
-              <div className="wizard-help-head__icon">
-                {rule.iconClass ? (
-                  <span className={`wizard-help-icon ${rule.iconClass}`} aria-hidden="true" />
+              <span className="wizard-help-acc-chevron" aria-hidden>{isOpen ? "˄" : "˅"}</span>
+            </button>
+            {isOpen ? (
+              <div className="wizard-help-acc-body">
+                {rule.description ? <div className="wizard-help-acc-desc">{rule.description}</div> : null}
+                {(rule.fields || []).length ? (
+                  <div className="wizard-help-skeleton-inputs">
+                    {(rule.fields || []).map((field, index) => (
+                      <label key={`${rule.id}-${field.key}`} className="wizard-help-skeleton-input">
+                        <span>{field.label}</span>
+                        <input
+                          ref={(el) => {
+                            if (el && index === 0) {
+                              helpFirstInputRefs.current[rule.id] = el;
+                            }
+                          }}
+                          type="text"
+                          value={helpInputs[rule.id]?.[field.key] || ""}
+                          placeholder={field.placeholder}
+                          onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
+                        />
+                      </label>
+                    ))}
+                  </div>
                 ) : null}
-              </div>
-            </div>
-            <div className="wizard-help-body">
-              {rule.description ? (
-                <div className="wizard-help-line wizard-help-line--desc">
-                  {rule.description}
+                <div className="wizard-help-syntax-wrap">
+                  <span className="wizard-help-code-label">Syntax</span>
+                  <code className="wizard-help-syntax">{rule.syntax}</code>
                 </div>
-              ) : null}
-              <div className="wizard-help-line">
-                <span className="wizard-help-label">Priklad:</span>{" "}
-                <button
-                  type="button"
-                  className="btn btn--small btn-link wizard-help-example-btn"
-                  onClick={() =>
-                    setHelpActiveRuleId((prev) => (prev === rule.id ? null : rule.id))
-                  }
-                >
-                  <span>{rule.example}</span>
-                  <span className="wizard-help-example-hint">pridaj vlastne</span>
-                </button>
-              </div>
-              <div className="wizard-help-line wizard-help-line--syntax">
-                <span className="wizard-help-label">Syntax:</span>{" "}
-                <code>{rule.syntax}</code>
-              </div>
-              {isActive ? (
-                <div className="wizard-help-builder">
-                  <div className="wizard-help-tabs">
-                    <button
-                      type="button"
-                      className={`btn btn--small ${helpMode === "slots" ? "btn-primary" : "btn-link"}`}
-                      onClick={() => setHelpMode("slots")}
-                    >
-                      Sloty
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn btn--small ${helpMode === "inline" ? "btn-primary" : "btn-link"}`}
-                      onClick={() => setHelpMode("inline")}
-                    >
-                      Riadok
-                    </button>
-                  </div>
-                  {helpMode === "slots" ? (
-                    <div className="wizard-help-inputs">
-                      {(rule.fields || []).length ? (
-                        (rule.fields || []).map((field) => (
-                          <label key={`${rule.id}-${field.key}`} className="wizard-help-input">
-                            <span>{field.label}</span>
-                            <input
-                              type="text"
-                              value={helpInputs[rule.id]?.[field.key] || ""}
-                              placeholder={field.placeholder}
-                              onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
-                            />
-                          </label>
-                        ))
-                      ) : (
-                        <div className="wizard-help-empty">Tento vzor nema polia na doplnenie.</div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="wizard-help-inline">
-                      {segments.map((segment, idx) => {
-                        if (segment.type === "text") {
-                          return (
-                            <span key={`${rule.id}-text-${idx}`} className="wizard-help-inline__text">
-                              {segment.value}
-                            </span>
-                          );
-                        }
-                        const field = fieldsByToken[segment.token];
-                        const fieldKey = field?.key || segment.token;
-                        const placeholder = field?.placeholder || segment.token;
-                        return (
-                          <input
-                            key={`${rule.id}-field-${idx}`}
-                            type="text"
-                            className="wizard-help-inline__input"
-                            value={helpInputs[rule.id]?.[fieldKey] || ""}
-                            placeholder={placeholder}
-                            onChange={(e) => updateHelpInput(rule.id, fieldKey, e.target.value)}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  <div className="wizard-help-actions">
-                    <button
-                      type="button"
-                      className="btn btn--small btn-primary"
-                      onClick={() => insertHelpExample(buildHelpTemplate(rule))}
-                    >
-                      Vlozit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--small btn-link"
-                      onClick={() => clearHelpInputs(rule)}
-                    >
-                      Vycistit
-                    </button>
-                  </div>
+                <div className="wizard-help-acc-actions">
+                  <button
+                    type="button"
+                    className="btn btn--small btn-primary wizard-help-insert-btn"
+                    onClick={() => insertHelpExample(buildHelpTemplate(rule))}
+                  >
+                    Vložiť príklad
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small btn-link"
+                    onClick={() => {
+                      if (helpInsertTarget?.type === "lane") {
+                        openSingleCard("lane");
+                      }
+                    }}
+                  >
+                    Upraviť v poli
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          </div>
+              </div>
+            ) : null}
+          </section>
         );
       })}
     </div>
@@ -3410,10 +3475,7 @@ export default function LinearWizardPage() {
       setInfo("Nemáš právo upravovať org model.");
       return;
     }
-    const confirmed = window.confirm("Prepnuť do editácie? Zmeny sa uložia do organizácie.");
-    if (!confirmed) return;
-    setOrgReadOnly(false);
-    setInfo("Režim: editácia.");
+    setOrgEditConfirmOpen(true);
   };
 
   const laneShapeOptions = useMemo(() => LANE_SHAPE_OPTIONS, []);
@@ -3934,11 +3996,32 @@ export default function LinearWizardPage() {
       };
       if (modelSource?.kind === "org") {
         const orgId = modelSource?.orgId;
-        const modelId = modelSource?.modelId;
-        if (!orgId || !modelId) {
+        const treeNodeId = modelSource?.treeNodeId;
+        if (!orgId) {
           throw new Error("Chyba: chyba org kontext.");
         }
-        await saveOrgModel(modelId, orgId, payload);
+        const created = await createOrgModelVersion(orgId, payload);
+        const newModelId = created?.org_model_id;
+        if (!newModelId) {
+          throw new Error("Nepodarilo sa vytvorit novu verziu modelu.");
+        }
+        if (treeNodeId) {
+          await updateOrgProcessModelRef(treeNodeId, newModelId, orgId);
+          await refreshOrgTree(orgId);
+        }
+        setOrgVersionPreview(null);
+        setPreviewVersionTag("");
+        setModelSource((prev) => ({
+          ...(prev || {}),
+          kind: "org",
+          orgId,
+          modelId: newModelId,
+          treeNodeId: treeNodeId || prev?.treeNodeId,
+        }));
+        if (routeModelId && String(routeModelId) !== String(newModelId)) {
+          lastRouteModelIdRef.current = newModelId;
+          navigate(`/model/${newModelId}`);
+        }
       } else {
         await saveWizardModel(payload);
       }
@@ -4121,6 +4204,8 @@ export default function LinearWizardPage() {
         try {
           const orgResp = await loadOrgModel(id, activeOrgId);
           applyLoadedModel(orgResp, { source: { kind: "org", orgId: activeOrgId, modelId: id } });
+          setOrgVersionPreview(null);
+          setPreviewVersionTag("");
           setInfo("Model bol nacitany.");
           return;
         } catch (orgErr) {
@@ -4282,6 +4367,19 @@ export default function LinearWizardPage() {
     return null;
   };
 
+  const findProcessNodeById = (node, nodeId) => {
+    if (!node || !nodeId) return null;
+    if (node.type === "process" && String(node.id) === String(nodeId)) {
+      return node;
+    }
+    const children = node.children || [];
+    for (const child of children) {
+      const result = findProcessNodeById(child, nodeId);
+      if (result) return result;
+    }
+    return null;
+  };
+
   const openMoveProcessModal = (node) => {
     if (!node || node.type !== "process") return;
     const parentInfo = findParentFolderInfo(orgTree, node.id);
@@ -4291,6 +4389,54 @@ export default function LinearWizardPage() {
     setOrgMoveTargetFolderId(parentInfo?.id || "root");
     setOrgMoveError(null);
     setOrgMoveModalOpen(true);
+  };
+
+  const closeOrgVersionsModal = () => {
+    setOrgVersionsOpen(false);
+    setOrgVersionsNode(null);
+    setOrgVersionsItems([]);
+    setOrgVersionsLoading(false);
+    setOrgVersionsError(null);
+  };
+
+  const openOrgVersionsModal = async (node) => {
+    if (!node || node.type !== "process") return;
+    if (!activeOrgId) {
+      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setOrgMenuNodeId(null);
+    setOrgVersionsNode(node);
+    setOrgVersionsItems([]);
+    setOrgVersionsError(null);
+    setOrgVersionsLoading(true);
+    setOrgVersionsOpen(true);
+    try {
+      const resp = await listOrgModels(activeOrgId);
+      const allItems = Array.isArray(resp) ? resp : [];
+      const processName = String(node.name || "").trim().toLowerCase();
+      const filtered = allItems.filter((item) => {
+        const name = String(item?.name || "").trim().toLowerCase();
+        return processName ? name === processName : false;
+      });
+      const sorted = filtered.sort((a, b) => new Date(b?.updated_at || 0) - new Date(a?.updated_at || 0));
+      setOrgVersionsItems(sorted);
+    } catch (e) {
+      setOrgVersionsError(e?.message || "Nepodarilo sa nacitat verzie.");
+    } finally {
+      setOrgVersionsLoading(false);
+    }
+  };
+
+  const handleOpenOrgVersion = (modelId, versionLabel = "") => {
+    if (!modelId) return;
+    const treeNodeId = orgVersionsNode?.id || null;
+    if (treeNodeId) {
+      void loadOrgModelFromTree(modelId, treeNodeId, { preview: true, previewLabel: versionLabel });
+    } else {
+      void loadOrgModelDirect(modelId);
+    }
+    closeOrgVersionsModal();
   };
 
   const handleRenameOrgProcess = async (node) => {
@@ -4312,7 +4458,8 @@ export default function LinearWizardPage() {
     }
   };
 
-  const loadOrgModelFromTree = async (modelId, treeNodeId) => {
+  const loadOrgModelFromTree = async (modelId, treeNodeId, options = {}) => {
+    const { preview = false, previewLabel = "" } = options;
     if (!activeOrgId) {
       setError("Najprv si vyber alebo vytvor organizaciu.");
       return;
@@ -4325,6 +4472,20 @@ export default function LinearWizardPage() {
       applyLoadedModel(resp, {
         source: { kind: "org", orgId: activeOrgId, modelId, treeNodeId },
       });
+      if (preview) {
+        setOrgVersionPreview({
+          isPreview: true,
+          modelId,
+          treeNodeId: treeNodeId || null,
+          label: previewLabel || "",
+        });
+        if (previewLabel) {
+          setPreviewVersionTag(previewLabel);
+        }
+      } else {
+        setOrgVersionPreview(null);
+        setPreviewVersionTag("");
+      }
       lastRouteModelIdRef.current = modelId;
       navigate(`/model/${modelId}`);
       setInfo("Model bol nacitany.");
@@ -4340,6 +4501,27 @@ export default function LinearWizardPage() {
     }
   };
 
+  const openOrgProcessByNodeLatest = async (treeNodeId) => {
+    if (!activeOrgId || !treeNodeId) {
+      setError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    let latestTree = orgTree;
+    try {
+      latestTree = await getOrgModel(activeOrgId);
+      setOrgTree(latestTree);
+    } catch {
+      // Fallback to current FE tree snapshot if refresh fails.
+    }
+    const processNode = findProcessNodeById(latestTree, treeNodeId);
+    const latestModelId = processNode?.processRef?.modelId;
+    if (!latestModelId) {
+      setError("Nepodarilo sa nájsť aktuálnu verziu procesu.");
+      return;
+    }
+    await loadOrgModelFromTree(latestModelId, treeNodeId, { preview: false });
+  };
+
   const loadOrgModelDirect = async (modelId) => {
     if (!activeOrgId) {
       setError("Najprv si vyber alebo vytvor organizaciu.");
@@ -4353,6 +4535,8 @@ export default function LinearWizardPage() {
       applyLoadedModel(resp, {
         source: { kind: "org", orgId: activeOrgId, modelId },
       });
+      setOrgVersionPreview(null);
+      setPreviewVersionTag("");
       lastRouteModelIdRef.current = modelId;
       navigate(`/model/${modelId}`);
       setInfo("Model bol nacitany.");
@@ -4749,11 +4933,10 @@ export default function LinearWizardPage() {
           type="button"
           className={`org-tree-node org-tree-node--process ${isActive ? "is-active" : ""}`}
           onClick={() => {
-            if (!modelId) return;
             const confirmed = window.confirm("Chceš otvoriť tento proces?");
             if (!confirmed) return;
             requestOpenWithSave(() => {
-              void loadOrgModelFromTree(modelId, node.id);
+              void openOrgProcessByNodeLatest(node.id);
             });
           }}
         >
@@ -4800,6 +4983,9 @@ export default function LinearWizardPage() {
           >
             <button type="button" className="org-tree-menu__item" onClick={() => handleRenameOrgProcess(node)}>
               Premenovat
+            </button>
+            <button type="button" className="org-tree-menu__item" onClick={() => void openOrgVersionsModal(node)}>
+              Verzie
             </button>
             <button type="button" className="org-tree-menu__item" onClick={() => openMoveProcessModal(node)}>
               Presunut do...
@@ -5047,13 +5233,40 @@ export default function LinearWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const selectedInviteOrgRole = useMemo(() => {
+    if (!inviteOrgId) return "";
+    const org = myOrgs.find((item) => String(item.id) === String(inviteOrgId));
+    return String(org?.role || "").toLowerCase();
+  }, [inviteOrgId, myOrgs]);
+
+  const hasAnyAdminOrg = useMemo(
+    () => myOrgs.some((org) => ["owner", "admin"].includes(String(org?.role || "").toLowerCase())),
+    [myOrgs],
+  );
+  const adminCapableOrgs = useMemo(
+    () => myOrgs.filter((org) => ["owner", "admin"].includes(String(org?.role || "").toLowerCase())),
+    [myOrgs],
+  );
+
+  const isActiveOrgAdmin = useMemo(
+    () => ["owner", "admin"].includes(String(activeOrgRole || "").toLowerCase()),
+    [activeOrgRole],
+  );
+
   useEffect(() => {
     if (!orgsModalOpen) return;
     const fallback = activeOrgId || (myOrgs.length ? myOrgs[0].id : "");
+    const fallbackInvite =
+      activeOrgId && adminCapableOrgs.find((org) => String(org.id) === String(activeOrgId))
+        ? activeOrgId
+        : (adminCapableOrgs[0]?.id || "");
     if (!addMemberOrgId && fallback) {
       setAddMemberOrgId(fallback);
     }
-  }, [orgsModalOpen, activeOrgId, myOrgs, addMemberOrgId]);
+    if (!inviteOrgId && fallbackInvite) {
+      setInviteOrgId(fallbackInvite);
+    }
+  }, [orgsModalOpen, activeOrgId, myOrgs, addMemberOrgId, inviteOrgId, adminCapableOrgs]);
 
   const fetchModels = async () => {
     setModelsLoading(true);
@@ -5277,6 +5490,8 @@ export default function LinearWizardPage() {
 
   const openOrgsModal = async () => {
     setOrgsModalOpen(true);
+    setInviteError(null);
+    setInviteCopied(false);
     await refreshMyOrgs(activeOrgId);
   };
 
@@ -5286,10 +5501,17 @@ export default function LinearWizardPage() {
       setInfo("Nemáš právo upravovať org model.");
       return;
     }
-    const confirmed = window.confirm("Prepnúť do editácie? Zmeny sa uložia do organizácie.");
-    if (!confirmed) return;
+    setOrgEditConfirmOpen(true);
+  };
+
+  const handleConfirmEnableOrgEdit = () => {
+    setOrgEditConfirmOpen(false);
     setOrgReadOnly(false);
     setInfo("Režim: editácia.");
+  };
+
+  const handleCancelEnableOrgEdit = () => {
+    setOrgEditConfirmOpen(false);
   };
 
   const handleSelectOrg = async (org) => {
@@ -5350,6 +5572,51 @@ export default function LinearWizardPage() {
       setAddMemberError(e?.message || "Nepodarilo sa pridat pouzivatela.");
     } finally {
       setAddMemberLoading(false);
+    }
+  };
+
+  const handleGetInviteLink = async (regenerate = false) => {
+    const orgId = inviteOrgId || activeOrgId;
+    if (!orgId) {
+      setInviteError("Vyber organizaciu.");
+      return;
+    }
+    setInviteLoading(true);
+    setInviteError(null);
+    setInviteCopied(false);
+    try {
+      const response = await getOrgInviteLink(orgId, { regenerate });
+      const token = response?.token || "";
+      if (!token) {
+        throw new Error("Nepodarilo sa získať invite token.");
+      }
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      setInviteLink(`${origin}/join-org/${token}`);
+    } catch (e) {
+      setInviteError(e?.message || "Nepodarilo sa získať invite link.");
+      setInviteLink("");
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleCopyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(inviteLink);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = inviteLink;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        textArea.remove();
+      }
+      setInviteCopied(true);
+      window.setTimeout(() => setInviteCopied(false), 1600);
+    } catch {
+      setInviteError("Kopírovanie zlyhalo. Skús skopírovať link manuálne.");
     }
   };
 
@@ -5619,6 +5886,67 @@ export default function LinearWizardPage() {
   const generatorInput = processCard.generatorInput;
   const processMeta = processCard.processMeta;
   const selectedLaneIndex = selectedLane ? findLaneIndex(selectedLane, engineJson?.lanes || []) : -1;
+  const laneRoleDisplayName = useMemo(
+    () => String(selectedLane?.name || selectedLane?.id || "Rola").trim() || "Rola",
+    [selectedLane],
+  );
+  const laneSubtitle = useMemo(
+    () => (selectedLaneIndex >= 0 ? `Rola / Lane ${selectedLaneIndex + 1}` : "Rola / Lane"),
+    [selectedLaneIndex],
+  );
+  const laneHasWarnings = useMemo(
+    () => laneHelperItems.some((item) => Boolean(item.warning)),
+    [laneHelperItems],
+  );
+  const laneWarningCount = useMemo(
+    () => laneHelperItems.filter((item) => Boolean(item.warning)).length,
+    [laneHelperItems],
+  );
+  const showLaneHelpTip = laneWarningCount > 0 && !helpOpen && !laneHelpTipDismissed;
+  const laneControlStatus = useMemo(() => {
+    if (!laneDescription.trim()) return "idle";
+    if (laneHasWarnings) return "warning";
+    return "ok";
+  }, [laneDescription, laneHasWarnings]);
+  const laneApplyButtonLabel = useMemo(() => {
+    const roleName = String(selectedLane?.name || selectedLane?.id || "").trim();
+    if (!roleName) return "Vytvoriť aktivity pre túto rolu";
+    const compactName = roleName.length > 28 ? `${roleName.slice(0, 28)}...` : roleName;
+    return `Vytvoriť aktivity pre: ${compactName}`;
+  }, [selectedLane]);
+  useEffect(() => {
+    if (!laneWarningCount) {
+      setLaneHelpTipDismissed(false);
+    }
+  }, [laneWarningCount]);
+  useEffect(() => {
+    if (helpOpen && laneWarningCount > 0) {
+      setLaneHelpTipDismissed(true);
+    }
+  }, [helpOpen, laneWarningCount]);
+  useEffect(() => {
+    if (!helpOpen || !helpIntent?.type) return;
+    const targetSection = mapHelpIntentTypeToSection(helpIntent.type);
+    setActiveHelpSection(targetSection);
+    setHelpAccordionOpen((prev) => ({ ...prev, [targetSection]: true }));
+    setHelpHighlightSection(targetSection);
+    const clearTimer = window.setTimeout(() => {
+      setHelpHighlightSection((current) => (current === targetSection ? "" : current));
+    }, 1800);
+    window.requestAnimationFrame(() => {
+      const sectionEl = helpSectionRefs.current[targetSection];
+      if (sectionEl?.scrollIntoView) {
+        sectionEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      const inputEl = helpFirstInputRefs.current[targetSection];
+      if (inputEl?.focus) {
+        inputEl.focus();
+      }
+    });
+    return () => {
+      window.clearTimeout(clearTimer);
+    };
+  }, [helpIntent, helpOpen]);
   const modelGroups = useMemo(() => {
     const groups = new Map();
     models.forEach((model) => {
@@ -5637,6 +5965,15 @@ export default function LinearWizardPage() {
       })
       .sort((a, b) => new Date(b.latest?.updated_at || 0) - new Date(a.latest?.updated_at || 0));
   }, [models]);
+
+  const orgVersionRows = useMemo(() => {
+    const total = orgVersionsItems.length;
+    return orgVersionsItems.map((item, index) => ({
+      ...item,
+      versionLabel: `#${Math.max(total - index, 1)}`,
+    }));
+  }, [orgVersionsItems]);
+  const showGuideBanners = modelSource?.kind !== "org" && guideEnabled && guideState?.message;
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
@@ -6155,19 +6492,26 @@ export default function LinearWizardPage() {
           {laneOpen && selectedLane ? (
             <div className={`process-card-drawer is-open process-card-lane ${isReadOnlyMode ? "is-readonly" : ""}`}>
               <div className="process-card-header">
-                <div>
-                  <div className="process-card-label">
-                    Lane {selectedLaneIndex >= 0 ? `${selectedLaneIndex + 1}: ` : ""}
-                    {selectedLane.name || selectedLane.id}
-                  </div>
-                  <div className="process-card-description">
-                    Si v role. Tu píšeš, čo táto rola robí. Môžeš pridať tvar alebo otvoriť pomocníka.
+                <div className="wizard-lane-v2__title-wrap">
+                  <div className="wizard-lane-v2__title">{laneRoleDisplayName}</div>
+                  <div className="wizard-lane-v2__subtitle">{laneSubtitle}</div>
+                  <div className="wizard-lane-v2__hint">
+                    Tu doplníš kroky tejto roly. 1 riadok znamená 1 krok v procese.
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div className="wizard-lane-v2__header-actions">
                   <button
                     type="button"
-                    className="btn btn--small btn-primary lane-action-btn"
+                    className="btn btn--small wizard-lane-v2__header-btn"
+                    onClick={() => {
+                      openLaneHelper({ type: inferLaneHelpIntentType() });
+                    }}
+                  >
+                    Pomocník
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--small wizard-lane-v2__header-btn"
                     onClick={() => setLaneInsertOpen(true)}
                     disabled={isReadOnlyMode}
                   >
@@ -6175,25 +6519,7 @@ export default function LinearWizardPage() {
                   </button>
                   <button
                     type="button"
-                    className="btn btn--small btn-link wizard-lane-help-btn lane-action-btn"
-                    onClick={() => {
-                      if (helpOpen) {
-                        openSingleCard(null);
-                        return;
-                      }
-                      openSingleCard("help");
-                      setHelpInsertTarget({
-                        type: "lane",
-                        laneId: selectedLane.id,
-                        laneName: selectedLane.name || selectedLane.id,
-                      });
-                    }}
-                    >
-                      Pomocník
-                    </button>
-                  <button
-                    type="button"
-                    className="process-card-close"
+                    className="process-card-close wizard-lane-v2__close"
                     aria-label="Zavrieť panel lane"
                     onClick={() => {
                       setSelectedLane(null);
@@ -6205,11 +6531,9 @@ export default function LinearWizardPage() {
                   </button>
                 </div>
               </div>
-              <div className="process-card-body">
-                <div className="wizard-lane-panel__content wizard-lane-panel__content--single">
-                  <div className="wizard-lane-panel__right wizard-lane-panel__right--full">
-                    {guideEnabled &&
-                    guideState?.message &&
+              <div className="process-card-body wizard-lane-v2__body" ref={lanePanelScrollRef}>
+                <div className="wizard-lane-v2__card">
+                    {showGuideBanners &&
                     guideState?.scope === "lane" &&
                     guideState?.laneId &&
                     selectedLane?.id === guideState.laneId ? (
@@ -6268,115 +6592,152 @@ export default function LinearWizardPage() {
                         </div>
                       </div>
                     ) : null}
-                    <div className="wizard-lane-panel__section-title">Kroky role</div>
-                    <span className="wizard-lane-panel__sub">Napíš kroky tejto role. Jeden riadok = jeden krok.</span>
-                    <div className="wizard-lane-tips">
-                      <div>
-                        •{" "}
-                        <span
-                          className="wizard-lane-tip-label"
-                          title="Jednoduchý krok, ktorý nasleduje po predchádzajúcom."
+                    <div className="wizard-lane-v2__section">
+                      <div className="wizard-lane-v2__section-header">VZORY</div>
+                      <div className="wizard-lane-v2__section-sub">Dočasne: výber cez dropdown</div>
+                      <div className="wizard-lane-v2__template-select-wrap">
+                        <select
+                          className="wizard-lane-v2__template-select"
+                          value={laneTemplateChoice}
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            setLaneTemplateChoice(selectedId);
+                            const template = LANE_TEMPLATES.find((item) => item.id === selectedId);
+                            if (template) {
+                              applyLaneTemplate(template);
+                            }
+                          }}
+                          disabled={isReadOnlyMode}
                         >
-                          Bežný krok:
-                        </span>{" "}
-                        napíš jednu aktivitu na riadok.
-                      </div>
-                      <div>
-                        •{" "}
-                        <span
-                          className="wizard-lane-tip-label"
-                          title="Keď sa proces môže uberať dvoma smermi (áno/nie), použij rozhodnutie."
-                        >
-                          Rozhodnutie:
-                        </span>{" "}
-                        začni riadok slovom „Ak“ alebo „Keď“ (potom doplň „inak“).
-                      </div>
-                      <div>
-                        •{" "}
-                        <span
-                          className="wizard-lane-tip-label"
-                          title="Viac krokov prebieha naraz – každý z nich je vlastná vetva."
-                        >
-                          Paralela:
-                        </span>{" "}
-                        začni „Zároveň“ alebo „Paralelne“ (viac krokov oddeľ , ; alebo „a“).
+                          <option value="">Vyber vzor...</option>
+                          {LANE_TEMPLATES.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.label}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </div>
-                    <div className="wizard-lane-structures">
-                      Rozpoznané: Rozhodnutia: {laneStructureCounts.decisions} | Paralely:{" "}
-                      {laneStructureCounts.parallels}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                      {LANE_TEMPLATES.map((template) => (
+                    <div className="wizard-lane-v2__section">
+                      <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
+                      <div className="wizard-lane-v2__section-sub">1 riadok = 1 krok</div>
+                      <textarea
+                        ref={laneTextareaRef}
+                        value={laneDescription}
+                        onChange={(e) => updateLaneDescription(e.target.value)}
+                        rows={9}
+                        placeholder={
+                          "Prijmem žiadosť\nOverím identitu\nAk identita nie je platná, zamietnem žiadosť, inak pokračujem..."
+                        }
+                        onKeyDown={(e) => {
+                          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                            e.preventDefault();
+                            if (!isLoading && !isReadOnlyMode && laneDescription.trim()) {
+                              void handleAppendToLane();
+                            }
+                          }
+                        }}
+                        className={`wizard-lane-textarea wizard-lane-v2__textarea ${
+                          inlineLaneHint || hasLaneStructure ? "wizard-lane-textarea--structure" : ""
+                        } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""}`}
+                      />
+                      <div className="wizard-lane-v2__helper-row">
+                        <div className="wizard-lane-v2__badges">
+                          <span className="wizard-lane-v2__badge">Rozhodnutia: {laneStructureCounts.decisions}</span>
+                          <span className="wizard-lane-v2__badge">Paralely: {laneStructureCounts.parallels}</span>
+                        </div>
                         <button
-                          key={template.id}
                           type="button"
-                          className="btn btn--small"
-                          onClick={() => applyLaneTemplate(template)}
+                          className={`btn btn--small wizard-lane-v2__link-btn ${showLaneHelpTip ? "is-nudged" : ""}`}
+                          title="Otvorí pomocníka, kde si vieš vložiť vzor alebo vyplniť konštrukciu."
+                          onClick={() => {
+                            openLaneHelper({ type: inferLaneHelpIntentType() });
+                          }}
                         >
-                          Vzor: {template.label}
+                          Pomôž mi napísať krok
                         </button>
-                      ))}
-                    </div>
-                    <textarea
-                      ref={laneTextareaRef}
-                      value={laneDescription}
-                      onChange={(e) => updateLaneDescription(e.target.value)}
-                      rows={6}
-                      className={`wizard-lane-textarea ${
-                        inlineLaneHint || hasLaneStructure ? "wizard-lane-textarea--structure" : ""
-                      } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""}`}
-                    />
-                    {inlineLaneHint ? (
-                      <div className="wizard-lane-inline-hint">
-                        <span>{inlineLaneHint.message}</span>
-                        {inlineLaneHint.templateType ? (
+                        {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">1 tip</span> : null}
+                      </div>
+                      {inlineLaneHint ? (
+                        <div className="wizard-lane-inline-hint">
+                          <span>{inlineLaneHint.message}</span>
+                          {inlineLaneHint.templateType ? (
+                            <button
+                              type="button"
+                              className="btn btn--small wizard-lane-inline-btn"
+                              onClick={() => insertLaneTemplate(inlineLaneHint.templateType)}
+                            >
+                              Vložiť vzor
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="wizard-lane-v2__row-actions">
+                        <button
+                          className="btn btn-primary lane-primary-btn wizard-lane-v2__apply-btn"
+                          type="button"
+                          onClick={handleAppendToLane}
+                          disabled={isLoading || isReadOnlyMode || !laneDescription.trim()}
+                        >
+                          {isLoading ? "Pridávam..." : laneApplyButtonLabel}
+                        </button>
+                        {laneDescription.trim() ? (
                           <button
+                            className="btn btn--small wizard-lane-v2__clear-btn"
                             type="button"
-                            className="btn btn--small wizard-lane-inline-btn"
-                            onClick={() => insertLaneTemplate(inlineLaneHint.templateType)}
+                            onClick={() => setLaneDescription("")}
+                            disabled={isLoading}
                           >
-                            Vložiť vzor
+                            Vyčistiť
                           </button>
                         ) : null}
                       </div>
-                    ) : null}
-                    <button
-                      className="btn btn-primary lane-primary-btn"
-                      type="button"
-                      onClick={handleAppendToLane}
-                      disabled={isLoading || isReadOnlyMode}
-                    >
-                      {isLoading ? "Pridávam..." : "Vytvor aktivity pre túto rolu"}
-                    </button>
-                  </div>
-                  <div className="wizard-lane-panel__left wizard-lane-panel__left--full">
-                    {laneHelperItems.length ? (
-                      <div className="lane-helper">
-                        <div className="lane-helper__title">Živý preklad krokov</div>
-                        <div className="lane-helper__list">
-                          {laneHelperItems.map((item) => (
-                            <div key={item.id} className={`lane-helper__row lane-helper__row--${item.type}`}>
-                              <div className="lane-helper__badge">{item.badge}</div>
-                              <div className="lane-helper__content">
-                                <div className="lane-helper__line">
-                                  <span className="lane-helper__label">Riadok {item.lineNumber}:</span> {item.text}
+                      {!laneDescription.trim() ? (
+                        <div className="wizard-lane-v2__disabled-hint">Najprv napíš aspoň 1 krok.</div>
+                      ) : null}
+                    </div>
+
+                    <div className="wizard-lane-v2__section">
+                      <div className="wizard-lane-v2__control-head">
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <span
+                            className={`wizard-lane-v2__status-dot ${
+                              laneControlStatus === "ok"
+                                ? "is-ok"
+                                : laneControlStatus === "warning"
+                                  ? "is-warning"
+                                  : "is-idle"
+                            }`}
+                            aria-hidden
+                          />
+                          KONTROLA KROKOV
+                        </span>
+                      </div>
+                      <div className="wizard-lane-v2__control-body is-compact">
+                        {laneDescription.trim() ? (
+                          laneHelperItems.length ? (
+                            <div className="wizard-lane-v2__control-list">
+                              {laneHelperItems.map((item) => (
+                                <div key={item.id} className="wizard-lane-v2__control-item">
+                                  <div className="wizard-lane-v2__control-line">
+                                    <strong>{item.badge}</strong> - {item.text}
+                                  </div>
+                                  {item.warning ? (
+                                    <div className="wizard-lane-v2__control-warning">{item.warning}</div>
+                                  ) : null}
                                 </div>
-                                <div className="lane-helper__hint">{item.hint}</div>
-                                {item.success ? <div className="lane-helper__success">{item.success}</div> : null}
-                                {item.warning ? <div className="lane-helper__warning">{item.warning}</div> : null}
-                              </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          ) : (
+                            <div className="wizard-lane-v2__control-ok">Kroky vyzerajú konzistentne.</div>
+                          )
+                        ) : (
+                          <div className="wizard-lane-v2__muted">
+                            Začni písať kroky a kontrola ti ukáže typy krokov a upozornenia.
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="lane-helper">
-                        <div className="lane-helper__title">Živý preklad krokov</div>
-                        <div className="lane-helper__hint">Napíš krok a ja ti ukážem, či je to jednoduchý krok alebo rozhodovanie.</div>
-                      </div>
-                    )}
-                  </div>
+                    </div>
                 </div>
               </div>
             </div>
@@ -6393,15 +6754,23 @@ export default function LinearWizardPage() {
                       ? `lane ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
                       : "hlavné kroky"}
                   </div>
+                  <div className="wizard-help-card-hint">Klikni na „Vložiť" a doplň si vlastný text.</div>
                 </div>
-                <button
-                  type="button"
-                  className="process-card-close"
-                  aria-label="Zavrieť pomocníka"
-                  onClick={() => setHelpOpen(false)}
-                >
-                  ×
-                </button>
+                <div className="process-card-header-actions">
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    onClick={() => {
+                      if (selectedLane?.id) {
+                        openSingleCard("lane");
+                        return;
+                      }
+                      setHelpOpen(false);
+                    }}
+                  >
+                    Späť
+                  </button>
+                </div>
               </div>
               <div className="process-card-body">
                 {renderHelpList()}
@@ -6699,7 +7068,9 @@ export default function LinearWizardPage() {
               <div>
                 <div style={{ fontWeight: 600 }}>READ-ONLY režim</div>
                 <div style={{ fontSize: 12, opacity: 0.8 }}>
-                  Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“.
+                  {activeOrgRole === "owner"
+                    ? "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."
+                    : "Tento org model je len na čítanie. Novú verziu môžeš publikovať z pieskoviska cez Push do organizácie."}
                 </div>
               </div>
               {activeOrgRole === "owner" ? (
@@ -6709,8 +7080,35 @@ export default function LinearWizardPage() {
               ) : null}
             </div>
           ) : null}
+          {modelSource?.kind === "org" && orgVersionPreview?.isPreview ? (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "rgba(120, 53, 15, 0.18)",
+                border: "1px solid rgba(251, 191, 36, 0.45)",
+                color: "#fef3c7",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>
+                Pozeráš staršiu verziu {orgVersionPreview?.label || ""}. 
+              </div>
+              <button
+                className="btn btn--small"
+                type="button"
+                onClick={() => void openOrgProcessByNodeLatest(orgVersionPreview?.treeNodeId || modelSource?.treeNodeId)}
+              >
+                Otvoriť najnovšiu
+              </button>
+            </div>
+          ) : null}
           <div className="wizard-viewer">
-            {guideEnabled && guideState?.message ? (
+            {showGuideBanners ? (
               <div className="guide-bar">
                 <div className="guide-bar__text">
                   {guideState?.title ? (
@@ -7087,6 +7485,82 @@ export default function LinearWizardPage() {
           </div>
         ) : null}
 
+        {orgVersionsOpen ? (
+          <div className="wizard-models-modal" onClick={closeOrgVersionsModal}>
+            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div>
+                  <h3 style={{ margin: 0 }}>Verzie procesu</h3>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+                    {orgVersionsNode?.name || "Proces"} · organizacne verzie
+                  </div>
+                </div>
+                <div className="wizard-models-tools">
+                  <button
+                    className="btn btn--small"
+                    type="button"
+                    onClick={() => void openOrgVersionsModal(orgVersionsNode)}
+                    disabled={orgVersionsLoading}
+                  >
+                    {orgVersionsLoading ? "Nacitavam..." : "Obnovit"}
+                  </button>
+                </div>
+              </div>
+              {orgVersionsError ? <div className="wizard-error">{orgVersionsError}</div> : null}
+              <div style={{ overflow: "auto" }}>
+                <table className="wizard-models-table">
+                  <thead>
+                    <tr>
+                      <th>Verzia</th>
+                      <th>ID</th>
+                      <th>Vytvoreny</th>
+                      <th>Naposledy upraveny</th>
+                      <th>Akcie</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orgVersionsLoading ? (
+                      <tr>
+                        <td colSpan={5}>Nacitavam...</td>
+                      </tr>
+                    ) : orgVersionRows.length ? (
+                      orgVersionRows.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.versionLabel}</td>
+                          <td>{item.id}</td>
+                          <td>{formatDateTime(item.created_at)}</td>
+                          <td>{formatDateTime(item.updated_at)}</td>
+                          <td>
+                            <div className="wizard-models-actions">
+                              <button
+                                className="btn btn--small btn-primary"
+                                type="button"
+                                onClick={() => handleOpenOrgVersion(item.id, item.versionLabel)}
+                                disabled={loadLoading}
+                              >
+                                Otvorit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5}>Pre tento proces zatial neexistuju dalsie verzie.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button className="btn" type="button" onClick={closeOrgVersionsModal}>
+                  Zavriet
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {orgsModalOpen ? (
           <div className="wizard-models-modal" onClick={() => setOrgsModalOpen(false)}>
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
@@ -7150,65 +7624,131 @@ export default function LinearWizardPage() {
                   </tbody>
                 </table>
               </div>
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Vytvorit organizaciu</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    type="text"
-                    className="wizard-models-search"
-                    placeholder="Nazov organizacie"
-                    value={newOrgName}
-                    onChange={(e) => setNewOrgName(e.target.value)}
-                  />
-                  <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrgInline}>
-                    Vytvorit
-                  </button>
-                </div>
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Pridat pouzivatela do organizacie</div>
-                {addMemberError ? <div className="wizard-error">{addMemberError}</div> : null}
-                {addMemberInfo ? <div className="wizard-info">{addMemberInfo}</div> : null}
-                <div style={{ display: "grid", gap: 8 }}>
-                  <input
-                    type="email"
-                    className="wizard-models-search"
-                    placeholder="Email pouzivatela"
-                    value={addMemberEmail}
-                    onChange={(e) => setAddMemberEmail(e.target.value)}
-                  />
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {isActiveOrgAdmin ? (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Invite link do organizácie</div>
+                  {inviteError ? <div className="wizard-error">{inviteError}</div> : null}
+                  <div style={{ display: "grid", gap: 8 }}>
                     <select
                       className="wizard-models-search"
-                      value={addMemberOrgId}
-                      onChange={(e) => setAddMemberOrgId(e.target.value)}
+                      value={inviteOrgId}
+                      onChange={(e) => {
+                        setInviteOrgId(e.target.value);
+                        setInviteError(null);
+                        setInviteCopied(false);
+                        setInviteLink("");
+                      }}
                     >
                       <option value="">Vyber organizaciu</option>
-                      {myOrgs.map((org) => (
+                      {adminCapableOrgs.map((org) => (
                         <option key={org.id} value={org.id}>
                           {org.name || org.id}
                         </option>
                       ))}
                     </select>
-                    <select
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        className="btn btn--small btn-primary"
+                        type="button"
+                        onClick={() => handleGetInviteLink(false)}
+                        disabled={inviteLoading || !inviteOrgId}
+                      >
+                        {inviteLoading ? "Načítavam..." : "Získať link"}
+                      </button>
+                      {(selectedInviteOrgRole === "owner" || selectedInviteOrgRole === "admin") ? (
+                        <button
+                          className="btn btn--small"
+                          type="button"
+                          onClick={() => handleGetInviteLink(true)}
+                          disabled={inviteLoading || !inviteOrgId}
+                        >
+                          Regenerovať
+                        </button>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        type="text"
+                        className="wizard-models-search"
+                        value={inviteLink}
+                        placeholder="Link sa zobrazí tu..."
+                        readOnly
+                      />
+                      <button
+                        className="btn btn--small"
+                        type="button"
+                        onClick={handleCopyInviteLink}
+                        disabled={!inviteLink}
+                      >
+                        {inviteCopied ? "Skopírované" : "Kopírovať"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {hasAnyAdminOrg ? (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Vytvorit organizaciu</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="text"
                       className="wizard-models-search"
-                      value={addMemberRole}
-                      onChange={(e) => setAddMemberRole(e.target.value)}
-                    >
-                      <option value="owner">owner</option>
-                      <option value="member">member</option>
-                    </select>
-                    <button
-                      className="btn btn--small btn-primary"
-                      type="button"
-                      onClick={handleAddOrgMember}
-                      disabled={addMemberLoading || !addMemberEmail.trim() || !addMemberOrgId}
-                    >
-                      {addMemberLoading ? "Pridavam..." : "Pridat"}
+                      placeholder="Nazov organizacie"
+                      value={newOrgName}
+                      onChange={(e) => setNewOrgName(e.target.value)}
+                    />
+                    <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrgInline}>
+                      Vytvorit
                     </button>
                   </div>
                 </div>
-              </div>
+              ) : null}
+              {isActiveOrgAdmin ? (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Pridat pouzivatela do organizacie</div>
+                  {addMemberError ? <div className="wizard-error">{addMemberError}</div> : null}
+                  {addMemberInfo ? <div className="wizard-info">{addMemberInfo}</div> : null}
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <input
+                      type="email"
+                      className="wizard-models-search"
+                      placeholder="Email pouzivatela"
+                      value={addMemberEmail}
+                      onChange={(e) => setAddMemberEmail(e.target.value)}
+                    />
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <select
+                        className="wizard-models-search"
+                        value={addMemberOrgId}
+                        onChange={(e) => setAddMemberOrgId(e.target.value)}
+                      >
+                        <option value="">Vyber organizaciu</option>
+                        {adminCapableOrgs.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name || org.id}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="wizard-models-search"
+                        value={addMemberRole}
+                        onChange={(e) => setAddMemberRole(e.target.value)}
+                      >
+                        <option value="owner">owner</option>
+                        <option value="member">member</option>
+                      </select>
+                      <button
+                        className="btn btn--small btn-primary"
+                        type="button"
+                        onClick={handleAddOrgMember}
+                        disabled={addMemberLoading || !addMemberEmail.trim() || !addMemberOrgId}
+                      >
+                        {addMemberLoading ? "Pridavam..." : "Pridat"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <div style={{ marginTop: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <div style={{ fontSize: 12, opacity: 0.7 }}>Clenovia aktivnej organizacie</div>
@@ -7438,6 +7978,30 @@ export default function LinearWizardPage() {
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
                   Ulozit model
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgEditConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={handleCancelEnableOrgEdit}>
+            <div className="wizard-models-panel wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Prepnúť do editácie?</h3>
+                <button className="btn btn--small" type="button" onClick={handleCancelEnableOrgEdit}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text">
+                Zmeny sa budú ukladať do organizácie. Chceš pokračovať?
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={handleCancelEnableOrgEdit}>
+                  Zrušiť
+                </button>
+                <button className="btn btn-primary" type="button" onClick={handleConfirmEnableOrgEdit}>
+                  Áno, upraviť
                 </button>
               </div>
             </div>

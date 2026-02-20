@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { loginAuth } from "../api/auth";
 
+const PENDING_INVITE_STORAGE_KEY = "PENDING_ORG_INVITE_TOKEN";
+
 function LoginPage({ onLoginSuccess }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
@@ -17,7 +19,13 @@ function LoginPage({ onLoginSuccess }) {
       if (typeof onLoginSuccess === "function") {
         await onLoginSuccess();
       }
-      navigate("/", { replace: true });
+      const pendingInviteToken =
+        typeof window !== "undefined" ? window.localStorage.getItem(PENDING_INVITE_STORAGE_KEY) : "";
+      if (pendingInviteToken) {
+        navigate(`/join-org/${pendingInviteToken}`, { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
     } catch (error) {
       setStatus({ loading: false, error: error.message });
     }

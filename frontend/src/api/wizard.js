@@ -356,6 +356,52 @@ export async function createOrg(name) {
   return response.json();
 }
 
+export async function getOrgInviteLink(orgId, options = {}) {
+  const query = new URLSearchParams();
+  if (options?.regenerate) query.set("regenerate", "true");
+  const response = await fetch(
+    `${API_BASE}/api/orgs/${encodeURIComponent(orgId)}/invite-link${query.toString() ? `?${query.toString()}` : ""}`,
+    {
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function acceptOrgInvite(token) {
+  const response = await fetch(`${API_BASE}/api/orgs/invite/${encodeURIComponent(token)}/accept`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 export async function loadOrgModel(modelId, orgId) {
   const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
   const response = await fetch(`${API_BASE}/api/orgs/models/${modelId}${query}`, {
@@ -363,6 +409,44 @@ export async function loadOrgModel(modelId, orgId) {
   });
   if (!response.ok) {
     const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function listOrgModels(orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/models${query}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const message = `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function createOrgModelVersion(orgId, payload) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/models${query}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
     const error = new Error(message);
     error.status = response.status;
     throw error;

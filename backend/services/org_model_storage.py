@@ -219,3 +219,15 @@ def delete_node(org_id: str, node_id: str) -> None:
         raise ValueError("Priecinok musi byt prazdny.")
     parent["children"] = [child for child in parent.get("children", []) if child.get("id") != node_id]
     _write_tree(org_id, tree)
+
+
+def set_process_model_ref(org_id: str, node_id: str, model_id: str) -> dict[str, Any]:
+    tree = _read_tree(org_id)
+    node, _ = _find_node_and_parent(tree, node_id)
+    if not node:
+        raise ValueError("Polozka neexistuje.")
+    if node.get("type") != "process":
+        raise ValueError("Cielova polozka nie je proces.")
+    node["processRef"] = {"modelId": model_id}
+    _write_tree(org_id, tree)
+    return node

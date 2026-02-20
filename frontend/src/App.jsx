@@ -10,6 +10,7 @@ import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import JoinOrgPage from "./pages/JoinOrgPage";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -463,6 +464,7 @@ function AppLayout() {
               element={renderPublicOnly(<LoginPage onLoginSuccess={refreshAuthState} />)}
             />
             <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
+            <Route path="/join-org/:token" element={<JoinOrgPage />} />
             <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import secrets
 from uuid import uuid4
 
 from auth.db import get_connection
@@ -329,4 +330,137 @@ def list_org_members(org_id: str) -> list[dict]:
             (org_id,),
         ).fetchall()
     return [{"email": row["email"], "role": row["role"]} for row in rows]
+
+
+def get_org_by_id(org_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, name
+            FROM organizations
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (org_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {"id": row["id"], "name": row["name"]}
+
+
+def get_active_org_invite(org_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, organization_id, token, created_by_user_id, created_at
+            FROM organization_invites
+            WHERE organization_id = ? AND revoked_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (org_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "organization_id": row["organization_id"],
+        "token": row["token"],
+        "created_by_user_id": row["created_by_user_id"],
+        "created_at": row["created_at"],
+    }
+
+
+def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    now = to_iso_z(utcnow())
+    invite_id = str(uuid4())
+    token = secrets.token_urlsafe(32)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO organization_invites(id, organization_id, token, created_by_user_id, created_at, revoked_at)
+            VALUES (?, ?, ?, ?, ?, NULL)
+            """,
+            (invite_id, org_id, token, created_by_user_id, now),
+        )
+        conn.commit()
+    return {
+        "id": invite_id,
+        "organization_id": org_id,
+        "token": token,
+        "created_by_user_id": created_by_user_id,
+        "created_at": now,
+    }
+
+
+def revoke_active_org_invites(org_id: str) -> None:
+    now = to_iso_z(utcnow())
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE organization_invites
+            SET revoked_at = ?
+            WHERE organization_id = ? AND revoked_at IS NULL
+            """,
+            (now, org_id),
+        )
+        conn.commit()
+
+
+def get_or_create_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    existing = get_active_org_invite(org_id)
+    if existing:
+        return existing
+    return create_org_invite(org_id, created_by_user_id)
+
+
+def regenerate_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    revoke_active_org_invites(org_id)
+    return create_org_invite(org_id, created_by_user_id)
+
+
+def accept_org_invite(token: str, user_id: str) -> dict:
+    cleaned = (token or "").strip()
+    if not cleaned:
+        raise ValueError("Invite token je povinny.")
+    with get_connection() as conn:
+        invite = conn.execute(
+            """
+            SELECT i.organization_id, o.name
+            FROM organization_invites i
+            JOIN organizations o ON o.id = i.organization_id
+            WHERE i.token = ? AND i.revoked_at IS NULL
+            LIMIT 1
+            """,
+            (cleaned,),
+        ).fetchone()
+        if not invite:
+            raise ValueError("Invite link je neplatný alebo už neaktívny.")
+        existing = conn.execute(
+            """
+            SELECT role
+            FROM organization_members
+            WHERE organization_id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (invite["organization_id"], user_id),
+        ).fetchone()
+        if existing:
+            return {
+                "org": {"id": invite["organization_id"], "name": invite["name"]},
+                "membership": {"role": existing["role"], "already_member": True},
+            }
+        now = to_iso_z(utcnow())
+        conn.execute(
+            """
+            INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
+            VALUES (?, ?, ?, 'member', ?)
+            """,
+            (str(uuid4()), invite["organization_id"], user_id, now),
+        )
+        conn.commit()
+    return {
+        "org": {"id": invite["organization_id"], "name": invite["name"]},
+        "membership": {"role": "member", "already_member": False},
+    }
 logger = logging.getLogger(__name__)

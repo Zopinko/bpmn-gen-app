@@ -82,3 +82,11 @@ export function deleteOrgNode(nodeId, orgId) {
     method: "DELETE",
   });
 }
+
+export function updateOrgProcessModelRef(nodeId, modelId, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/process/${nodeId}/model-ref${query}`, {
+    method: "PATCH",
+    body: JSON.stringify({ modelId }),
+  });
+}

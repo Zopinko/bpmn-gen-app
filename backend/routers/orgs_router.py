@@ -5,15 +5,18 @@ from pydantic import BaseModel
 
 from auth.deps import require_primary_org_id, require_user
 from auth.service import (
+    accept_org_invite,
     AuthUser,
     add_org_member,
     create_org_with_owner,
     find_user_id_by_email,
+    get_or_create_org_invite,
     get_user_orgs,
     get_user_primary_org,
     get_user_org_role,
     is_user_member_of_org,
     list_org_members,
+    regenerate_org_invite,
 )
 from auth.security import to_iso_z, utcnow
 from services.model_storage import load_model, save_model
@@ -33,10 +36,23 @@ class PushOrgModelRequest(BaseModel):
     org_id: str | None = None
 
 
+class CreateOrgModelVersionRequest(BaseModel):
+    name: str
+    engine_json: dict
+    diagram_xml: str
+    generator_input: dict | None = None
+    process_meta: dict | None = None
+
+
 class AddOrgMemberRequest(BaseModel):
     email: str
     org_id: str | None = None
     role: str | None = None
+
+
+class AcceptOrgInviteResponse(BaseModel):
+    org: dict
+    membership: dict
 
 
 @router.post("", status_code=201)
@@ -92,6 +108,36 @@ def list_org_members_endpoint(org_id: str | None = None, current_user: AuthUser 
     return list_org_members(org_id)
 
 
+@router.get("/{org_id}/invite-link")
+def get_org_invite_link(
+    org_id: str,
+    regenerate: bool = False,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    role = get_user_org_role(current_user.id, resolved_org_id)
+    if role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
+    invite = (
+        regenerate_org_invite(resolved_org_id, current_user.id)
+        if regenerate
+        else get_or_create_org_invite(resolved_org_id, current_user.id)
+    )
+    return {
+        "org_id": resolved_org_id,
+        "token": invite["token"],
+    }
+
+
+@router.post("/invite/{token}/accept", response_model=AcceptOrgInviteResponse)
+def accept_org_invite_endpoint(token: str, current_user: AuthUser = Depends(require_user)):
+    try:
+        result = accept_org_invite(token, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
 
 
 def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
@@ -143,6 +189,27 @@ def push_model(payload: PushOrgModelRequest, current_user: AuthUser = Depends(re
 def list_models(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, org_id)
     return list_org_models(org_id)
+
+
+@router.post("/models")
+def create_org_model_version(
+    payload: CreateOrgModelVersionRequest,
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    org_id = _resolve_org_id(current_user, org_id)
+    model = {
+        "name": payload.name.strip() if isinstance(payload.name, str) else "",
+        "engine_json": payload.engine_json,
+        "diagram_xml": payload.diagram_xml,
+    }
+    if isinstance(payload.generator_input, dict):
+        model["generator_input"] = payload.generator_input
+    if isinstance(payload.process_meta, dict):
+        model["process_meta"] = payload.process_meta
+    model["id"] = "tmp"
+    org_model_id = save_org_model_copy(org_id=org_id, model=model, name_override=model["name"] or None)
+    return {"ok": True, "org_model_id": org_model_id, "org_id": org_id}
 
 
 @router.get("/models/{org_model_id}")
