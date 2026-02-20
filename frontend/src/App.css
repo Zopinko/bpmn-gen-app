@@ -1136,13 +1136,16 @@ body {
 
 .map-toolbar {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 10px;
-  border: 1px solid rgba(191, 219, 254, 0.3);
-  background: rgba(15, 22, 35, 0.85);
-  backdrop-filter: blur(6px);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(99, 116, 148, 0.42);
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(15, 23, 42, 0.92));
+  box-shadow:
+    0 10px 24px rgba(2, 6, 23, 0.34),
+    inset 0 0 0 1px rgba(148, 163, 184, 0.08);
+  backdrop-filter: blur(8px);
   transform: none;
 }
 
@@ -1153,7 +1156,7 @@ body {
 .map-toolbar__group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .map-toolbar__toggles {
@@ -1189,13 +1192,15 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  border: 1px solid rgba(30, 41, 59, 0.35);
-  background: #ffffff;
-  color: #0f172a;
-  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(100, 116, 139, 0.5);
+  background: rgba(30, 41, 59, 0.72);
+  color: #f8fafc;
+  padding: 6px 11px;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 
 .map-toolbar__btn--icon {
@@ -1210,7 +1215,15 @@ body {
 
 .map-toolbar__toggle:hover,
 .map-toolbar__btn:hover {
-  background: rgba(15, 23, 42, 0.06);
+  background: rgba(51, 65, 85, 0.88);
+  border-color: rgba(148, 163, 184, 0.72);
+  transform: translateY(-1px);
+}
+
+.map-toolbar__btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .map-toolbar__blocks-menu .map-toolbar__btn {
@@ -1230,20 +1243,20 @@ body {
 }
 
 .map-toolbar__toggle--primary {
-  border-color: rgba(139, 92, 246, 0.55);
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.26), rgba(139, 92, 246, 0.1));
-  color: #f8fafc;
+  border-color: rgba(99, 102, 241, 0.78);
+  background: linear-gradient(180deg, rgba(67, 56, 202, 0.5), rgba(67, 56, 202, 0.3));
+  color: #eef2ff;
   min-width: 110px;
   text-align: center;
   box-shadow:
-    0 0 0 1px rgba(139, 92, 246, 0.35),
-    0 0 12px rgba(139, 92, 246, 0.35),
-    0 8px 16px rgba(15, 23, 42, 0.28);
+    0 0 0 1px rgba(99, 102, 241, 0.42),
+    0 0 12px rgba(67, 56, 202, 0.32),
+    0 8px 16px rgba(15, 23, 42, 0.32);
 }
 
 .map-toolbar__toggle--primary:hover {
-  border-color: rgba(139, 92, 246, 0.85);
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.36), rgba(139, 92, 246, 0.14));
+  border-color: rgba(129, 140, 248, 0.95);
+  background: linear-gradient(180deg, rgba(79, 70, 229, 0.6), rgba(79, 70, 229, 0.34));
 }
 
 .map-toolbar__toggle--compact {
@@ -1267,34 +1280,34 @@ body {
 }
 
 .map-toolbar__btn--undo {
-  border-color: rgba(251, 191, 36, 0.55);
-  background: rgba(251, 191, 36, 0.18);
-  color: #fef3c7;
+  border-color: rgba(245, 158, 11, 0.7);
+  background: rgba(120, 53, 15, 0.55);
+  color: #fde68a;
 }
 
 .map-toolbar__btn--undo:hover {
-  background: rgba(251, 191, 36, 0.3);
+  background: rgba(146, 64, 14, 0.7);
 }
 
 .map-toolbar__btn--save {
-  border-color: rgba(14, 116, 144, 0.45);
-  background: rgba(14, 116, 144, 0.18);
-  color: #cffafe;
+  border-color: rgba(16, 185, 129, 0.62);
+  background: rgba(6, 78, 59, 0.62);
+  color: #a7f3d0;
 }
 
 .map-toolbar__btn--save:hover {
-  background: rgba(14, 116, 144, 0.3);
+  background: rgba(6, 95, 70, 0.76);
 }
 
 .map-toolbar__btn--zoom {
-  border-color: rgba(239, 68, 68, 0.5);
-  background: rgba(239, 68, 68, 0.12);
-  color: #fecaca;
+  border-color: rgba(244, 63, 94, 0.58);
+  background: rgba(136, 19, 55, 0.56);
+  color: #fecdd3;
 }
 
 .map-toolbar__btn--zoom:hover {
-  border-color: rgba(239, 68, 68, 0.8);
-  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(251, 113, 133, 0.85);
+  background: rgba(159, 18, 57, 0.72);
 }
 
 .map-viewer__canvas {
@@ -1317,12 +1330,15 @@ body {
 .custom-context-pad {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 10px;
-  background: rgba(17, 24, 39, 0.92);
-  border: 1px solid rgba(51, 65, 85, 0.8);
-  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.3);
+  gap: 7px;
+  padding: 7px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(9, 14, 25, 0.96));
+  border: 1px solid rgba(71, 85, 105, 0.75);
+  box-shadow:
+    0 12px 20px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(148, 163, 184, 0.08);
+  backdrop-filter: blur(3px);
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
@@ -1333,32 +1349,34 @@ body {
 }
 
 .custom-context-pad__btn {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(30, 41, 59, 0.9);
-  color: #e5e7eb;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(30, 41, 59, 0.88);
+  color: #e2e8f0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.18s ease, border-color 0.18s ease;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.16s ease;
 }
 
 .custom-context-pad__btn:hover {
-  background: rgba(51, 65, 85, 0.95);
-  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(51, 65, 85, 0.98);
+  border-color: rgba(148, 163, 184, 0.68);
+  transform: translateY(-1px);
 }
 
 .custom-context-pad__icon {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
 }
 
 .custom-context-pad__btn--drag {
   width: auto;
-  padding: 0 10px;
+  min-height: 32px;
+  padding: 0 11px;
   font-size: 11px;
   gap: 6px;
 }
@@ -1372,12 +1390,12 @@ body {
 .custom-context-pad__btn--add {
   font-size: 18px;
   font-weight: 600;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 10px;
   color: #e8f0ff;
-  border-color: rgba(120, 170, 255, 0.7);
-  background: rgba(37, 99, 235, 0.2);
+  border-color: rgba(120, 170, 255, 0.78);
+  background: rgba(37, 99, 235, 0.3);
 }
 
 .custom-context-pad__menu {
@@ -1404,8 +1422,28 @@ body {
 }
 
 .custom-context-pad__btn--menu {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
+}
+
+.custom-context-pad__btn--accent {
+  border-color: rgba(59, 130, 246, 0.75);
+  background: rgba(37, 99, 235, 0.26);
+}
+
+.custom-context-pad__btn--accent:hover {
+  border-color: rgba(96, 165, 250, 0.9);
+  background: rgba(37, 99, 235, 0.35);
+}
+
+.custom-context-pad__btn--danger {
+  border-color: rgba(248, 113, 113, 0.75);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.custom-context-pad__btn--danger:hover {
+  border-color: rgba(252, 165, 165, 0.95);
+  background: rgba(153, 27, 27, 0.4);
 }
 
 .lane-dnd-handle {

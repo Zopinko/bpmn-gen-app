@@ -52,9 +52,13 @@ export default function MapViewer({
   const containerRef = useRef(null);
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
+  const [confirmModal, setConfirmModal] = useState(null);
+  const [toastMessage, setToastMessage] = useState("");
+  const [localCanUndo, setLocalCanUndo] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const isImportingRef = useRef(false);
+  const toastTimerRef = useRef(null);
   const hasSubtitle = Boolean(subtitle || subtitleMeta || subtitleBadge || subtitleTag);
   const subtitleClassName = `map-viewer__subtitle${subtitleProminent ? " map-viewer__subtitle--prominent" : ""}`;
   const lastLaneOrderRef = useRef("");
@@ -70,6 +74,7 @@ export default function MapViewer({
   const laneDragStartMapRef = useRef(new Map());
   const nameCacheRef = useRef(new Map());
   const laneCacheRef = useRef(new Map());
+  const lastClickedElementRef = useRef(null);
   const sampleSequenceFlowWaypoints = (registry, limit = 5) => {
     if (!registry?.getAll) return [];
     return registry
@@ -92,6 +97,66 @@ export default function MapViewer({
       console.log("[engine-patch]", patch);
     }
     onEngineJsonPatch(patch);
+  };
+
+  const showToast = (message) => {
+    if (!message) return;
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage("");
+      toastTimerRef.current = null;
+    }, 1800);
+    try {
+      window.dispatchEvent(new CustomEvent("toast", { detail: { message } }));
+    } catch {
+      // ignore if toast event is not wired
+    }
+  };
+
+  const openConfirmModal = ({ title, message, onConfirm }) => {
+    setConfirmModal({
+      title,
+      message,
+      onConfirm: typeof onConfirm === "function" ? onConfirm : null,
+    });
+  };
+
+  const closeConfirmModal = () => {
+    setConfirmModal(null);
+  };
+
+  const executeDeleteElements = (elements) => {
+    if (readOnly) return;
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    const modeling = modeler.get("modeling", false);
+    if (!modeling) return;
+    const items = (Array.isArray(elements) ? elements : [elements]).filter((el) => el && el.type !== "label");
+    if (!items.length) return;
+    try {
+      items.forEach((el) => {
+        const boType = String(el?.businessObject?.$type || el?.type || "");
+        if (boType.includes("SequenceFlow")) {
+          if (typeof modeling.removeConnection === "function") {
+            modeling.removeConnection(el);
+          } else if (typeof modeling.removeElements === "function") {
+            modeling.removeElements([el]);
+          }
+          return;
+        }
+        if (typeof modeling.removeShape === "function") {
+          modeling.removeShape(el);
+        } else if (typeof modeling.removeElements === "function") {
+          modeling.removeElements([el]);
+        }
+      });
+      showToast("Zmazané. Undo: Ctrl+Z");
+    } catch {
+      // ignore delete errors
+    }
   };
 
   const getEngineId = (element) => {
@@ -199,6 +264,20 @@ export default function MapViewer({
     fitWithPadding();
   };
 
+  const handleUndoClick = () => {
+    if (readOnly) return;
+    const modeler = modelerRef.current;
+    const commandStack = modeler?.get?.("commandStack", false);
+    const hasLocalUndo = Boolean(commandStack?.canUndo && commandStack.canUndo());
+    if (hasLocalUndo && typeof commandStack.undo === "function") {
+      commandStack.undo();
+      return;
+    }
+    if (typeof onUndo === "function") {
+      onUndo();
+    }
+  };
+
   useEffect(() => {
     const modeler = new BpmnModeler({
       container: containerRef.current,
@@ -220,6 +299,15 @@ export default function MapViewer({
     const create = modeler.get("create");
     const elementFactory = modeler.get("elementFactory");
     const autoPlace = modeler.get("autoPlace", false);
+    const commandStack = modeler.get("commandStack", false);
+    const refreshLocalUndo = () => {
+      try {
+        setLocalCanUndo(Boolean(commandStack?.canUndo && commandStack.canUndo()));
+      } catch {
+        setLocalCanUndo(false);
+      }
+    };
+    refreshLocalUndo();
 
     const getLaneOfElement = (el) => {
       let cur = el;
@@ -360,7 +448,6 @@ export default function MapViewer({
     modeler.__rerouteConnection = rerouteConnection;
 
     if (readOnly) {
-      const commandStack = modeler.get("commandStack", false);
       if (commandStack) {
         commandStack.execute = () => {};
         commandStack.canExecute = () => false;
@@ -652,8 +739,9 @@ export default function MapViewer({
         };
 
         container.appendChild(
-          makeButton("Connect", "bpmn-icon-connection-multi", {
+          makeButton("Prepojiť", "bpmn-icon-connection-multi", {
             onStart: (event) => connect.start(event, element),
+            className: "custom-context-pad__btn--accent",
             hideOnAction: true,
           }),
         );
@@ -664,8 +752,8 @@ export default function MapViewer({
         const addButton = document.createElement("button");
         addButton.type = "button";
         addButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
-        addButton.setAttribute("aria-label", "Add object");
-        addButton.title = "Add object";
+        addButton.setAttribute("aria-label", "Pridať prvok");
+        addButton.title = "Pridať prvok";
         addButton.textContent = "+";
         addMenu.appendChild(addButton);
 
@@ -673,7 +761,7 @@ export default function MapViewer({
         menu.className = "custom-context-pad__menu";
 
         menu.appendChild(
-          makeButton("Task", "bpmn-icon-task", {
+          makeButton("Úloha", "bpmn-icon-task", {
             onClick: () => appendShape("bpmn:Task", 100, 80),
             hideOnAction: false,
             className: "custom-context-pad__btn--menu",
@@ -681,7 +769,7 @@ export default function MapViewer({
         );
 
         menu.appendChild(
-          makeButton("Gateway", "bpmn-icon-gateway-xor", {
+          makeButton("Rozhodnutie", "bpmn-icon-gateway-xor", {
             onClick: () => appendShape("bpmn:ExclusiveGateway"),
             hideOnAction: false,
             className: "custom-context-pad__btn--menu",
@@ -689,7 +777,7 @@ export default function MapViewer({
         );
 
         menu.appendChild(
-          makeButton("Start event", "bpmn-icon-start-event-none", {
+          makeButton("Začiatok", "bpmn-icon-start-event-none", {
             onClick: () => appendShape("bpmn:StartEvent"),
             hideOnAction: false,
             className: "custom-context-pad__btn--menu",
@@ -697,7 +785,7 @@ export default function MapViewer({
         );
 
         menu.appendChild(
-          makeButton("End event", "bpmn-icon-end-event-none", {
+          makeButton("Koniec", "bpmn-icon-end-event-none", {
             onClick: () => appendShape("bpmn:EndEvent"),
             hideOnAction: false,
             className: "custom-context-pad__btn--menu",
@@ -707,46 +795,8 @@ export default function MapViewer({
         addMenu.appendChild(menu);
         container.appendChild(addMenu);
 
-        const blockMenu = document.createElement("div");
-        blockMenu.className = "custom-context-pad__add-menu";
-
-        const blockButton = document.createElement("button");
-        blockButton.type = "button";
-        blockButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
-        blockButton.setAttribute("aria-label", "Block");
-        blockButton.title = "Block";
-        blockButton.textContent = "B";
-        blockMenu.appendChild(blockButton);
-
-        const blockList = document.createElement("div");
-        blockList.className = "custom-context-pad__menu";
-        blockList.appendChild(
-          makeButton("XOR blok", "bpmn-icon-gateway-xor", {
-            onClick: () => {
-              if (typeof onInsertBlock === "function") {
-                onInsertBlock("xor");
-              }
-            },
-            hideOnAction: false,
-            className: "custom-context-pad__btn--menu",
-          }),
-        );
-        blockList.appendChild(
-          makeButton("AND blok", "bpmn-icon-gateway-parallel", {
-            onClick: () => {
-              if (typeof onInsertBlock === "function") {
-                onInsertBlock("and");
-              }
-            },
-            hideOnAction: false,
-            className: "custom-context-pad__btn--menu",
-          }),
-        );
-        blockMenu.appendChild(blockList);
-        container.appendChild(blockMenu);
-
         container.appendChild(
-          makeButton("Text annotation", "bpmn-icon-text-annotation", {
+          makeButton("Poznámka", "bpmn-icon-text-annotation", {
             onStart: (event) => {
               const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
               create.start(event, shape, { source: element });
@@ -755,12 +805,25 @@ export default function MapViewer({
           }),
         );
 
-        container.appendChild(
-          makeButton("Delete", "bpmn-icon-trash", {
-            onClick: () => modeling.removeElements([element]),
-            hideOnAction: false,
-          }),
-        );
+        if (!readOnly) {
+          container.appendChild(
+            makeButton("Zmazať", "bpmn-icon-trash", {
+              onClick: () => {
+                clearContextPad();
+                openConfirmModal({
+                  title: "Zmazať prvok?",
+                  message:
+                    "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+                  onConfirm: () => {
+                    executeDeleteElements([element]);
+                  },
+                });
+              },
+              className: "custom-context-pad__btn--danger",
+              hideOnAction: false,
+            }),
+          );
+        }
       }
 
       contextPadOverlayId = overlays.add(element, "custom-context-pad", {
@@ -788,6 +851,7 @@ export default function MapViewer({
 
     const handleElementClick = (event) => {
       const { element } = event;
+      lastClickedElementRef.current = element || null;
 
       // always remove previous handles
       if (ENABLE_LANE_HANDLES) {
@@ -825,6 +889,7 @@ export default function MapViewer({
     };
 
     const handleCanvasClick = () => {
+      lastClickedElementRef.current = null;
       if (ENABLE_LANE_HANDLES) {
         clearLaneHandles();
       }
@@ -955,6 +1020,7 @@ export default function MapViewer({
     };
 
     const handleDiagramChanged = () => {
+      refreshLocalUndo();
       if (changeTimerRef.current) {
         clearTimeout(changeTimerRef.current);
       }
@@ -1157,6 +1223,7 @@ export default function MapViewer({
       stopGhostStyling();
       hideLaneHandles();
       modeler.__rerouteConnection = null;
+      setLocalCanUndo(false);
       if (changeTimerRef.current) {
         clearTimeout(changeTimerRef.current);
         changeTimerRef.current = null;
@@ -1169,19 +1236,50 @@ export default function MapViewer({
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (!modelerRef.current) return;
-      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = String(event.key || "");
       const active = document.activeElement;
-      if (
+      const typing =
         active &&
         (active.tagName === "INPUT" ||
           active.tagName === "TEXTAREA" ||
           active.tagName === "SELECT" ||
-          active.isContentEditable)
-      ) {
+          active.isContentEditable);
+
+      const isPlainDeleteKey =
+        (key === "Delete" || key === "Del" || key === "Backspace") &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey;
+      if (isPlainDeleteKey && !typing) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+        if (readOnly) return;
+        const modeler = modelerRef.current;
+        const selection = modeler.get("selection", false);
+        const modeling = modeler.get("modeling", false);
+        if (!selection || !modeling?.removeElements) return;
+        const selected = selection.get() || [];
+        const fallbackClicked = lastClickedElementRef.current;
+        const rawCandidates = selected.length ? selected : fallbackClicked ? [fallbackClicked] : [];
+        const deletable = rawCandidates.filter((el) => el && el.type !== "label");
+        if (!deletable.length) return;
+        openConfirmModal({
+          title: "Zmazať prvok?",
+          message:
+            "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+          onConfirm: () => {
+            executeDeleteElements(deletable);
+          },
+        });
         return;
       }
 
-      const { key } = event;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (typing) return;
+
       if (key !== "ArrowUp" && key !== "ArrowDown" && key !== "ArrowLeft" && key !== "ArrowRight") {
         return;
       }
@@ -1200,9 +1298,21 @@ export default function MapViewer({
       canvas.viewbox(next);
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [readOnly]);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const modeler = modelerRef.current;
@@ -1578,13 +1688,13 @@ export default function MapViewer({
                 <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={zoomFit} title="Prispôsobiť">
                   Fit
                 </button>
-                  {onUndo ? (
+                  {onUndo || localCanUndo ? (
                     <button
                       className="map-toolbar__btn map-toolbar__btn--undo"
                       type="button"
-                      onClick={onUndo}
+                      onClick={handleUndoClick}
                       title="Späť"
-                      disabled={!canUndo}
+                      disabled={!(canUndo || localCanUndo)}
                     >
                       Späť
                     </button>
@@ -1640,6 +1750,7 @@ export default function MapViewer({
         {overlayMessage ? (
           <div className="map-viewer__status">{overlayMessage}</div>
         ) : null}
+        {toastMessage ? <div className="map-viewer__status">{toastMessage}</div> : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
         {annotations?.length ? (
           <div className="map-viewer__annotations">
@@ -1663,6 +1774,37 @@ export default function MapViewer({
                 ) : null}
               </div>
             ))}
+          </div>
+        ) : null}
+        {confirmModal ? (
+          <div className="wizard-models-modal" onClick={closeConfirmModal}>
+            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>{confirmModal.title || "Potvrdenie"}</h3>
+                <button className="btn btn--small" type="button" onClick={closeConfirmModal}>
+                  Zrušiť
+                </button>
+              </div>
+              <div style={{ opacity: 0.85, marginBottom: 16 }}>{confirmModal.message || ""}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button className="btn btn--small" type="button" onClick={closeConfirmModal}>
+                  Zrušiť
+                </button>
+                <button
+                  className="btn btn-danger"
+                  type="button"
+                  onClick={() => {
+                    const handler = confirmModal?.onConfirm;
+                    closeConfirmModal();
+                    if (typeof handler === "function") {
+                      handler();
+                    }
+                  }}
+                >
+                  Zmazať
+                </button>
+              </div>
+            </div>
           </div>
         ) : null}
       </div>
