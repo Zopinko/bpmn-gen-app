@@ -364,7 +364,10 @@ export function applyIncrementalAppend({
     const srcBaseline = srcAttrs["data-branch"] !== "alt";
     const tgtBaseline = tgtAttrs["data-branch"] !== "alt";
 
-    if (sameLane && srcBaseline && tgtBaseline && Math.abs(srcMidY - tgtMidY) < 2) {
+    const srcIsGateway = srcType.includes("Gateway");
+    const tgtType = String(target?.businessObject?.$type || target?.type || "");
+    const tgtIsGateway = tgtType.includes("Gateway");
+    if (sameLane && !srcIsGateway && !tgtIsGateway && Math.abs(srcMidY - tgtMidY) < 2) {
       return [{ x: srcRight, y: srcMidY }, { x: tgtLeft, y: srcMidY }];
     }
 
@@ -477,18 +480,20 @@ export function applyIncrementalAppend({
   const getLaneCursor = (laneKey, laneEl, shapeWidth = 100) => {
     if (laneCursorById.has(laneKey)) return laneCursorById.get(laneKey);
     const laneHasShapes = Boolean(laneEl && findLastFlowShapeInLane(laneEl));
+    const targetW = Number(shapeWidth || 100);
     let start = 240;
 
     if (laneHasShapes && laneEl) {
       const laneRightmost = computeLaneRightmost(laneEl);
-      start = typeof laneRightmost === "number" ? laneRightmost + H_GAP : start;
+      // `createShape({ x, y })` expects center coordinates; for existing-lane append
+      // we want the first new shape's LEFT edge to start at (rightmost + H_GAP).
+      start = typeof laneRightmost === "number" ? laneRightmost + H_GAP + targetW / 2 : start;
     } else {
       const mapLast = findLastFlowShapeInMap();
       if (mapLast) {
         // Preserve cross-lane visual alignment for the first shape in a newly-used lane.
         const mapLastX = Number(mapLast.x || 0);
         const mapLastW = Number(mapLast.width || 0);
-        const targetW = Number(shapeWidth || 100);
         start = Math.round(mapLastX + mapLastW / 2 - targetW / 2);
       } else {
         const laneRightmost = laneEl ? computeLaneRightmost(laneEl) : null;
@@ -1123,15 +1128,12 @@ export function applyIncrementalAppend({
       // Prefer staying on the exact source row for simple append-to-existing chains.
       // This avoids small lane-baseline mismatches that create a visible elbow on the new connection.
       const incomingConns = Array.isArray(el.incoming) ? el.incoming : [];
+      let shouldRerouteAfterSnap = false;
+      let preferredSourceRowMidY = null;
       if (
         !elType.includes("Gateway") &&
         !elType.includes("StartEvent") &&
         !elType.includes("EndEvent") &&
-        attrs["data-branch"] !== "alt" &&
-        !attrs["data-parallel-split-id"] &&
-        !attrs["data-parallel-join-id"] &&
-        !attrs["data-xor-split-id"] &&
-        !attrs["data-xor-join-id"] &&
         incomingConns.length === 1
       ) {
         const src = incomingConns[0]?.source || null;
@@ -1142,7 +1144,9 @@ export function applyIncrementalAppend({
           !srcType.includes("StartEvent") &&
           !srcType.includes("EndEvent")
         ) {
-          targetMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
+          preferredSourceRowMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
+          targetMidY = preferredSourceRowMidY;
+          shouldRerouteAfterSnap = true;
         }
       }
       const parallelSplitId = String(attrs["data-parallel-split-id"] || "");
@@ -1163,11 +1167,22 @@ export function applyIncrementalAppend({
           targetMidY = computeXorBranchMidY(laneEl, branchIndex);
         }
       }
+      if (preferredSourceRowMidY !== null) {
+        targetMidY = preferredSourceRowMidY;
+      }
       const desiredY = targetMidY - h / 2;
       const dy = Math.round(desiredY - (el.y || 0));
-      if (Math.abs(dy) < 0.5) return;
+      if (Math.abs(dy) < 0.5) {
+        if (shouldRerouteAfterSnap) {
+          extraRerouteNodeIds.add(String(el.id || ""));
+        }
+        return;
+      }
       try {
         modeling.moveShape(el, { x: 0, y: dy }, el.parent || laneEl.parent);
+        if (shouldRerouteAfterSnap) {
+          extraRerouteNodeIds.add(String(el.id || ""));
+        }
       } catch {
         // ignore move errors
       }
@@ -1370,6 +1385,35 @@ export function applyIncrementalAppend({
       } catch {
         // ignore
       }
+    });
+
+    // Extra low-risk pass: normalize straight task-chain connections around nodes we explicitly flagged.
+    // This catches append cases where the connection was not in createdConnections (or was auto-routed later)
+    // without touching gateway branch layouts.
+    movedNodeIds.forEach((nodeId) => {
+      const el = elementRegistry.get(nodeId);
+      if (!el) return;
+      const related = [
+        ...(Array.isArray(el.incoming) ? el.incoming : []),
+        ...(Array.isArray(el.outgoing) ? el.outgoing : []),
+      ];
+      related.forEach((conn) => {
+        if (!conn || rerouted.has(conn.id)) return;
+        const src = conn.source;
+        const tgt = conn.target;
+        if (!src || !tgt) return;
+        const srcType = String(src?.businessObject?.$type || src?.type || "");
+        const tgtType = String(tgt?.businessObject?.$type || tgt?.type || "");
+        if (srcType.includes("Gateway") || tgtType.includes("Gateway")) return;
+        const waypoints = computeWaypointsForConnection(conn);
+        if (!waypoints) return;
+        try {
+          modeling.updateWaypoints(conn, waypoints);
+          rerouted.add(conn.id);
+        } catch {
+          // ignore
+        }
+      });
     });
   }
 
