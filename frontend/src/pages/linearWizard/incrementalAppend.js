@@ -302,6 +302,7 @@ export function applyIncrementalAppend({
   const PAD_Y = 40;
   const TASK_TO_TASK_GAP = FLOW_GAP;
   const GATEWAY_TO_TASK_GAP = FLOW_GAP;
+  const XOR_GATEWAY_TO_TASK_GAP = GATEWAY_TO_TASK_GAP + 40;
   const BRANCH_OFFSET = 120;
   const LANE_BOTTOM_PADDING_DEFAULT = 50;
   const BOTTOM_MARGIN_XOR = 40;
@@ -405,7 +406,11 @@ export function applyIncrementalAppend({
       const isXorBranchToJoin = Boolean(tgtXorJoinId && srcXorSplitId && tgtXorJoinId === srcXorSplitId);
       if (isXorSplitToBranch) {
         const branchIndex = Number(tgtAttrs["data-xor-branch-index"]);
-        const isNoBranch = Number.isFinite(branchIndex) ? branchIndex > 0 : false;
+        const isNoBranchByLabel = isNoBranchLabel(connName);
+        const isNoBranchByMeta = tgtAttrs["data-branch"] === "alt";
+        const isNoBranchByIndex = Number.isFinite(branchIndex) ? branchIndex > 0 : false;
+        // Prefer explicit branch semantics (label / stable branch marker) over branch order.
+        const isNoBranch = isNoBranchByLabel || isNoBranchByMeta || (!connName && isNoBranchByIndex);
         if (!isNoBranch) {
           return [
             { x: srcRight, y: srcMidY },
@@ -719,7 +724,7 @@ export function applyIncrementalAppend({
       if (allowBranchPlacement && xorBranchInfo?.splitId) {
         const splitEl = findElementByEngineId(xorBranchInfo.splitId);
         if (splitEl) {
-          x = getNextXAfterElement(splitEl, FLOW_GAP);
+          x = getNextXAfterElement(splitEl, XOR_GATEWAY_TO_TASK_GAP);
           forceBranchColumn = true;
         }
       }
@@ -956,7 +961,19 @@ export function applyIncrementalAppend({
           if (srcType.includes("ExclusiveGateway")) {
             const outgoing = Array.isArray(source.outgoing) ? source.outgoing.filter((c) => c?.businessObject) : [];
             const hasYes = outgoing.some((c) => normalizeBranchLabel(c.businessObject?.name) === "ano");
+            const tgtAttrs = target?.businessObject?.$attrs || {};
+            const xorBranchIndex = Number(tgtAttrs["data-xor-branch-index"]);
+            const hasXorMeta =
+              Boolean(tgtAttrs["data-xor-split-id"] || tgtAttrs["data-xor-join-id"]) ||
+              tgtAttrs["data-branch"] === "alt" ||
+              Number.isFinite(xorBranchIndex);
             modeling.updateProperties(connection, { name: hasYes ? "Nie" : "Áno" });
+            if (hasXorMeta) {
+              const isNoBranch =
+                tgtAttrs["data-branch"] === "alt" ||
+                (Number.isFinite(xorBranchIndex) && xorBranchIndex > 0);
+              modeling.updateProperties(connection, { name: isNoBranch ? "Nie" : "Ăno" });
+            }
           }
         }
         createdConnections.push(connection);
@@ -1339,7 +1356,11 @@ export function applyIncrementalAppend({
       const targetId = String(target.id || "");
       const sourceWasMoved = movedNodeIds.has(sourceId);
       const targetWasMoved = movedNodeIds.has(targetId);
-      const shouldReroute = sourceWasMoved || targetWasMoved;
+      const sourceType = String(source?.businessObject?.$type || source?.type || "");
+      const targetType = String(target?.businessObject?.$type || target?.type || "");
+      const isExclusiveGatewayConn =
+        sourceType.includes("ExclusiveGateway") || targetType.includes("ExclusiveGateway");
+      const shouldReroute = sourceWasMoved || targetWasMoved || isExclusiveGatewayConn;
       if (!shouldReroute) return;
       const waypoints = computeWaypointsForConnection(conn);
       if (!waypoints) return;
