@@ -1087,6 +1087,9 @@ export function applyIncrementalAppend({
 
   // Safety snap only for newly created nodes.
   const extraRerouteNodeIds = new Set();
+  const createdElementIds = new Set(
+    [...createdByEngineId.values()].map((el) => String(el?.id || "")).filter(Boolean),
+  );
   newNodesByLane.forEach((laneNodes, laneId) => {
     const laneEl = laneById.get(laneId);
     if (!laneEl) return;
@@ -1096,9 +1099,35 @@ export function applyIncrementalAppend({
       const attrs = el?.businessObject?.$attrs || {};
       const h = el.height || 0;
       if (!h) return;
+      const elType = String(el.businessObject?.$type || el.type || "");
       const baselineMidY = getBaselineMidY(laneEl);
       const branchMidY = getBranchMidY(laneEl, h);
       let targetMidY = attrs["data-branch"] === "alt" ? branchMidY : baselineMidY;
+      // Prefer staying on the exact source row for simple append-to-existing chains.
+      // This avoids small lane-baseline mismatches that create a visible elbow on the new connection.
+      const incomingConns = Array.isArray(el.incoming) ? el.incoming : [];
+      if (
+        !elType.includes("Gateway") &&
+        !elType.includes("StartEvent") &&
+        !elType.includes("EndEvent") &&
+        attrs["data-branch"] !== "alt" &&
+        !attrs["data-parallel-split-id"] &&
+        !attrs["data-parallel-join-id"] &&
+        !attrs["data-xor-split-id"] &&
+        !attrs["data-xor-join-id"] &&
+        incomingConns.length === 1
+      ) {
+        const src = incomingConns[0]?.source || null;
+        const srcType = String(src?.businessObject?.$type || src?.type || "");
+        if (
+          src &&
+          !srcType.includes("Gateway") &&
+          !srcType.includes("StartEvent") &&
+          !srcType.includes("EndEvent")
+        ) {
+          targetMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
+        }
+      }
       const parallelSplitId = String(attrs["data-parallel-split-id"] || "");
       const parallelBranchIndexRaw = attrs["data-parallel-branch-index"];
       if (parallelSplitId && parallelBranchIndexRaw !== undefined && parallelBranchIndexRaw !== null) {
@@ -1125,7 +1154,6 @@ export function applyIncrementalAppend({
       } catch {
         // ignore move errors
       }
-      const elType = String(el.businessObject?.$type || el.type || "");
       if (elType.includes("StartEvent") || elType.includes("EndEvent")) {
         positionEventLabel(el);
       } else if (elType.includes("Gateway")) {
@@ -1142,7 +1170,26 @@ export function applyIncrementalAppend({
       const elType = String(el?.businessObject?.$type || el?.type || "");
       if (!elType.includes("StartEvent")) return;
       const engineId = String(el?.businessObject?.$attrs?.["data-engine-id"] || "");
-      if (!engineId || !newNodeIds.has(engineId)) return;
+      const isNewStart = Boolean(engineId && newNodeIds.has(engineId));
+      let shouldAlignExistingStart = false;
+      if (!isNewStart) {
+        const outgoing = Array.isArray(el.outgoing) ? el.outgoing : [];
+        if (outgoing.length === 1) {
+          const onlyConn = outgoing[0];
+          const target = onlyConn?.target || null;
+          const targetId = String(target?.id || "");
+          const targetAttrs = target?.businessObject?.$attrs || {};
+          const targetHasBranchContext = Boolean(
+            targetAttrs["data-parallel-split-id"] ||
+              targetAttrs["data-parallel-join-id"] ||
+              targetAttrs["data-xor-split-id"] ||
+              targetAttrs["data-xor-join-id"] ||
+              targetAttrs["data-branch"] === "alt",
+          );
+          shouldAlignExistingStart = Boolean(targetId && createdElementIds.has(targetId) && !targetHasBranchContext);
+        }
+      }
+      if (!isNewStart && !shouldAlignExistingStart) return;
       const h = Number(el.height || 0);
       if (!h) return;
       const baselineMidY = getBaselineMidY(laneEl);
@@ -1280,9 +1327,7 @@ export function applyIncrementalAppend({
   });
 
   if (typeof modeling.updateWaypoints === "function" && typeof routeFlow === "function") {
-    const newElementIds = new Set(
-      [...createdByEngineId.values()].map((el) => String(el?.id || "")).filter(Boolean),
-    );
+    const newElementIds = createdElementIds;
     const movedNodeIds = new Set([...extraRerouteNodeIds]);
     const rerouted = new Set();
     createdConnections.forEach((conn) => {
