@@ -234,13 +234,18 @@ export function applyIncrementalAppend({
   const positionGatewayLabel = (el) => {
     if (!el || !el.businessObject?.name) return;
     if (typeof modeling.updateLabel !== "function") return;
-    const w = Math.max(80, Math.round((el.businessObject.name || "").length * 6));
-    const h = 28;
+    const labelEl = getExternalLabel(el);
+    const currentW = Number(labelEl?.width || 0);
+    const currentH = Number(labelEl?.height || 0);
+    const w = Math.max(80, currentW || Math.round((el.businessObject.name || "").length * 6));
+    const h = Math.max(28, currentH || 28);
+    const GATEWAY_LABEL_GAP_Y = 10;
+    const centerX = Number(el.x || 0) + Number(el.width || 0) / 2;
     const bounds = {
-      x: (el.x || 0) - w / 2 + (el.width || 0) / 2,
-      y: (el.y || 0) + (el.height || 0) + 6,
-      width: w,
-      height: h,
+      x: Math.round(centerX - w / 2),
+      y: Math.round((el.y || 0) - h - GATEWAY_LABEL_GAP_Y),
+      width: Math.round(w),
+      height: Math.round(h),
     };
     try {
       modeling.updateLabel(el, el.businessObject.name, bounds);
@@ -287,13 +292,16 @@ export function applyIncrementalAppend({
       .map((n, idx) => [String(n?.id || ""), idx])
       .filter(([id]) => Boolean(id)),
   );
-  const H_GAP = 90;
-  const PARALLEL_DX = 170;
+  // Deterministic horizontal spacing per diagram (derived once from the configured task width).
+  const TASK_BOX_WIDTH = Math.max(80, Number(standardTaskSize?.width || 100));
+  const FLOW_GAP = Math.round(TASK_BOX_WIDTH * 0.8);
+  const H_SPACING = FLOW_GAP;
+  const H_GAP = H_SPACING;
   const PARALLEL_BRANCH_GAP = 95;
-  const XOR_BRANCH_GAP = 110;
+  const XOR_BRANCH_GAP = 120;
   const PAD_Y = 40;
-  const TASK_TO_TASK_GAP = 90;
-  const GATEWAY_TO_TASK_GAP = 110;
+  const TASK_TO_TASK_GAP = FLOW_GAP;
+  const GATEWAY_TO_TASK_GAP = FLOW_GAP;
   const BRANCH_OFFSET = 120;
   const LANE_BOTTOM_PADDING_DEFAULT = 50;
   const BOTTOM_MARGIN_XOR = 40;
@@ -305,13 +313,13 @@ export function applyIncrementalAppend({
     if (!laneEl) return 0;
     const y = Number(laneEl.y || 0);
     const h = Number(laneEl.height || 0);
-    return y + h * BASELINE_RATIO_IN_LANE;
+    return Math.round(y + h * BASELINE_RATIO_IN_LANE);
   };
   const getBranchMidY = (laneEl, nodeHeight) => {
     const baselineMidY = getBaselineMidY(laneEl);
     const maxOffset = laneEl.y + laneEl.height - baselineMidY - nodeHeight / 2;
     const effectiveBranchOffset = Math.max(0, Math.min(PARALLEL_BRANCH_GAP, maxOffset));
-    return baselineMidY + effectiveBranchOffset;
+    return Math.round(baselineMidY + effectiveBranchOffset);
   };
   const getElementLane = (el) => {
     if (!el) return null;
@@ -323,6 +331,9 @@ export function applyIncrementalAppend({
     }
     return laneElements.find((laneEl) => isInLane(el, laneEl)) || null;
   };
+
+  const getElementRight = (el) => Number(el?.x || 0) + Number(el?.width || 0);
+  const getNextXAfterElement = (el, gap = FLOW_GAP) => getElementRight(el) + gap;
 
   const computeWaypointsForConnection = (connection) => {
     const source = connection?.source;
@@ -423,7 +434,12 @@ export function applyIncrementalAppend({
       const isAlt = tgtAttrs["data-branch"] === "alt" || connName === "nie" || connName === "no" || connName === "false";
 
       if (isAlt) {
-        const branchY = laneForRoute ? getBranchMidY(laneForRoute, th) : tgtMidY;
+        const xorBranchIndex = Number(tgtAttrs["data-xor-branch-index"]);
+        const branchY = laneForRoute
+          ? Number.isFinite(xorBranchIndex)
+            ? computeXorBranchMidY(laneForRoute, xorBranchIndex)
+            : computeXorBranchMidY(laneForRoute, 1)
+          : tgtMidY;
         const srcBottomX = sx + sw / 2;
         const srcBottomY = sy + sh;
         const waypoints = [
@@ -464,14 +480,13 @@ export function applyIncrementalAppend({
     } else {
       const mapLast = findLastFlowShapeInMap();
       if (mapLast) {
-        // Align the first shape in a newly-used lane by center column of the current last map shape.
+        // Preserve cross-lane visual alignment for the first shape in a newly-used lane.
         const mapLastX = Number(mapLast.x || 0);
         const mapLastW = Number(mapLast.width || 0);
         const targetW = Number(shapeWidth || 100);
-        const mapCenterX = mapLastX + mapLastW / 2;
-        start = Math.round(mapCenterX - targetW / 2);
-      } else if (laneEl) {
-        const laneRightmost = computeLaneRightmost(laneEl);
+        start = Math.round(mapLastX + mapLastW / 2 - targetW / 2);
+      } else {
+        const laneRightmost = laneEl ? computeLaneRightmost(laneEl) : null;
         start = typeof laneRightmost === "number" ? laneRightmost + H_GAP : start;
       }
     }
@@ -550,12 +565,12 @@ export function applyIncrementalAppend({
   const computeParallelBranchMidY = (laneEl, branchIndex) => {
     const baseY = getBaselineMidY(laneEl);
     const offset = branchIndex * PARALLEL_BRANCH_GAP;
-    return baseY + offset;
+    return Math.round(baseY + offset);
   };
   const computeXorBranchMidY = (laneEl, branchIndex) => {
     const baseY = getBaselineMidY(laneEl);
     const offset = branchIndex * XOR_BRANCH_GAP;
-    return baseY + offset;
+    return Math.round(baseY + offset);
   };
 
   const getConnectionLabel = (sourceEl, targetEl) => {
@@ -666,12 +681,22 @@ export function applyIncrementalAppend({
       let isXorJoin = false;
       let xorJoinSplitId = "";
 
+      const isNewLaneFirstNode = Boolean(laneForPlacement && !findLastFlowShapeInLane(laneForPlacement));
+      const nodeTypeLower = String(node?.type || "").toLowerCase();
+      const nodeIsGateway = nodeTypeLower.includes("gateway");
+      const incomingFromGateway = Boolean(
+        incomingFlowsForNode.some((f) => {
+          const src = findElementByEngineId(f?.source);
+          const srcType = String(src?.businessObject?.$type || src?.type || "");
+          return srcType.includes("Gateway");
+        }),
+      );
+      const allowBranchPlacement = !isNewLaneFirstNode && (nodeIsGateway || incomingFromGateway);
+
       if (sourceEl) {
+        // Baseline deterministic spacing rule for append in lane.
+        x = getNextXAfterElement(sourceEl, H_GAP);
         const srcType = String(sourceEl?.businessObject?.$type || sourceEl?.type || "");
-        const isSourceGateway = srcType.includes("Gateway");
-        const spacingX =
-          isSourceGateway && bpmnType.includes("Task") ? GATEWAY_TO_TASK_GAP : TASK_TO_TASK_GAP;
-        x = (sourceEl.x || 0) + (sourceEl.width || 0) + spacingX;
         const isGateway = srcType.includes("Gateway");
         if (isGateway && incomingFlow?.source) {
           const flowToThisNode = findFlowBySourceTarget(incomingFlow.source, node.id);
@@ -683,18 +708,18 @@ export function applyIncrementalAppend({
         }
       }
       parallelBranchInfo = findParallelSplitForTarget(node.id);
-      if (parallelBranchInfo?.splitId) {
+      if (allowBranchPlacement && parallelBranchInfo?.splitId) {
         const splitEl = findElementByEngineId(parallelBranchInfo.splitId);
         if (splitEl) {
-          x = (splitEl.x || 0) + PARALLEL_DX;
+          x = getNextXAfterElement(splitEl, FLOW_GAP);
           forceBranchColumn = true;
         }
       }
       xorBranchInfo = findXorSplitForTarget(node.id);
-      if (xorBranchInfo?.splitId) {
+      if (allowBranchPlacement && xorBranchInfo?.splitId) {
         const splitEl = findElementByEngineId(xorBranchInfo.splitId);
         if (splitEl) {
-          x = (splitEl.x || 0) + PARALLEL_DX;
+          x = getNextXAfterElement(splitEl, FLOW_GAP);
           forceBranchColumn = true;
         }
       }
@@ -759,59 +784,60 @@ export function applyIncrementalAppend({
         const baselineMidY = getBaselineMidY(laneForPlacement);
         const branchMidY = getBranchMidY(laneForPlacement, shape.height || 80);
         let targetMidY = isAltBranch ? branchMidY : baselineMidY;
-        if (parallelBranchInfo) {
+        if (allowBranchPlacement && parallelBranchInfo) {
           targetMidY = computeParallelBranchMidY(
             laneForPlacement,
             parallelBranchInfo.branchIndex,
           );
-        } else if (xorBranchInfo) {
+        } else if (allowBranchPlacement && xorBranchInfo) {
           targetMidY = computeXorBranchMidY(
             laneForPlacement,
             xorBranchInfo.branchIndex,
           );
-        } else if (incomingBranchMeta.length === 1 && !isParallelJoin) {
+        } else if (allowBranchPlacement && incomingBranchMeta.length === 1 && !isParallelJoin) {
           // Keep branch chain aligned on the same branch Y until merge.
           const src = incomingBranchMeta[0].source;
           targetMidY = (src.y || 0) + (src.height || 0) / 2;
           if (sourceEl) {
-            x = (sourceEl.x || 0) + PARALLEL_DX;
+            x = getNextXAfterElement(sourceEl, FLOW_GAP);
             forceBranchColumn = true;
           }
-        } else if (isParallelJoin) {
+        } else if (allowBranchPlacement && isParallelJoin) {
           targetMidY = baselineMidY;
           const branchSources = incomingBranchMeta
             .filter((meta) => meta.splitId === parallelJoinSplitId)
             .map((meta) => meta.source);
-          const maxSourceX = branchSources.reduce(
-            (maxX, src) => Math.max(maxX, (src.x || 0)),
+          const maxSourceRight = branchSources.reduce(
+            (maxX, src) => Math.max(maxX, getElementRight(src)),
             0,
           );
-          if (maxSourceX > 0) {
-            x = maxSourceX + PARALLEL_DX;
+          if (maxSourceRight > 0) {
+            x = maxSourceRight + FLOW_GAP;
             forceBranchColumn = true;
           }
-        } else if (incomingXorMeta.length === 1 && !isXorJoin) {
+        } else if (allowBranchPlacement && incomingXorMeta.length === 1 && !isXorJoin) {
           const src = incomingXorMeta[0].source;
           targetMidY = (src.y || 0) + (src.height || 0) / 2;
           if (sourceEl) {
-            x = (sourceEl.x || 0) + PARALLEL_DX;
+            x = getNextXAfterElement(sourceEl, FLOW_GAP);
             forceBranchColumn = true;
           }
-        } else if (isXorJoin) {
+        } else if (allowBranchPlacement && isXorJoin) {
           targetMidY = baselineMidY;
           const branchSources = incomingXorMeta
             .filter((meta) => meta.splitId === xorJoinSplitId)
             .map((meta) => meta.source);
-          const maxSourceX = branchSources.reduce(
-            (maxX, src) => Math.max(maxX, (src.x || 0)),
+          const maxSourceRight = branchSources.reduce(
+            (maxX, src) => Math.max(maxX, getElementRight(src)),
             0,
           );
-          if (maxSourceX > 0) {
-            x = maxSourceX + PARALLEL_DX;
+          if (maxSourceRight > 0) {
+            x = maxSourceRight + FLOW_GAP;
             forceBranchColumn = true;
           }
         }
         y = Math.min(laneBottom, Math.max(laneTop, targetMidY - (shape.height || 80) / 2));
+        x = x ?? cursorX;
         const nextCursor = Math.max(cursorX, x + (shape.width || 100) + H_GAP);
         setLaneCursor(laneKey, nextCursor);
       } else if (x === null || y === null) {
@@ -819,6 +845,8 @@ export function applyIncrementalAppend({
         y = y ?? 120;
       }
 
+      x = Math.round(Number(x ?? 240));
+      y = Math.round(Number(y ?? 120));
       const created = modeling.createShape(shape, { x, y }, visualParent);
       if (!created) {
         nodeFailure = {
@@ -976,6 +1004,37 @@ export function applyIncrementalAppend({
   });
 
   // Keep EndEvent hook-up behavior.
+  const hasBranchContextNearNode = (el) => {
+    if (!el) return false;
+    const attrs = el?.businessObject?.$attrs || {};
+    if (
+      attrs["data-parallel-split-id"] ||
+      attrs["data-parallel-join-id"] ||
+      attrs["data-xor-split-id"] ||
+      attrs["data-xor-join-id"]
+    ) {
+      return true;
+    }
+    const incoming = Array.isArray(el.incoming) ? el.incoming : [];
+    const outgoing = Array.isArray(el.outgoing) ? el.outgoing : [];
+    const allConns = [...incoming, ...outgoing];
+    return allConns.some((conn) => {
+      const src = conn?.source;
+      const tgt = conn?.target;
+      const srcType = String(src?.businessObject?.$type || src?.type || "");
+      const tgtType = String(tgt?.businessObject?.$type || tgt?.type || "");
+      const srcIsGateway = srcType.includes("Gateway");
+      const tgtIsGateway = tgtType.includes("Gateway");
+      if (!srcIsGateway && !tgtIsGateway) return false;
+      const srcDeg =
+        (Array.isArray(src?.incoming) ? src.incoming.length : 0) +
+        (Array.isArray(src?.outgoing) ? src.outgoing.length : 0);
+      const tgtDeg =
+        (Array.isArray(tgt?.incoming) ? tgt.incoming.length : 0) +
+        (Array.isArray(tgt?.outgoing) ? tgt.outgoing.length : 0);
+      return srcDeg > 2 || tgtDeg > 2;
+    });
+  };
   newNodesByLane.forEach((laneNodes, laneId) => {
     const endNode = nextNodes.find(
       (n) => String(n?.laneId || "") === laneId && String(n?.type || "").toLowerCase().includes("end"),
@@ -989,6 +1048,12 @@ export function applyIncrementalAppend({
 
     const incomingToEnd = Array.isArray(endEl.incoming) ? [...endEl.incoming] : [];
     const existingEndIncoming = incomingToEnd[0] || null;
+    const existingSource = existingEndIncoming?.source || null;
+    const complexBranchEndHookup =
+      hasBranchContextNearNode(lastNewEl) || hasBranchContextNearNode(existingSource);
+    if (complexBranchEndHookup) {
+      return;
+    }
     if (existingEndIncoming && existingEndIncoming.source?.id !== lastNewEl.id) {
       try {
         modeling.removeConnection(existingEndIncoming);
@@ -1053,7 +1118,7 @@ export function applyIncrementalAppend({
         }
       }
       const desiredY = targetMidY - h / 2;
-      const dy = desiredY - (el.y || 0);
+      const dy = Math.round(desiredY - (el.y || 0));
       if (Math.abs(dy) < 0.5) return;
       try {
         modeling.moveShape(el, { x: 0, y: dy }, el.parent || laneEl.parent);
@@ -1068,18 +1133,21 @@ export function applyIncrementalAppend({
       }
     });
 
-    // Keep StartEvent aligned with the same baseline as first task to avoid snake-like first connection.
+    // Low-risk guard for undo/redo UX:
+    // only realign StartEvent when it was created in this append, not on normal append-to-existing chain.
     const nodesInLane = elementRegistry
       .getAll()
       .filter((el) => isFlowNode(el) && isInLane(el, laneEl));
     nodesInLane.forEach((el) => {
       const elType = String(el?.businessObject?.$type || el?.type || "");
       if (!elType.includes("StartEvent")) return;
+      const engineId = String(el?.businessObject?.$attrs?.["data-engine-id"] || "");
+      if (!engineId || !newNodeIds.has(engineId)) return;
       const h = Number(el.height || 0);
       if (!h) return;
       const baselineMidY = getBaselineMidY(laneEl);
       const desiredY = baselineMidY - h / 2;
-      const dy = desiredY - (el.y || 0);
+      const dy = Math.round(desiredY - (el.y || 0));
       if (Math.abs(dy) < 0.5) return;
       try {
         modeling.moveShape(el, { x: 0, y: dy }, el.parent || laneEl.parent);
@@ -1215,16 +1283,19 @@ export function applyIncrementalAppend({
     const newElementIds = new Set(
       [...createdByEngineId.values()].map((el) => String(el?.id || "")).filter(Boolean),
     );
-    const rerouteNodeIds = new Set([...newElementIds, ...extraRerouteNodeIds]);
+    const movedNodeIds = new Set([...extraRerouteNodeIds]);
     const rerouted = new Set();
     createdConnections.forEach((conn) => {
       if (!conn || rerouted.has(conn.id)) return;
       const source = conn?.source;
       const target = conn?.target;
       if (!source || !target) return;
-      const touchesNewNode =
-        rerouteNodeIds.has(String(source.id || "")) || rerouteNodeIds.has(String(target.id || ""));
-      if (!touchesNewNode) return;
+      const sourceId = String(source.id || "");
+      const targetId = String(target.id || "");
+      const sourceWasMoved = movedNodeIds.has(sourceId);
+      const targetWasMoved = movedNodeIds.has(targetId);
+      const shouldReroute = sourceWasMoved || targetWasMoved;
+      if (!shouldReroute) return;
       const waypoints = computeWaypointsForConnection(conn);
       if (!waypoints) return;
       try {
