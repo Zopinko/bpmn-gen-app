@@ -300,6 +300,7 @@ export default function MapViewer({
     const elementFactory = modeler.get("elementFactory");
     const autoPlace = modeler.get("autoPlace", false);
     const commandStack = modeler.get("commandStack", false);
+    const selection = modeler.get("selection", false);
     const refreshLocalUndo = () => {
       try {
         setLocalCanUndo(Boolean(commandStack?.canUndo && commandStack.canUndo()));
@@ -877,13 +878,29 @@ export default function MapViewer({
 
     const handleElementHover = (event) => {
       const { element } = event;
+      if (element?.waypoints) {
+        // Disable connection hover styling/handles; keep hover for shapes/lanes.
+        try {
+          canvas.removeMarker(element, "hover");
+        } catch {
+          // ignore
+        }
+        return;
+      }
       const boType = element?.businessObject && element.businessObject.$type;
       if (boType === "bpmn:Lane" || boType === "bpmn:Participant") {
         showLaneHandle(element.id);
       }
     };
 
-    const handleElementOut = () => {
+    const handleElementOut = (event) => {
+      if (event?.element?.waypoints) {
+        try {
+          canvas.removeMarker(event.element, "hover");
+        } catch {
+          // ignore
+        }
+      }
       if (laneHandleHoverRef.current || laneDragStateRef.current.active) return;
       hideLaneHandles();
     };
@@ -1145,7 +1162,37 @@ export default function MapViewer({
       emitCanvasEdit("element_changed");
     };
 
+    const preventConnectionBendpointMove = (event) => {
+      if (event?.stopPropagation) event.stopPropagation();
+      if (event?.preventDefault) event.preventDefault();
+      return false;
+    };
+
+    const preventConnectionManualBending = (event) => {
+      const element = event?.element;
+      if (!element?.waypoints) return;
+      const target = event?.originalEvent?.target;
+      const targetEl = target && typeof target.closest === "function" ? target : null;
+      const inBendpointsLayer = Boolean(targetEl?.closest(".djs-bendpoints"));
+      const inSegmentDragger = Boolean(targetEl?.closest(".djs-segment-dragger"));
+      if (!inBendpointsLayer || inSegmentDragger) {
+        return;
+      }
+      try {
+        selection?.select?.(element);
+      } catch {
+        // ignore
+      }
+      if (event?.stopPropagation) event.stopPropagation();
+      if (event?.preventDefault) event.preventDefault();
+      return false;
+    };
+
     if (eventBus) {
+      // Block diagram-js bendpoint/segment drag start on connections (the small hover circle hotspot).
+      eventBus.on("element.mousedown", 10000, preventConnectionManualBending);
+      // Lock all bendpoint-based edits (insert/move bendpoint + endpoint reconnect), keep segment move enabled.
+      eventBus.on("bendpoint.move.start", 10000, preventConnectionBendpointMove);
       if (ENABLE_GHOST_STYLING) {
         eventBus.on("shape.move.start", startGhostStyling);
         eventBus.on("shape.move.move", startGhostStyling);
@@ -1185,6 +1232,8 @@ export default function MapViewer({
         onModelerReady(null);
       }
       if (eventBus) {
+        eventBus.off("element.mousedown", preventConnectionManualBending);
+        eventBus.off("bendpoint.move.start", preventConnectionBendpointMove);
         if (ENABLE_GHOST_STYLING) {
           eventBus.off("shape.move.start", startGhostStyling);
           eventBus.off("shape.move.move", startGhostStyling);

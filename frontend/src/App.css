@@ -4103,16 +4103,12 @@ body {
   transition: stroke 120ms ease, stroke-width 120ms ease;
 }
 
-/* Hover effect for arrows (connections) */
-.map-viewer__canvas .djs-connection .djs-visual > path:hover {
-  stroke: rgba(96, 165, 250, 0.95) !important;
-  stroke-width: 2.6px !important;
+/* Disable hover hit on arrowhead polygon; keep connection segment interactions intact. */
+.map-viewer__canvas .djs-connection .djs-visual > polygon {
+  pointer-events: none;
 }
 
-.map-viewer__canvas .djs-connection .djs-visual > polygon:hover {
-  fill: rgba(96, 165, 250, 0.95) !important;
-  stroke: rgba(96, 165, 250, 0.95) !important;
-}
+/* Connection hover color is intentionally disabled (keep default styling). */
 
 .map-viewer__canvas .djs-connection.hover:not(.dragging):not(.moving) .djs-visual > path {
   stroke: rgba(96, 165, 250, 0.95);
@@ -4328,8 +4324,8 @@ body {
   transition: opacity 120ms ease, fill 120ms ease;
 }
 
-.map-viewer__canvas .djs-element.hover .djs-resizer,
-.map-viewer__canvas .djs-element.hover .djs-segment-dragger,
+.map-viewer__canvas .djs-shape.hover .djs-resizer,
+.map-viewer__canvas .djs-shape.hover .djs-segment-dragger,
 .map-viewer__canvas .djs-connection.hover .djs-bendpoint {
   opacity: 1;
 }
@@ -4358,6 +4354,12 @@ body {
 .map-viewer__canvas .djs-element.djs-lane.selected .djs-resizer,
 .map-viewer__canvas .djs-element.djs-lane.selected .djs-segment-dragger {
   opacity: 1;
+}
+
+/* Hide bendpoint circles (endpoint/floating) in overlays, keep segment dragger for axis move. */
+.map-viewer__canvas .djs-bendpoints .djs-bendpoint {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* Make context pad actions more visible when a shape is selected */
@@ -4441,5 +4443,23 @@ body {
   font-weight: 800;
   text-shadow: 0 0 2px rgba(255, 255, 255, 0.9);
   caret-color: #b91c1c;
+}
+
+/* Final override: no visual hover highlight on connections (keep drag interactions only). */
+.map-viewer__canvas .djs-connection.hover:not(.selected):not(.dragging):not(.moving) .djs-visual > path,
+.map-viewer__canvas .djs-element.djs-connection:hover:not(.selected):not(.dragging):not(.moving) .djs-visual > path {
+  stroke: #1f2937 !important;
+  stroke-width: 2px !important;
+}
+
+.map-viewer__canvas .djs-connection.hover:not(.selected):not(.dragging):not(.moving) .djs-visual > polygon,
+.map-viewer__canvas .djs-element.djs-connection:hover:not(.selected):not(.dragging):not(.moving) .djs-visual > polygon {
+  stroke: #1f2937 !important;
+  fill: #1f2937 !important;
+}
+
+.map-viewer__canvas .djs-connection.hover:not(.selected):not(.dragging):not(.moving) text,
+.map-viewer__canvas .djs-element.djs-connection:hover:not(.selected):not(.dragging):not(.moving) text {
+  fill: #111827 !important;
 }
 
