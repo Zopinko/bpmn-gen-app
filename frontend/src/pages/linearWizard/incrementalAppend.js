@@ -156,10 +156,39 @@ export function applyIncrementalAppend({
   }
   const { rootEl, participantEl } = processContext;
 
+  const getLaneFlowShapes = (laneEl) => {
+    if (!laneEl) return [];
+    return elementRegistry
+      .getAll()
+      .filter((el) => el && el.type !== "label" && isFlowNode(el) && isInLane(el, laneEl));
+  };
+
+  const findLastFlowShapeInLane = (laneEl) => {
+    const nodes = getLaneFlowShapes(laneEl);
+    if (!nodes.length) return null;
+    return nodes.reduce((last, el) => {
+      const right = Number(el.x || 0) + Number(el.width || 0);
+      const lastRight = Number(last?.x || 0) + Number(last?.width || 0);
+      return right > lastRight ? el : last;
+    }, nodes[0]);
+  };
+
   const computeLaneRightmost = (laneEl) => {
-    const nodes = allElements.filter((el) => isFlowNode(el) && isInLane(el, laneEl));
-    if (!nodes.length) return laneEl.x + 80;
-    return nodes.reduce((max, el) => Math.max(max, (el.x || 0) + (el.width || 0)), laneEl.x + 80);
+    const last = findLastFlowShapeInLane(laneEl);
+    if (!last) return laneEl.x + 80;
+    return Number(last.x || 0) + Number(last.width || 0);
+  };
+
+  const findLastFlowShapeInMap = () => {
+    const nodes = elementRegistry
+      .getAll()
+      .filter((el) => el && el.type !== "label" && isFlowNode(el));
+    if (!nodes.length) return null;
+    return nodes.reduce((last, el) => {
+      const right = Number(el.x || 0) + Number(el.width || 0);
+      const lastRight = Number(last?.x || 0) + Number(last?.width || 0);
+      return right > lastRight ? el : last;
+    }, nodes[0]);
   };
 
   const toBpmnType = (node) => {
@@ -294,6 +323,7 @@ export function applyIncrementalAppend({
     }
     return laneElements.find((laneEl) => isInLane(el, laneEl)) || null;
   };
+
   const computeWaypointsForConnection = (connection) => {
     const source = connection?.source;
     const target = connection?.target;
@@ -423,10 +453,29 @@ export function applyIncrementalAppend({
     return null;
   };
 
-  const getLaneCursor = (laneKey, laneEl) => {
+  const getLaneCursor = (laneKey, laneEl, shapeWidth = 100) => {
     if (laneCursorById.has(laneKey)) return laneCursorById.get(laneKey);
-    const rightmost = laneEl ? computeLaneRightmost(laneEl) : null;
-    const start = typeof rightmost === "number" ? rightmost + H_GAP : 240;
+    const laneHasShapes = Boolean(laneEl && findLastFlowShapeInLane(laneEl));
+    let start = 240;
+
+    if (laneHasShapes && laneEl) {
+      const laneRightmost = computeLaneRightmost(laneEl);
+      start = typeof laneRightmost === "number" ? laneRightmost + H_GAP : start;
+    } else {
+      const mapLast = findLastFlowShapeInMap();
+      if (mapLast) {
+        // Align the first shape in a newly-used lane by center column of the current last map shape.
+        const mapLastX = Number(mapLast.x || 0);
+        const mapLastW = Number(mapLast.width || 0);
+        const targetW = Number(shapeWidth || 100);
+        const mapCenterX = mapLastX + mapLastW / 2;
+        start = Math.round(mapCenterX - targetW / 2);
+      } else if (laneEl) {
+        const laneRightmost = computeLaneRightmost(laneEl);
+        start = typeof laneRightmost === "number" ? laneRightmost + H_GAP : start;
+      }
+    }
+
     laneCursorById.set(laneKey, start);
     return start;
   };
@@ -700,7 +749,7 @@ export function applyIncrementalAppend({
 
       if (laneForPlacement) {
         const laneKey = laneId || String(laneForPlacement.id);
-        const cursorX = getLaneCursor(laneKey, laneForPlacement);
+        const cursorX = getLaneCursor(laneKey, laneForPlacement, shape.width || 100);
         if (!forceBranchColumn) {
           const desiredX = x ?? cursorX;
           x = desiredX < cursorX ? cursorX : desiredX;
