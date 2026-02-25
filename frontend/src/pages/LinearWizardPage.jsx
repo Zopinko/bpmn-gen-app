@@ -55,15 +55,15 @@ const HELP_RULES = [
   {
     id: "xor",
     title: "Rozhodnutie (XOR gateway)",
-    description: "Rozhodovaci bod s presne jednou vybranou vetvou.",
+    description: "Rozhodnutie rozdeli proces na dve moznosti: ANO alebo NIE.",
     iconClass: "bpmn-icon-gateway-xor",
-    syntax: "Ak/Keď/Ked <podmienka> tak <krok>, inak <krok/koniec>",
+    syntax: "Zapis: Ak/Ked <otazka>, tak <co sa stane>, inak <co sa stane>",
     example: "Ak zakaznik schvali ponuku tak priprav zmluvu, inak koniec",
     template: "Ak <podmienka> tak <krok>, inak <inak>",
     fields: [
-      { key: "podmienka", label: "Podmienka", token: "podmienka", placeholder: "napr. zakaznik schvali ponuku" },
-      { key: "krok", label: "Krok (tak)", token: "krok", placeholder: "napr. priprav zmluvu" },
-      { key: "inak", label: "Krok/koniec (inak)", token: "inak", placeholder: "napr. koniec" },
+      { key: "podmienka", label: "Otazka (rozhodnutie)", token: "podmienka", placeholder: "napr. Je doklad spravny?" },
+      { key: "krok", label: "Ak ANO, co sa stane?", token: "krok", placeholder: "napr. pokracujem v spracovani" },
+      { key: "inak", label: "Ak NIE, co sa stane?", token: "inak", placeholder: "napr. vyziadam doplnenie alebo ukoncim" },
     ],
   },
   {
