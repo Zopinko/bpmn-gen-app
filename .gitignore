@@ -11,3 +11,4 @@ dist/
 
 # Logs
 npm-debug.log*
+/backend/data/project_notes.json

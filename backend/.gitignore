@@ -35,7 +35,4 @@ Thumbs.db
 exports/
 
 .aider.tags.cache.v4/
-.aider* 
-
-*.bak
-*.patch
+.aider*
