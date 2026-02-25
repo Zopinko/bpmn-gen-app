@@ -1020,7 +1020,7 @@ const mapGeneratorInputToPayload = (generatorInput) => {
   };
 };
 
-export default function LinearWizardPage() {
+export default function LinearWizardPage({ currentUser = null }) {
   const navigate = useNavigate();
   const { modelId: routeModelId } = useParams();
   const fileInputRef = useRef(null);
@@ -3226,8 +3226,36 @@ export default function LinearWizardPage() {
     return {
       ...note,
       status: normalizeNoteStatus(note.status),
-      replies: Array.isArray(note.replies) ? note.replies : [],
+      replies: Array.isArray(note.replies)
+        ? note.replies.map((reply) => (reply && typeof reply === "object" ? reply : null)).filter(Boolean)
+        : [],
     };
+  };
+
+  const getCurrentUserNoteAuthor = () => {
+    const email = String(currentUser?.email || "").trim();
+    const name = String(currentUser?.name || currentUser?.full_name || "").trim();
+    if (name) {
+      return { createdByName: name, createdByEmail: email || undefined };
+    }
+    if (email) {
+      return { createdByName: email, createdByEmail: email };
+    }
+    return { createdByName: "Neznamy pouzivatel" };
+  };
+
+  const formatNoteMetaLine = (item) => {
+    if (!item || typeof item !== "object") return "";
+    const actor =
+      String(item.createdByName || item.created_by_name || item.createdByEmail || item.created_by_email || "").trim();
+    const createdAt = item.createdAt || item.created_at;
+    const parts = [];
+    if (actor) parts.push(`Pridal: ${actor}`);
+    if (createdAt) {
+      const when = formatDateTime(createdAt);
+      if (when) parts.push(when);
+    }
+    return parts.join(" · ");
   };
 
   const fetchProjectNotes = async () => {
@@ -3275,6 +3303,7 @@ export default function LinearWizardPage() {
       status: "new",
       replies: [],
       createdAt: new Date().toISOString(),
+      ...getCurrentUserNoteAuthor(),
     };
     await persistProjectNotes([next, ...projectNotes]);
     setNoteDraft("");
@@ -3309,6 +3338,7 @@ export default function LinearWizardPage() {
       id: `reply_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       text,
       createdAt: new Date().toISOString(),
+      ...getCurrentUserNoteAuthor(),
     };
     const next = projectNotes.map((note) =>
       note.id === id
@@ -8173,6 +8203,7 @@ export default function LinearWizardPage() {
                             </button>
                           </div>
                         </div>
+                        {formatNoteMetaLine(note) ? <div className="project-note-meta">{formatNoteMetaLine(note)}</div> : null}
                         {editingNoteId === note.id ? (
                           <div className="project-note-edit">
                             <textarea
@@ -8224,7 +8255,12 @@ export default function LinearWizardPage() {
                                 </div>
                               ) : (
                                 <div className="project-note-reply-row">
-                                  <div className="project-note-reply-text">{reply.text}</div>
+                                  <div className="project-note-reply-content">
+                                    <div className="project-note-reply-text">{reply.text}</div>
+                                    {formatNoteMetaLine(reply) ? (
+                                      <div className="project-note-meta project-note-meta--reply">{formatNoteMetaLine(reply)}</div>
+                                    ) : null}
+                                  </div>
                                   <div className="project-note-reply-actions">
                                     <button
                                       type="button"

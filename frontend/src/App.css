@@ -2734,6 +2734,15 @@ body {
   font-size: 0.98rem;
 }
 
+.project-note-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-note-meta--reply {
+  margin-top: 2px;
+}
+
 .project-note-edit {
   display: flex;
   flex-direction: column;
@@ -2789,6 +2798,12 @@ body {
 
 .project-note-reply-text {
   flex: 1;
+  white-space: pre-wrap;
+}
+
+.project-note-reply-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .project-note-reply-actions {

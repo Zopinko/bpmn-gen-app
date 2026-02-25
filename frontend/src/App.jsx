@@ -455,8 +455,8 @@ function AppLayout() {
         </header>
         <main className="app-shell__body">
           <Routes>
-            <Route path="/" element={renderProtected(<LinearWizardPage />)} />
-            <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage />)} />
+            <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
+            <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route path="/text" element={renderProtected(<GeneratorPage />)} />
             <Route
