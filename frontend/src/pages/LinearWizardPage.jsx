@@ -3874,6 +3874,10 @@ export default function LinearWizardPage({ currentUser = null }) {
       lanePreviewTimerRef.current = null;
     }
 
+    // Lane typing preview overlay is deprecated; always keep it disabled.
+    clearLanePreviewOverlays();
+    return undefined;
+
     if (!selectedLane || !laneDescription.trim()) {
       clearLanePreviewOverlays();
       return undefined;
@@ -6297,10 +6301,6 @@ export default function LinearWizardPage({ currentUser = null }) {
               <button type="button" className="process-card-toggle" onClick={() => navigate("/")}>
                 Karta procesu
               </button>
-              <button type="button" className="process-card-toggle" onClick={() => navigate("/text")}
-              >
-                Text - mapa
-              </button>
             </div>
           ) : null}
         </div>
@@ -6322,7 +6322,7 @@ export default function LinearWizardPage({ currentUser = null }) {
         >
           {drawerOpen ? (
             <div
-              className={`process-card-drawer ${drawerOpen ? "is-open" : ""} ${isReadOnlyMode ? "is-readonly" : ""}`}
+              className={`process-card-drawer process-card-process ${drawerOpen ? "is-open" : ""} ${isReadOnlyMode ? "is-readonly" : ""}`}
               style={{
                 height: !helpOpen && !mentorOpen ? "100%" : processPanelHeight,
                 minHeight: 320,
@@ -6350,18 +6350,19 @@ export default function LinearWizardPage({ currentUser = null }) {
                   ×
                 </button>
               </div>
-              <div className="process-card-body">
-                <section className="process-card-section">
+              <div className="process-card-body process-card-process__body">
+                <div className="wizard-lane-v2__card process-card-process__card">
+                <section className="process-card-section process-card-process__section">
                   <div className="process-card-section__title">
                     <h2>Začnime základom</h2>
                     <span className="process-card-pill">Základ</span>
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                  <div className="process-card-process__template-row">
                     {PROCESS_TEMPLATES.map((template) => (
                       <button
                         key={template.id}
                         type="button"
-                        className="btn btn--small"
+                        className="btn btn--small process-card-process__template-btn"
                         onClick={() => applyProcessTemplate(template)}
                       >
                         Vzor: {template.label}
@@ -6391,15 +6392,6 @@ export default function LinearWizardPage({ currentUser = null }) {
                       value={generatorInput.trigger}
                       onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
                       placeholder="Napr. Nová žiadosť od klienta"
-                    />
-                  </label>
-                  <label className="wizard-field">
-                    <span>S čím proces pracuje?</span>
-                    <textarea
-                      value={generatorInput.input}
-                      onChange={(e) => updateGeneratorInput("input", e.target.value)}
-                      rows={2}
-                      placeholder="Aká udalosť je začiatkom procesu?"
                     />
                   </label>
                   <label className="wizard-field">
@@ -6437,7 +6429,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                       </button>
                   </div>
                 </section>
-                <section className="process-card-section">
+                <section className="process-card-section process-card-process__section">
                   <div className="process-card-section__title">
                     <h2>Meta udaje o procese</h2>
                     <span className="process-card-pill process-card-pill--muted">Opis</span>
@@ -6479,6 +6471,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                     ) : null}
                   </div>
                 ) : null}
+                </div>
               </div>
             </div>
           ) : null}
@@ -8332,4 +8325,5 @@ export default function LinearWizardPage({ currentUser = null }) {
     </div>
   );
 }
+
 
