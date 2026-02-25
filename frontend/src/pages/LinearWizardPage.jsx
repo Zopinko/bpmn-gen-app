@@ -1081,8 +1081,8 @@ export default function LinearWizardPage({ currentUser = null }) {
   const [orgMembersLoading, setOrgMembersLoading] = useState(false);
   const [orgMembersError, setOrgMembersError] = useState(null);
   const [railSections, setRailSections] = useState({
-    org: true,
-    process: true,
+    org: false,
+    process: false,
     mentor: false,
     save: false,
     env: false,
@@ -6108,7 +6108,6 @@ export default function LinearWizardPage({ currentUser = null }) {
         <div className={`process-card-rail-group ${railSections.org ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("org")}>
             <span>ORGANIZÁCIA</span>
-            <span className="process-card-rail-chevron">{railSections.org ? "-" : "+"}</span>
           </button>
           {railSections.org ? (
             <div className="process-card-rail-content">
@@ -6139,7 +6138,6 @@ export default function LinearWizardPage({ currentUser = null }) {
         <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
             <span>Proces</span>
-            <span className="process-card-rail-chevron">{railSections.process ? "-" : "+"}</span>
           </button>
           {railSections.process ? (
             <div className="process-card-rail-content">
@@ -6161,23 +6159,6 @@ export default function LinearWizardPage({ currentUser = null }) {
                 {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
               </button>
 
-              <button
-                type="button"
-                className={`process-card-toggle ${helpOpen ? "is-active" : ""}`}
-                style={
-                  helpOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("help")}
-              >
-                {helpOpen ? "Skryť pomocník" : "Pomocník"}
-              </button>
               <button
                 type="button"
                 className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
@@ -6210,18 +6191,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                 }
                 onClick={() => toggleSingleCard("mentor")}
               >
-                {mentorOpen ? "Skryť poznámky mentora" : "Poznámky mentora"}
-              </button>
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--mentor-review ${mentorStale ? "is-stale" : ""}`}
-                onClick={() => {
-                  openSingleCard("mentor");
-                  runMentorReview();
-                }}
-                disabled={mentorLoading}
-              >
-                {mentorLoading ? "Kontrolujem..." : "Spustiť kontrolu"}
+                {mentorOpen ? "Skryť mentor kontrolu" : "Mentor kontrola"}
               </button>
               <button
                 type="button"
@@ -6236,8 +6206,7 @@ export default function LinearWizardPage({ currentUser = null }) {
 
         <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
-            <span>Model</span>
-            <span className="process-card-rail-chevron">{railSections.save ? "-" : "+"}</span>
+            <span>Modely pieskovisko</span>
           </button>
           {railSections.save ? (
             <div className="process-card-rail-content">
@@ -6276,7 +6245,6 @@ export default function LinearWizardPage({ currentUser = null }) {
         <div className={`process-card-rail-group ${railSections.project ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
             <span>Projekt</span>
-            <span className="process-card-rail-chevron">{railSections.project ? "-" : "+"}</span>
           </button>
           {railSections.project ? (
             <div className="process-card-rail-content">
@@ -6291,19 +6259,6 @@ export default function LinearWizardPage({ currentUser = null }) {
           ) : null}
         </div>
 
-        <div className={`process-card-rail-group ${railSections.env ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("env")}>
-            <span>Prostredie</span>
-            <span className="process-card-rail-chevron">{railSections.env ? "-" : "+"}</span>
-          </button>
-          {railSections.env ? (
-            <div className="process-card-rail-content">
-              <button type="button" className="process-card-toggle" onClick={() => navigate("/")}>
-                Karta procesu
-              </button>
-            </div>
-          ) : null}
-        </div>
       </div>
 
       {drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen ? (
@@ -7028,7 +6983,7 @@ export default function LinearWizardPage({ currentUser = null }) {
             <div className="process-card-drawer is-open process-card-mentor">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Poznámky mentora</div>
+                  <div className="process-card-label">Mentor kontrola</div>
                   <div className="process-card-description">Checklist návrhov a rýchlych opráv.</div>
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
