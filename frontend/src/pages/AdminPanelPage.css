@@ -1,0 +1,136 @@
+.admin-monitor {
+  height: 100%;
+  overflow: auto;
+  padding: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.12), transparent 42%),
+    #05070c;
+}
+
+.admin-monitor__header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.admin-monitor__header p {
+  margin: 6px 0 0;
+  color: #9ca3af;
+}
+
+.admin-monitor__tabs {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-monitor__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  background: rgba(15, 22, 35, 0.85);
+  color: #e5e7eb;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.admin-monitor__tab.is-active {
+  border-color: rgba(96, 165, 250, 0.9);
+  background: rgba(30, 58, 138, 0.2);
+}
+
+.admin-monitor__tab-count {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(71, 85, 105, 0.8);
+}
+
+.admin-monitor__panel {
+  margin-top: 12px;
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 14px;
+  background: rgba(15, 22, 35, 0.9);
+  padding: 14px;
+}
+
+.admin-monitor__panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-monitor__panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.admin-monitor__count {
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.admin-monitor__muted {
+  margin: 0;
+  color: #9ca3af;
+}
+
+.admin-monitor__error {
+  margin: 0;
+  color: #fda4af;
+}
+
+.admin-table-wrap {
+  width: 100%;
+  overflow: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+  padding: 9px 8px;
+  text-align: left;
+  font-size: 0.9rem;
+  vertical-align: top;
+}
+
+.admin-table th {
+  color: #cbd5e1;
+  font-weight: 600;
+  background: rgba(11, 18, 32, 0.6);
+  position: sticky;
+  top: 0;
+}
+
+.admin-table td {
+  color: #e5e7eb;
+}
+
+.admin-table__mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: #bfdbfe;
+}
+
+.admin-table__empty {
+  text-align: center;
+  color: #9ca3af;
+  padding: 16px;
+}
+
+@media (max-width: 900px) {
+  .admin-monitor {
+    padding: 12px;
+  }
+}

@@ -44,40 +44,40 @@ import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
 const HELP_RULES = [
   {
     id: "task",
-    title: "Bezny krok (Task)",
-    description: "Zvycajna aktivita v procese, ktoru vykona rola alebo system.",
+    title: "Bežný krok",
+    description: "Bežná aktivita v procese, ktorú vykoná rola alebo systém.",
     iconClass: "bpmn-icon-task",
-    syntax: "Lubovolny text na riadok",
-    example: "Overime identitu zakaznika",
+    syntax: "Ľubovoľný text na riadok",
+    example: "Overím identitu zákazníka",
     template: "<krok>",
-    fields: [{ key: "krok", label: "Vlastny text", token: "krok", placeholder: "napr. over identitu" }],
+    fields: [{ key: "krok", label: "Vlastný text", token: "krok", placeholder: "napr. overím identitu" }],
   },
   {
     id: "xor",
-    title: "Rozhodnutie (XOR gateway)",
-    description: "Rozhodnutie rozdeli proces na dve moznosti: ANO alebo NIE.",
+    title: "Rozhodnutie",
+    description: "Rozhodnutie znamená, že sa proces vetví (napr. áno / nie).",
     iconClass: "bpmn-icon-gateway-xor",
-    syntax: "Zapis: Ak/Ked <otazka>, tak <co sa stane>, inak <co sa stane>",
-    example: "Ak zakaznik schvali ponuku tak priprav zmluvu, inak koniec",
+    syntax: "Zápis: Ak/Ked <otázka>, tak <čo sa stane>, inak <čo sa stane>",
+    example: "Ak zákazník schváli ponuku, tak pripravím zmluvu, inak koniec",
     template: "Ak <podmienka> tak <krok>, inak <inak>",
     fields: [
-      { key: "podmienka", label: "Otazka (rozhodnutie)", token: "podmienka", placeholder: "napr. Je doklad spravny?" },
-      { key: "krok", label: "Ak ANO, co sa stane?", token: "krok", placeholder: "napr. pokracujem v spracovani" },
-      { key: "inak", label: "Ak NIE, co sa stane?", token: "inak", placeholder: "napr. vyziadam doplnenie alebo ukoncim" },
+      { key: "podmienka", label: "Otázka (rozhodnutie)", token: "podmienka", placeholder: "napr. Je doklad správny?" },
+      { key: "krok", label: "Ak ÁNO, čo sa stane?", token: "krok", placeholder: "napr. pokračujem v spracovaní" },
+      { key: "inak", label: "Ak NIE, čo sa stane?", token: "inak", placeholder: "napr. vyžiadam doplnenie alebo ukončím" },
     ],
   },
   {
     id: "and_strict",
-    title: "Paralelne kroky (AND) - presny zapis",
+    title: "Paralelné kroky",
     description: "Viac krokov prebieha naraz (paralelne).",
     iconClass: "bpmn-icon-gateway-parallel",
     syntax: "Paralelne: <krok>; <krok>; <krok>",
-    example: "Paralelne: priprav zmluvu; over identitu; nastav splatky",
+    example: "Paralelne: pripravím zmluvu; overím identitu; nastavím splátky",
     template: "Paralelne: <krok1>; <krok2>; <krok3>",
     fields: [
-      { key: "krok1", label: "Krok 1", token: "krok1", placeholder: "napr. priprav zmluvu" },
-      { key: "krok2", label: "Krok 2", token: "krok2", placeholder: "napr. over identitu" },
-      { key: "krok3", label: "Krok 3", token: "krok3", placeholder: "napr. nastav splatky" },
+      { key: "krok1", label: "Krok 1", token: "krok1", placeholder: "napr. pripravím zmluvu" },
+      { key: "krok2", label: "Krok 2", token: "krok2", placeholder: "napr. overím identitu" },
+      { key: "krok3", label: "Krok 3", token: "krok3", placeholder: "napr. nastavím splátky" },
     ],
   },
 ];
@@ -2744,7 +2744,7 @@ export default function LinearWizardPage({ currentUser = null }) {
             : rule.id === "xor"
               ? "Rozhodnutie"
               : rule.id.includes("and")
-                ? "Paralelne"
+                ? "Paralelné"
                 : "Pravidlo";
         return (
           <section
@@ -2792,7 +2792,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                   </div>
                 ) : null}
                 <div className="wizard-help-syntax-wrap">
-                  <span className="wizard-help-code-label">Syntax</span>
+                  <span className="wizard-help-code-label">Ako to napísať</span>
                   <code className="wizard-help-syntax">{rule.syntax}</code>
                 </div>
                 <div className="wizard-help-acc-actions">
@@ -6938,10 +6938,12 @@ export default function LinearWizardPage({ currentUser = null }) {
                   <div className="process-card-description">
                     Vkladáš do:{" "}
                     {helpInsertTarget?.type === "lane"
-                      ? `lane ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
+                      ? `roly ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
                       : "hlavné kroky"}
                   </div>
-                  <div className="wizard-help-card-hint">Klikni na „Vložiť" a doplň si vlastný text.</div>
+                  <div className="wizard-help-card-hint">
+                    Vyplň polia a klikni na „Vložiť príklad“, potom si text uprav podľa seba.
+                  </div>
                 </div>
                 <div className="process-card-header-actions">
                   <button

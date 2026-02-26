@@ -116,7 +116,7 @@ def get_org_invite_link(
 ):
     resolved_org_id = _resolve_org_id(current_user, org_id)
     role = get_user_org_role(current_user.id, resolved_org_id)
-    if role not in {"owner", "admin"}:
+    if role != "owner":
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
     invite = (
         regenerate_org_invite(resolved_org_id, current_user.id)
