@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from auth.deps import is_admin_panel_available, is_super_admin_user
 from auth.service import (
     AuthUser,
     authenticate_user,
@@ -33,6 +34,8 @@ def _user_payload(user: AuthUser) -> dict:
         "id": user.id,
         "email": user.email,
         "role": user.role,
+        "admin_panel_available": is_admin_panel_available(),
+        "is_super_admin": is_super_admin_user(user),
         "email_verified": bool(user.email_verified_at),
         "created_at": user.created_at,
     }

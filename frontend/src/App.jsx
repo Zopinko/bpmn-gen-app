@@ -7,6 +7,7 @@ import LinearWizardPage from "./pages/LinearWizardPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import JoinOrgPage from "./pages/JoinOrgPage";
+import AdminPanelPage from "./pages/AdminPanelPage";
 import "./App.css";
 
 function App() {
@@ -100,6 +101,19 @@ function AppLayout() {
     return element;
   };
 
+  const renderSuperAdminOnly = (element) => {
+    if (authState.loading) {
+      return <div style={{ padding: 16 }}>Načítavam...</div>;
+    }
+    if (!authState.user) {
+      return <Navigate to="/login" replace />;
+    }
+    if (authState.user?.admin_panel_available !== true || authState.user?.is_super_admin !== true) {
+      return <Navigate to="/" replace />;
+    }
+    return element;
+  };
+
   return (
       <div className="app-shell">
         <header className="app-nav">
@@ -121,6 +135,13 @@ function AppLayout() {
               </>
             ) : (
               <div className="app-nav__auth">
+                {!authState.loading &&
+                authState.user?.admin_panel_available === true &&
+                authState.user?.is_super_admin === true ? (
+                  <Link to="/admin" className="app-nav__link">
+                    Admin
+                  </Link>
+                ) : null}
                 <div className="app-nav__auth-meta">
                   <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
                   {activeOrgLabel ? (
@@ -137,6 +158,7 @@ function AppLayout() {
         <main className="app-shell__body">
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
+            <Route path="/admin" element={renderSuperAdminOnly(<AdminPanelPage />)} />
             <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route
