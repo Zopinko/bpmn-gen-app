@@ -482,11 +482,19 @@ const getNodeLabel = (node) =>
   String(node?.name || node?.label || node?.id || "").trim();
 
 const PLACEHOLDER_NODE_NAMES = new Set(["procesny krok", "nova brana", "nove rozhodnutie", "zaciatok", "koniec"]);
+const ANGLE_PLACEHOLDER_REGEX = /<[^<>]+>/g;
 
 const isPlaceholderNodeName = (value) => {
   const normalized = normalizeText(value).trim();
   return PLACEHOLDER_NODE_NAMES.has(normalized);
 };
+
+const extractAnglePlaceholderTokens = (value) => {
+  const matches = String(value || "").match(ANGLE_PLACEHOLDER_REGEX);
+  return matches ? matches.map((item) => item.trim()).filter(Boolean) : [];
+};
+
+const hasAnglePlaceholderToken = (value) => extractAnglePlaceholderTokens(value).length > 0;
 
 const buildFlowAdjacency = (index) => {
   const incoming = new Map();
@@ -778,6 +786,44 @@ const pickGuideCard = ({
     uiContext?.modelSourceKind === "org" || uiContext?.hasUnsavedChanges === false;
 
   if (isFullyConsistent) {
+    const placeholderNamedNodes = index.nodes.filter((node) => {
+      const type = String(node?.type || "").toLowerCase();
+      if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
+        return false;
+      }
+      return hasAnglePlaceholderToken(node?.name || node?.label || "");
+    });
+    if (placeholderNamedNodes.length) {
+      const pickNode = ctxLaneId
+        ? placeholderNamedNodes.find((node) => String(node?.laneId || "") === String(ctxLaneId)) ||
+          placeholderNamedNodes[0]
+        : placeholderNamedNodes[0];
+      const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
+      const placeholderTokens = Array.from(
+        new Set(
+          placeholderNamedNodes.flatMap((node) =>
+            extractAnglePlaceholderTokens(node?.name || node?.label || ""),
+          ),
+        ),
+      );
+      const exampleToken = placeholderTokens[0] || "<podmienka>";
+      const count = placeholderNamedNodes.length;
+      return {
+        key: `placeholder_node:${pickNode?.id || "any"}`,
+        scope: laneId ? "lane" : "global",
+        laneId,
+        title: "Pomenujme kroky",
+        message:
+          count > 1
+            ? `Našiel som ${count} placeholder názvy (napr. ${exampleToken}). Premenuj ich, aby bol proces zrozumiteľný.`
+            : `Našiel som placeholder názov (napr. ${exampleToken}). Premenuj ho, aby bol proces zrozumiteľný.`,
+        primary: pickNode?.id
+          ? { label: "Na mape", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          : null,
+        secondary: { label: "Neskôr", action: "NOT_NOW" },
+      };
+    }
+
     const renamableNodes = index.nodes.filter((node) => {
       const type = String(node?.type || "").toLowerCase();
       if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
@@ -853,7 +899,9 @@ const detectParallel = (line) => {
   const text = normalizeText(line);
   return (
     text.startsWith("zaroven") ||
+    text.startsWith("sucasne") ||
     text.startsWith("zároveň") ||
+    text.startsWith("súčasne") ||
     text.startsWith("subezne") ||
     text.startsWith("súbežne") ||
     text.startsWith("paralelne") ||
@@ -861,7 +909,9 @@ const detectParallel = (line) => {
     text.startsWith("popri tom") ||
     text.startsWith("popritom") ||
     text.includes(" zaroven ") ||
+    text.includes(" sucasne ") ||
     text.includes(" zároveň ") ||
+    text.includes(" súčasne ") ||
     text.includes(" subezne ") ||
     text.includes(" súbežne ") ||
     text.includes(" paralelne ") ||
@@ -869,32 +919,6 @@ const detectParallel = (line) => {
     text.includes(" popri tom ") ||
     text.includes(" popritom ")
   );
-};
-
-const countParallelSteps = (line) => {
-  const raw = String(line || "").trim();
-  if (!raw) return 0;
-  const normalized = normalizeText(raw);
-  const withoutPrefix = normalized
-    .replace(/^paralelne\s*[:,-]?\s*/i, "")
-    .replace(/^zaroven\s*[:,-]?\s*/i, "")
-    .replace(/^zároveň\s*[:,-]?\s*/i, "")
-    .replace(/^subezne\s*[:,-]?\s*/i, "")
-    .replace(/^súbežne\s*[:,-]?\s*/i, "")
-    .replace(/^naraz\s*[:,-]?\s*/i, "")
-    .replace(/^popri tom\s*[:,-]?\s*/i, "")
-    .replace(/^popritom\s*[:,-]?\s*/i, "");
-  const parts = withoutPrefix.includes(";")
-    ? withoutPrefix.split(";")
-    : withoutPrefix.split(",");
-  let steps = parts.map((p) => p.trim()).filter(Boolean);
-  if (steps.length <= 1) {
-    steps = withoutPrefix
-      .split(/\s+(?:a|aj)\s+/i)
-      .map((p) => p.trim())
-      .filter(Boolean);
-  }
-  return steps.length;
 };
 
 const countStructures = (lines) => {
@@ -907,23 +931,91 @@ const countStructures = (lines) => {
   return { decisions, parallels };
 };
 
+const countParallelHintItems = (line) => {
+  const normalized = normalizeText(line).trim();
+  if (!normalized) return 0;
+  const triggerMatch = normalized.match(/\b(paralelne|sucasne|naraz)\b/i);
+  if (!triggerMatch) return 0;
+  const triggerStart = typeof triggerMatch.index === "number" ? triggerMatch.index : 0;
+  const afterTrigger = normalized.slice(triggerStart);
+  const body = afterTrigger.replace(
+    /^(paralelne|sucasne|naraz)\s*[:,-]?\s*/i,
+    "",
+  );
+  if (!body.trim()) return 0;
+  return body
+    .split(/\s*;\s*|\s*,\s*|\s+\ba\b\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean).length;
+};
+
 const determineInlineHint = (lines) => {
   const lastLine = [...lines].reverse().find((line) => line.trim());
   if (!lastLine) return null;
-  const normalized = normalizeText(lastLine);
-  if (detectDecision(lastLine)) {
-    const message = normalized.includes(" inak ")
-      ? "Rozhodnutie rozpoznané. Ak chceš, vlož vzor."
-      : "Vyzerá to na rozhodnutie. Doplň vetvu INAK.";
-    return { message, templateType: "decision" };
+  const normalizedLine = normalizeText(lastLine);
+  const decisionMatch = normalizedLine.match(/\b(ak|ked)\b/);
+  const parallelMatch = normalizedLine.match(/\b(paralelne|sucasne|naraz)\b/);
+
+  const decisionHint = (() => {
+    if (!decisionMatch) return null;
+    const decisionIdx = typeof decisionMatch.index === "number" ? decisionMatch.index : 0;
+    const afterTrigger = normalizedLine.slice(decisionIdx).replace(/^(ak|ked)\b\s*/i, "");
+    const hasTak = /\btak\b/.test(afterTrigger);
+    const hasInak = /\binak\b/.test(afterTrigger);
+    const beforeTak = hasTak ? afterTrigger.split(/\btak\b/i)[0] || "" : afterTrigger;
+    const conditionLen = beforeTak.replace(/[,\s]+/g, "").length;
+    const isTooShort = conditionLen < 2;
+    if (isTooShort) {
+      return { kind: "decision", state: "D0", complete: false, message: "Rozhodnutie: dopíš podmienku a vetvy „tak“ + „inak“." };
+    }
+    if (!hasTak) {
+      return { kind: "decision", state: "D1", complete: false, message: "Doplň vetvu „tak“." };
+    }
+    if (!hasInak) {
+      return { kind: "decision", state: "D2", complete: false, message: "Doplň vetvu „inak“." };
+    }
+    return {
+      kind: "decision",
+      state: "D3",
+      complete: true,
+      message: "Rozhodnutie je OK ✅ (môžeš upraviť podmienku alebo vetvy)",
+    };
+  })();
+
+  const parallelHint = (() => {
+    if (!parallelMatch) return null;
+    const itemCount = countParallelHintItems(lastLine);
+    if (itemCount <= 0) {
+      return {
+        kind: "parallel",
+        state: "P0",
+        complete: false,
+        message: "Paralela: uveď aspoň 2 kroky (oddeľ čiarkou alebo „a“).",
+      };
+    }
+    if (itemCount === 1) {
+      return {
+        kind: "parallel",
+        state: "P1",
+        complete: false,
+        message: "Pridaj ešte jeden krok (oddeľ ho čiarkou).",
+      };
+    }
+    return {
+      kind: "parallel",
+      state: "P2",
+      complete: true,
+      message: "Paralela je OK ✅ (ďalší krok pridáš po čiarke)",
+    };
+  })();
+
+  if (decisionHint && parallelHint) {
+    if (!decisionHint.complete) return { message: decisionHint.message };
+    if (!parallelHint.complete) return { message: parallelHint.message };
+    return { message: decisionHint.message };
   }
-  if (detectParallel(lastLine)) {
-    const message =
-      countParallelSteps(lastLine) < 2
-        ? "Vyzerá to na paralelu. Pridaj aspoň 2 kroky a oddeľ ich , ; alebo „a“."
-        : "Paralela rozpoznaná. Ak chceš, vlož vzor.";
-    return { message, templateType: "parallel" };
-  }
+  if (decisionHint) return { message: decisionHint.message };
+  if (parallelHint) return { message: parallelHint.message };
   return null;
 };
 
@@ -6019,13 +6111,17 @@ export default function LinearWizardPage({ currentUser = null }) {
     [selectedLaneIndex],
   );
   const laneHasWarnings = useMemo(
-    () => laneHelperItems.some((item) => Boolean(item.warning)),
-    [laneHelperItems],
+    () => laneHelperItems.some((item) => Boolean(item.warning)) || hasAnglePlaceholderToken(laneDescription),
+    [laneDescription, laneHelperItems],
   );
   const laneWarningCount = useMemo(
-    () => laneHelperItems.filter((item) => Boolean(item.warning)).length,
-    [laneHelperItems],
+    () => laneHelperItems.filter((item) => Boolean(item.warning)).length + (hasAnglePlaceholderToken(laneDescription) ? 1 : 0),
+    [laneDescription, laneHelperItems],
   );
+  const lanePlaceholderWarning = useMemo(() => {
+    if (!hasAnglePlaceholderToken(laneDescription)) return "";
+    return "Vyzerá to ako vzor. Nezabudni nahradiť <podmienka> / <krok> vlastným textom.";
+  }, [laneDescription]);
   const showLaneHelpTip = laneWarningCount > 0 && !helpOpen && !laneHelpTipDismissed;
   const laneControlStatus = useMemo(() => {
     if (!laneDescription.trim()) return "idle";
@@ -6579,14 +6675,6 @@ export default function LinearWizardPage({ currentUser = null }) {
                   </button>
                   <button
                     type="button"
-                    className="btn btn--small wizard-lane-v2__header-btn"
-                    onClick={() => setLaneInsertOpen(true)}
-                    disabled={isReadOnlyMode}
-                  >
-                    Pridať tvar
-                  </button>
-                  <button
-                    type="button"
                     className="process-card-close wizard-lane-v2__close"
                     aria-label="Zavrieť panel lane"
                     onClick={() => {
@@ -6686,6 +6774,47 @@ export default function LinearWizardPage({ currentUser = null }) {
                         </select>
                       </div>
                     </div>
+                    <div className="wizard-lane-v2__onboarding">
+                      <div className="wizard-lane-v2__onboarding-title">Typy krokov</div>
+                      <div className="wizard-lane-v2__onboarding-list">
+                        <div className="wizard-lane-v2__type-row">
+                          <button
+                            type="button"
+                            className="wizard-lane-v2__type-link"
+                            onClick={() => openLaneHelper({ type: "TASK" })}
+                          >
+                            KROK
+                          </button>
+                          <span className="wizard-lane-v2__type-copy">
+                            {" - bežná činnosť (1 riadok = 1 krok)"}
+                          </span>
+                        </div>
+                        <div className="wizard-lane-v2__type-row">
+                          <button
+                            type="button"
+                            className="wizard-lane-v2__type-link"
+                            onClick={() => openLaneHelper({ type: "XOR" })}
+                          >
+                            ROZHODNUTIE
+                          </button>
+                          <span className="wizard-lane-v2__type-copy">
+                            {" - vetvenie: „ak/keď“ → „tak/inak“"}
+                          </span>
+                        </div>
+                        <div className="wizard-lane-v2__type-row">
+                          <button
+                            type="button"
+                            className="wizard-lane-v2__type-link"
+                            onClick={() => openLaneHelper({ type: "AND" })}
+                          >
+                            PARALELA
+                          </button>
+                          <span className="wizard-lane-v2__type-copy">
+                            {" - kroky súčasne: „paralelne / súčasne / naraz“ → paralelný tok"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
                       <div className="wizard-lane-v2__section-sub">1 riadok = 1 krok</div>
@@ -6709,11 +6838,12 @@ export default function LinearWizardPage({ currentUser = null }) {
                           inlineLaneHint || hasLaneStructure ? "wizard-lane-textarea--structure" : ""
                         } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""}`}
                       />
-                      <div className="wizard-lane-v2__helper-row">
-                        <div className="wizard-lane-v2__badges">
-                          <span className="wizard-lane-v2__badge">Rozhodnutia: {laneStructureCounts.decisions}</span>
-                          <span className="wizard-lane-v2__badge">Paralely: {laneStructureCounts.parallels}</span>
+                      {inlineLaneHint ? (
+                        <div className="wizard-lane-inline-hint" role="status" aria-live="polite">
+                          <span>{inlineLaneHint.message}</span>
                         </div>
+                      ) : null}
+                      <div className="wizard-lane-v2__helper-row">
                         <button
                           type="button"
                           className={`btn btn--small wizard-lane-v2__link-btn ${showLaneHelpTip ? "is-nudged" : ""}`}
@@ -6726,19 +6856,8 @@ export default function LinearWizardPage({ currentUser = null }) {
                         </button>
                         {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">1 tip</span> : null}
                       </div>
-                      {inlineLaneHint ? (
-                        <div className="wizard-lane-inline-hint">
-                          <span>{inlineLaneHint.message}</span>
-                          {inlineLaneHint.templateType ? (
-                            <button
-                              type="button"
-                              className="btn btn--small wizard-lane-inline-btn"
-                              onClick={() => insertLaneTemplate(inlineLaneHint.templateType)}
-                            >
-                              Vložiť vzor
-                            </button>
-                          ) : null}
-                        </div>
+                      {lanePlaceholderWarning ? (
+                        <div className="wizard-lane-v2__control-warning">{lanePlaceholderWarning}</div>
                       ) : null}
                       <div className="wizard-lane-v2__row-actions">
                         <button
