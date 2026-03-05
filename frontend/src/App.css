@@ -4751,3 +4751,123 @@ body {
   fill: #111827 !important;
 }
 
+.demo-banner {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.25), rgba(15, 23, 42, 0.45));
+  color: #e0f2fe;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.demo-banner__text {
+  font-size: 13px;
+}
+
+.demo-banner__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.demo-setup-panel {
+  max-width: 720px;
+  width: min(96vw, 720px);
+}
+
+.demo-setup-form {
+  display: grid;
+  gap: 12px;
+}
+
+.demo-setup-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.9fr);
+  gap: 14px;
+}
+
+.demo-template-panel {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.35);
+  padding: 10px;
+  min-height: 250px;
+}
+
+.demo-template-panel__title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #dbeafe;
+}
+
+.demo-template-panel__list {
+  display: grid;
+  gap: 8px;
+  max-height: 285px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.demo-template-item {
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 9px;
+  background: rgba(30, 64, 175, 0.12);
+  color: #e2e8f0;
+  text-align: left;
+  padding: 8px 10px;
+  display: block;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.demo-template-item:hover:not(:disabled) {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(37, 99, 235, 0.2);
+}
+
+.demo-template-item.is-active {
+  border-color: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.45) inset;
+}
+
+.demo-template-item__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.demo-template-item__meta {
+  display: none;
+}
+
+.demo-build-steps {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.demo-build-steps .is-active {
+  color: #e2e8f0;
+  opacity: 1;
+  font-weight: 600;
+}
+
+.demo-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 920px) {
+  .demo-setup-content {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-template-panel__list {
+    max-height: 180px;
+  }
+}
+

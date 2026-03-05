@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import HeaderStepper from "./components/HeaderStepper";
 import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { getMe, logoutAuth } from "./api/auth";
@@ -22,8 +22,10 @@ function App() {
 
 function AppLayout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [authState, setAuthState] = useState({ user: null, loading: true });
   const [activeOrgLabel, setActiveOrgLabel] = useState("");
+  const isDemoRoute = location.pathname === "/demo";
 
   const refreshAuthState = useCallback(async () => {
     setAuthState((prev) => ({ ...prev, loading: true }));
@@ -124,7 +126,35 @@ function AppLayout() {
           <HeaderStepper />
           </div>
           <nav className="app-nav__links">
-            {!authState.user ? (
+            {isDemoRoute ? (
+              <div className="app-nav__auth">
+                <button
+                  type="button"
+                  className="btn app-nav__logout"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.dispatchEvent(new Event("demo-info-requested"));
+                    }
+                  }}
+                >
+                  Demo info
+                </button>
+                <button
+                  type="button"
+                  className="btn app-nav__logout"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.dispatchEvent(new Event("demo-reset-requested"));
+                    }
+                  }}
+                >
+                  Reset demo
+                </button>
+                <Link to="/register" className="app-nav__link">
+                  Create account
+                </Link>
+              </div>
+            ) : !authState.user ? (
               <>
                 <Link to="/login" className="app-nav__link">
                   Prihlasenie
@@ -158,6 +188,7 @@ function AppLayout() {
         <main className="app-shell__body">
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
+            <Route path="/demo" element={<LinearWizardPage isDemo />} />
             <Route path="/admin" element={renderSuperAdminOnly(<AdminPanelPage />)} />
             <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />

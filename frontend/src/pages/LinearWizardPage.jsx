@@ -1112,12 +1112,88 @@ const mapGeneratorInputToPayload = (generatorInput) => {
   };
 };
 
-export default function LinearWizardPage({ currentUser = null }) {
+const DEMO_LIMITS = {
+  maxRoles: 2,
+  maxStepsPerLane: 5,
+  maxObjectsPerLane: 5,
+  maxDecisions: 1,
+  maxNodes: 12,
+  maxFlows: 15,
+};
+
+const DEMO_DEFAULTS = {
+  processName: "Schválenie žiadosti",
+  roles: "Žiadateľ\nSpracovateľ",
+  trigger: "Prišla nová žiadosť",
+  output: "Žiadosť je schválená alebo zamietnutá",
+};
+
+const DEMO_TEMPLATES = [
+  {
+    id: "approval",
+    label: "Schválenie žiadosti",
+    processName: "Schválenie žiadosti",
+    roles: "Žiadateľ\nSpracovateľ",
+    trigger: "Prišla nová žiadosť",
+    output: "Žiadosť je schválená alebo zamietnutá",
+  },
+  {
+    id: "invoice",
+    label: "Spracovanie faktúry",
+    processName: "Spracovanie faktúry",
+    roles: "Dodávateľ\nÚčtovník",
+    trigger: "Prišla faktúra od dodávateľa",
+    output: "Faktúra je schválená a zaúčtovaná",
+  },
+  {
+    id: "ticket",
+    label: "Podpora zákazníka",
+    processName: "Riešenie zákazníckeho ticketu",
+    roles: "Zákazník\nPodpora",
+    trigger: "Zákazník vytvorí ticket",
+    output: "Ticket je vyriešený a uzatvorený",
+  },
+  {
+    id: "order",
+    label: "Objednávka",
+    processName: "Spracovanie objednávky",
+    roles: "Zákazník\nSkladník",
+    trigger: "Prijatá nová objednávka",
+    output: "Objednávka je expedovaná",
+  },
+  {
+    id: "onboarding",
+    label: "Nástup zamestnanca",
+    processName: "Nástup nového zamestnanca",
+    roles: "HR\nIT",
+    trigger: "Podpísaná pracovná zmluva",
+    output: "Zamestnanec má prístupy a onboarding plán",
+  },
+];
+
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const countExclusiveGateways = (engine) =>
+  (Array.isArray(engine?.nodes) ? engine.nodes : []).filter((node) =>
+    String(node?.type || "").toLowerCase().includes("exclusivegateway"),
+  ).length;
+
+const countLaneObjects = (engine, laneId) =>
+  (Array.isArray(engine?.nodes) ? engine.nodes : []).filter(
+    (node) => String(node?.laneId || "") === String(laneId || ""),
+  ).length;
+
+export default function LinearWizardPage({ currentUser = null, isDemo = false }) {
   const navigate = useNavigate();
   const { modelId: routeModelId } = useParams();
+  const isDemoMode = Boolean(isDemo);
   const fileInputRef = useRef(null);
   const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
+  const [demoSetupOpen, setDemoSetupOpen] = useState(isDemoMode);
+  const [demoBuilding, setDemoBuilding] = useState(false);
+  const [demoBuildStep, setDemoBuildStep] = useState(0);
+  const [demoIntroError, setDemoIntroError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [engineJson, setEngineJson] = useState(null);
   const [xml, setXml] = useState("");
@@ -1181,6 +1257,7 @@ export default function LinearWizardPage({ currentUser = null }) {
     project: false,
   });
   const [guideEnabled, setGuideEnabled] = useState(() => {
+    if (isDemoMode) return true;
     if (typeof window === "undefined") return true;
     const stored = window.localStorage.getItem("GUIDE_ENABLED");
     if (stored === null) return true;
@@ -1299,6 +1376,12 @@ export default function LinearWizardPage({ currentUser = null }) {
   const [historyCount, setHistoryCount] = useState(0);
   const lanePreviewOverlayIdsRef = useRef([]);
   const lanePreviewTimerRef = useRef(null);
+  const demoAppendStatsRef = useRef({
+    attempts: 0,
+    fallbacks: 0,
+    sanityFails: 0,
+    incrementalFails: 0,
+  });
   const verticalResizeStart = useRef({ y: 0, h: 0 });
   const layoutRef = useRef(null);
   const syncInFlightRef = useRef(false);
@@ -1409,7 +1492,7 @@ export default function LinearWizardPage({ currentUser = null }) {
 
   const applyLaneTemplate = (template) => {
     if (!template) return;
-    setLaneDescription(template.text || "");
+    updateLaneDescription(template.text || "");
     setHasUnsavedChanges(true);
     setLaneTemplateFlash(true);
     if (laneTemplateFlashTimerRef.current) {
@@ -1910,6 +1993,11 @@ export default function LinearWizardPage({ currentUser = null }) {
       console.log("[Guide] handleGuideAction click", { actionId, payload });
     }
     if (!guideState || !actionId) return;
+    if (isDemoMode && (actionId === "SAVE_PROCESS" || actionId === "MOVE_TO_ORG" || actionId === "STAY_IN_SANDBOX")) {
+      setInfo("DEMO režim: uloženie a organizácie sú dostupné až po registrácii.");
+      setGuideState(null);
+      return;
+    }
     if (actionId === "NOT_NOW") {
       dismissGuideCard(guideState.key);
       setGuideState(null);
@@ -2285,6 +2373,11 @@ export default function LinearWizardPage({ currentUser = null }) {
           modeling.connect(sourceShape, endShape, { type: "bpmn:SequenceFlow" });
           console.log("[Guide][CONNECT_END_HERE] connect success");
         }
+        try {
+          await syncEngineFromCanvas();
+        } catch (syncError) {
+          console.warn("[Guide][CONNECT_END_HERE] syncEngineFromCanvas failed", syncError);
+        }
       } catch (error) {
         console.error("[Guide][CONNECT_END_HERE] move/connect failed", error);
       }
@@ -2336,6 +2429,22 @@ export default function LinearWizardPage({ currentUser = null }) {
     },
     [guideEnabled, runGuideReview, bumpModelVersion],
   );
+
+  const syncEngineFromCanvas = useCallback(async () => {
+    const modeler = modelerRef.current;
+    if (!modeler?.saveXML) return null;
+    const { xml: diagramXml } = await modeler.saveXML({ format: true });
+    if (!diagramXml || !diagramXml.trim()) return null;
+    const file = new File([diagramXml], "diagram.bpmn", { type: "application/bpmn+xml" });
+    const importResp = await importBpmn(file);
+    const importedEngine = importResp?.engine_json || importResp;
+    if (!importedEngine) return null;
+    setEngineJson(importedEngine);
+    setXmlFull(diagramXml, "syncEngineFromCanvas");
+    setHasUnsavedChanges(true);
+    bumpModelVersion();
+    return importedEngine;
+  }, [bumpModelVersion]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -2626,6 +2735,13 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const updateGeneratorInput = (field, value) => {
+    if (isDemoMode && field === "roles") {
+      const lines = String(value || "").split(/\r?\n/);
+      if (lines.length > DEMO_LIMITS.maxRoles) {
+        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+      }
+      value = lines.slice(0, DEMO_LIMITS.maxRoles).join("\n");
+    }
     setProcessCard((prev) => ({
       ...prev,
       generatorInput: { ...prev.generatorInput, [field]: value },
@@ -2642,6 +2758,13 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const updateLaneDescription = (value) => {
+    if (isDemoMode) {
+      const lines = String(value || "").split(/\r?\n/);
+      if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
+        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+      }
+      value = lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
+    }
     setLaneDescription(value);
     setHasUnsavedChanges(true);
   };
@@ -2657,7 +2780,13 @@ export default function LinearWizardPage({ currentUser = null }) {
     setLaneDescription((prev) => {
       const current = String(prev || "");
       if (!current.trim()) return snippet;
-      return `${current.trimEnd()}\n${snippet}`;
+      const next = `${current.trimEnd()}\n${snippet}`;
+      if (!isDemoMode) return next;
+      const lines = next.split(/\r?\n/);
+      if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
+        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+      }
+      return lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     });
     setHasUnsavedChanges(true);
     const roleName = helpInsertTarget?.laneName || helpInsertTarget?.laneId || "rola";
@@ -2940,7 +3069,142 @@ export default function LinearWizardPage({ currentUser = null }) {
     setHistoryCount(0);
   };
 
+  const resetDemoState = useCallback(() => {
+    resetWizardState();
+    setDemoIntroError("");
+    setDemoBuildStep(0);
+    setDemoBuilding(false);
+    setDemoSetupOpen(true);
+    setGuideState(null);
+    openSingleCard(null);
+  }, []);
+
+  const runDemoGenerate = useCallback(async () => {
+    const processName = String(processCard?.generatorInput?.processName || "").trim();
+    const roleLines = splitLines(processCard?.generatorInput?.roles || "");
+    if (!processName) {
+      setDemoIntroError("Doplň názov procesu.");
+      return;
+    }
+    if (!roleLines.length) {
+      setDemoIntroError("Doplň aspoň 1 rolu.");
+      return;
+    }
+    if (roleLines.length > DEMO_LIMITS.maxRoles) {
+      setDemoIntroError(`DEMO limit: maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+      return;
+    }
+
+    setDemoIntroError("");
+    setError(null);
+    setInfo(null);
+    setDemoBuilding(true);
+    setDemoBuildStep(0);
+    setIsLoading(true);
+    try {
+      const payload = mapGeneratorInputToPayload({
+        ...processCard.generatorInput,
+        processName,
+        roles: roleLines.join("\n"),
+      });
+      const generatePromise = generateLinearWizardDiagram(payload);
+      await sleep(450);
+      setDemoBuildStep(1);
+      await sleep(450);
+      setDemoBuildStep(2);
+      const response = await generatePromise;
+      const generatedEngine = response?.engine_json;
+      if (!generatedEngine) {
+        throw new Error("Chýba engine_json v odpovedi.");
+      }
+      const xmlText = await renderEngineXml(generatedEngine);
+      setEngineJson(generatedEngine);
+      setXmlFull(xmlText, "demo_generate");
+      setModelSource({ kind: "sandbox" });
+      setSelectedLane(null);
+      setLaneDescription("");
+      setGuideState({
+        key: "demo_skeleton_ready",
+        scope: "global",
+        title: "Skeleton ready ✅",
+        message: "Klikni na rolu a doplň kroky (max 5 objektov na rolu). Potom daj „Vytvoriť aktivity“.",
+      });
+      setDemoSetupOpen(false);
+      setHasUnsavedChanges(true);
+      setDrawerOpen(false);
+      setHelpOpen(false);
+      setMentorOpen(false);
+      setStoryOpen(false);
+      setOrgOpen(false);
+      setLaneOpen(false);
+    } catch (e) {
+      const message = e?.message || "Nepodarilo sa vytvoriť demo model.";
+      setDemoIntroError(message);
+      setEngineJson(null);
+      setXmlFull("", "demo_generate:clear");
+    } finally {
+      setDemoBuilding(false);
+      setIsLoading(false);
+    }
+  }, [processCard]);
+
+  const applyDemoTemplate = useCallback((template) => {
+    if (!template) return;
+    setProcessCard((prev) => ({
+      ...prev,
+      generatorInput: {
+        ...prev.generatorInput,
+        processName: template.processName || "",
+        roles: template.roles || "",
+        trigger: template.trigger || "",
+        output: template.output || "",
+      },
+    }));
+    setDemoIntroError("");
+    setInfo(`Doplnený vzor: ${template.label}`);
+  }, []);
+
+  useEffect(() => {
+    if (!isDemoMode) return;
+    setProcessCard((prev) => ({
+      ...prev,
+      generatorInput: {
+        ...prev.generatorInput,
+        processName: DEMO_DEFAULTS.processName,
+        roles: DEMO_DEFAULTS.roles,
+        trigger: DEMO_DEFAULTS.trigger,
+        output: DEMO_DEFAULTS.output,
+      },
+    }));
+    setDrawerOpen(false);
+    setHelpOpen(false);
+    setMentorOpen(false);
+    setStoryOpen(false);
+    setOrgOpen(false);
+    setModelsOpen(false);
+    setOrgsModalOpen(false);
+  }, [isDemoMode]);
+
+  useEffect(() => {
+    if (!isDemoMode || typeof window === "undefined") return undefined;
+    const onReset = () => resetDemoState();
+    const onInfo = () => {
+      setDemoSetupOpen(true);
+      setDemoIntroError("");
+    };
+    window.addEventListener("demo-reset-requested", onReset);
+    window.addEventListener("demo-info-requested", onInfo);
+    return () => {
+      window.removeEventListener("demo-reset-requested", onReset);
+      window.removeEventListener("demo-info-requested", onInfo);
+    };
+  }, [isDemoMode, resetDemoState]);
+
   const handleNewModel = (options = {}) => {
+    if (isDemoMode) {
+      resetDemoState();
+      return;
+    }
     const hasWork = Boolean(engineJson || xml || hasUnsavedChanges);
     if (hasWork && !options.skipConfirm) {
       const confirmed = window.confirm("Začať nový model? Neuložené zmeny sa stratia.");
@@ -2958,6 +3222,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   const handleStartNewModel = () => handleNewModel({ skipConfirm: true });
 
   const handleMainMenu = () => {
+    if (isDemoMode) {
+      resetDemoState();
+      return;
+    }
     requestOpenWithSave(() => {
       resetWizardState();
       setHelpOpen(false);
@@ -3259,6 +3527,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   );
 
   const handleGenerate = async () => {
+    if (isDemoMode) {
+      await runDemoGenerate();
+      return;
+    }
     if (isReadOnlyMode) {
       setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
       return;
@@ -4067,12 +4339,29 @@ export default function LinearWizardPage({ currentUser = null }) {
       setError("Vyber lane a doplň aspoň jednu aktivitu.");
       return;
     }
+    const laneLines = splitLines(laneDescription);
+    if (isDemoMode && laneLines.length > DEMO_LIMITS.maxStepsPerLane) {
+      setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+      return;
+    }
     cancelPendingRelayouts();
     clearLanePreviewOverlays();
     setIsLoading(true);
     setError(null);
     try {
+      if (isDemoMode) {
+        demoAppendStatsRef.current.attempts += 1;
+      }
       const currentEngine = engineJsonRef.current || engineJson;
+      if (isDemoMode) {
+        const existingDecisions = countExclusiveGateways(currentEngine);
+        const typedDecisions = laneLines.filter((line) => detectDecision(line)).length;
+        if (existingDecisions + typedDecisions > DEMO_LIMITS.maxDecisions) {
+          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutie (XOR) v celom modeli.`);
+          setIsLoading(false);
+          return;
+        }
+      }
       if (currentEngine && xml && !undoInProgressRef.current) {
         pushHistorySnapshot(currentEngine, xml);
       }
@@ -4108,6 +4397,28 @@ export default function LinearWizardPage({ currentUser = null }) {
       };
       const response = await appendLaneFromDescription(payload);
       const updatedEngine = response?.engine_json || engineJson;
+      if (isDemoMode) {
+        const laneObjects = countLaneObjects(updatedEngine, laneId);
+        if (laneObjects > DEMO_LIMITS.maxObjectsPerLane) {
+          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxObjectsPerLane} objektov v jednej role.`);
+          return;
+        }
+        const nodesCount = Array.isArray(updatedEngine?.nodes) ? updatedEngine.nodes.length : 0;
+        const flowsCount = Array.isArray(updatedEngine?.flows) ? updatedEngine.flows.length : 0;
+        const decisionsCount = countExclusiveGateways(updatedEngine);
+        if (nodesCount > DEMO_LIMITS.maxNodes) {
+          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxNodes} objektov v modeli.`);
+          return;
+        }
+        if (flowsCount > DEMO_LIMITS.maxFlows) {
+          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxFlows} prepojení.`);
+          return;
+        }
+        if (decisionsCount > DEMO_LIMITS.maxDecisions) {
+          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutie (XOR).`);
+          return;
+        }
+      }
       const modeler = modelerRef.current;
       const canPatchCanvas = Boolean(modeler && xml);
 
@@ -4133,15 +4444,103 @@ export default function LinearWizardPage({ currentUser = null }) {
         return `Nepodarilo sa pridať kroky (${reason}).`;
       };
 
+      const logDemoFallback = (reason, details = {}) => {
+        if (!isDemoMode) return;
+        demoAppendStatsRef.current.fallbacks += 1;
+        if (reason === "sanity_check_failed") demoAppendStatsRef.current.sanityFails += 1;
+        else demoAppendStatsRef.current.incrementalFails += 1;
+        const stats = demoAppendStatsRef.current;
+        const ratio = stats.attempts
+          ? Number(((stats.fallbacks / stats.attempts) * 100).toFixed(1))
+          : 0;
+        console.warn("[demo:append:fallback]", {
+          reason,
+          attempts: stats.attempts,
+          fallbacks: stats.fallbacks,
+          sanityFails: stats.sanityFails,
+          incrementalFails: stats.incrementalFails,
+          fallbackRatioPct: ratio,
+          ...details,
+        });
+      };
+
+      const runDemoSanityCheck = (activeModeler, nextEngine) => {
+        if (!isDemoMode) return { ok: true };
+        const elementRegistry = activeModeler?.get?.("elementRegistry");
+        if (!elementRegistry || !Array.isArray(nextEngine?.nodes)) {
+          return { ok: false, reason: "missing_sanity_context", missingNodeIds: [] };
+        }
+        const all = elementRegistry.getAll();
+        const hasNode = (nodeId) =>
+          Boolean(
+            elementRegistry.get(String(nodeId)) ||
+              all.find((el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "") === String(nodeId)),
+          );
+        const missingNodeIds = nextEngine.nodes
+          .map((n) => String(n?.id || ""))
+          .filter(Boolean)
+          .filter((nodeId) => !hasNode(nodeId));
+        if (missingNodeIds.length) {
+          return { ok: false, reason: "missing_nodes_after_incremental", missingNodeIds };
+        }
+        return { ok: true };
+      };
+
       const incrementalResult = canPatchCanvas
         ? applyEngineDiffToCanvas(currentEngine, updatedEngine, modeler)
         : { ok: false, reason: "canvas_patch_unavailable", details: { canPatchCanvas } };
 
       if (incrementalResult?.ok) {
+        if (isDemoMode) {
+          const sanity = runDemoSanityCheck(modeler, updatedEngine);
+          if (!sanity.ok) {
+            logDemoFallback("sanity_check_failed", sanity);
+            try {
+              const fullXml = await renderEngineXml(updatedEngine);
+              setEngineJson(updatedEngine);
+              setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
+              setHasUnsavedChanges(true);
+              setLaneDescription("");
+              clearLanePreviewOverlays();
+              setInfo("Kroky boli pridané (fallback render).");
+              bumpModelVersion();
+              return;
+            } catch (fallbackError) {
+              console.error("[append-lane] demo sanity fallback full rerender failed", fallbackError);
+              setError("Nepodarilo sa pridať kroky po kontrole mapy.");
+              return;
+            }
+          }
+        }
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
         clearLanePreviewOverlays();
+        if (isDemoMode) {
+          const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
+          if (lanes.length > 1) {
+            const nextLane = lanes.find(
+              (lane) =>
+                String(lane?.id || "") !== String(selectedLane?.id || "") &&
+                getLaneTasks(updatedEngine, lane?.id).length === 0,
+            );
+            if (nextLane?.id) {
+              setGuideState({
+                key: `demo_next_lane:${nextLane.id}`,
+                scope: "global",
+                title: "Pokračuj na druhú rolu",
+                message: `Hotovo ✅ Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a pridaj jej kroky.`,
+              });
+            } else {
+              setGuideState({
+                key: "demo_finish_hint",
+                scope: "global",
+                title: "Demo hotové",
+                message: "Model je pripravený. Pre plnú verziu (uloženie, export, organizácie) si vytvor účet.",
+              });
+            }
+          }
+        }
         bumpModelVersion();
         setIsLoading(false);
         return;
@@ -4151,9 +4550,45 @@ export default function LinearWizardPage({ currentUser = null }) {
         canPatchCanvas,
         result: incrementalResult,
       });
-      const errorMessage = mapIncrementalReasonToMessage(incrementalResult?.reason);
-      setError(errorMessage);
-      return;
+      if (isDemoMode) {
+        logDemoFallback("incremental_failed", {
+          incrementalReason: incrementalResult?.reason || null,
+        });
+      }
+      try {
+        const fullXml = await renderEngineXml(updatedEngine);
+        setEngineJson(updatedEngine);
+        setXmlFull(fullXml, "appendLane:fallback_full_rerender");
+        setHasUnsavedChanges(true);
+        setLaneDescription("");
+        clearLanePreviewOverlays();
+        setInfo("Kroky boli pridané (fallback render).");
+        if (isDemoMode) {
+          const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
+          if (lanes.length > 1) {
+            const nextLane = lanes.find(
+              (lane) =>
+                String(lane?.id || "") !== String(selectedLane?.id || "") &&
+                getLaneTasks(updatedEngine, lane?.id).length === 0,
+            );
+            if (nextLane?.id) {
+              setGuideState({
+                key: `demo_next_lane:${nextLane.id}`,
+                scope: "global",
+                title: "Pokračuj na druhú rolu",
+                message: `Hotovo ✅ Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a pridaj jej kroky.`,
+              });
+            }
+          }
+        }
+        bumpModelVersion();
+        return;
+      } catch (fallbackError) {
+        console.error("[append-lane] fallback full rerender failed", fallbackError);
+        const errorMessage = mapIncrementalReasonToMessage(incrementalResult?.reason);
+        setError(errorMessage);
+        return;
+      }
     } catch (e) {
       console.error("[append-lane] incremental append failed (exception)", e);
       const message = e?.message || "Nepodarilo sa pridať aktivity do lane.";
@@ -4173,6 +4608,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const handleSaveModel = async () => {
+    if (isDemoMode) {
+      setInfo("DEMO režim: ukladanie je vypnuté.");
+      return;
+    }
     if (!engineJson) {
       setError("Nie je čo uložiť – vygeneruj alebo naimportuj diagram.");
       return;
@@ -4323,10 +4762,10 @@ export default function LinearWizardPage({ currentUser = null }) {
       onDiagramChange: handleDiagramChange,
       onUndo: handleUndo,
       canUndo: historyCount > 0,
-      onSave: handleSaveModel,
+      onSave: isDemoMode ? undefined : handleSaveModel,
       onMainMenu: handleMainMenu,
-      saveDisabled: saveLoading || isReadOnlyMode,
-      saveLabel: saveLoading ? "Ukladám..." : "Uložiť",
+      saveDisabled: isDemoMode || saveLoading || isReadOnlyMode,
+      saveLabel: isDemoMode ? "Demo režim" : saveLoading ? "Ukladám..." : "Uložiť",
       onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
       onXmlImported: handleXmlImported,
@@ -4354,6 +4793,7 @@ export default function LinearWizardPage({ currentUser = null }) {
       modelSource,
       orgReadOnly,
       isReadOnlyMode,
+      isDemoMode,
     ],
   );
 
@@ -5213,16 +5653,18 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   useEffect(() => {
+    if (isDemoMode) return;
     if (!routeModelId) return;
     if (lastRouteModelIdRef.current === routeModelId) return;
     lastRouteModelIdRef.current = routeModelId;
     void doLoadModelById(routeModelId);
-  }, [routeModelId]);
+  }, [routeModelId, isDemoMode]);
 
   useEffect(() => {
+    if (isDemoMode) return;
     if (!orgOpen) return;
     void refreshOrgTree(activeOrgId);
-  }, [orgOpen, activeOrgId]);
+  }, [orgOpen, activeOrgId, isDemoMode]);
 
   const activeOrgPath = useMemo(() => {
     if (!orgTree || !routeModelId) return null;
@@ -5445,9 +5887,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   }, [hasUnsavedChanges]);
 
   useEffect(() => {
+    if (isDemoMode) return;
     void refreshMyOrgs(activeOrgId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isDemoMode]);
 
   const selectedInviteOrgRole = useMemo(() => {
     if (!inviteOrgId) return "";
@@ -5485,6 +5928,11 @@ export default function LinearWizardPage({ currentUser = null }) {
   }, [orgsModalOpen, activeOrgId, myOrgs, addMemberOrgId, inviteOrgId, adminCapableOrgs]);
 
   const fetchModels = async () => {
+    if (isDemoMode) {
+      setModels([]);
+      setModelsError("DEMO režim: uložené modely sú vypnuté.");
+      return;
+    }
     setModelsLoading(true);
     setModelsError(null);
     try {
@@ -5503,6 +5951,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const openModels = async () => {
+    if (isDemoMode) {
+      setInfo("DEMO režim: uložené modely sú vypnuté.");
+      return;
+    }
     setModelsOpen(true);
     setMyOrgsEmpty(null);
     await refreshMyOrgs(activeOrgId);
@@ -5519,6 +5971,11 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const handleSaveAndOpen = async () => {
+    if (isDemoMode) {
+      setSavePromptOpen(false);
+      handleOpenWithoutSave();
+      return;
+    }
     setSavePromptOpen(false);
     await handleSaveModel();
     setInfo("Model bol ulozeny.");
@@ -5673,6 +6130,11 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const refreshMyOrgs = async (preferredId = activeOrgId) => {
+    if (isDemoMode) {
+      setMyOrgs([]);
+      setMyOrgsEmpty(null);
+      return;
+    }
     setMyOrgsLoading(true);
     setMyOrgsError(null);
     try {
@@ -5705,6 +6167,10 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const openOrgsModal = async () => {
+    if (isDemoMode) {
+      setInfo("DEMO režim: organizácie sú vypnuté.");
+      return;
+    }
     setOrgsModalOpen(true);
     setInviteError(null);
     setInviteCopied(false);
@@ -5874,6 +6340,10 @@ export default function LinearWizardPage({ currentUser = null }) {
 
 
   const handleExportBpmn = async () => {
+    if (isDemoMode) {
+      setInfo("DEMO režim: export BPMN je vypnutý.");
+      return;
+    }
     if (!engineJson) {
       setError("Najprv vygeneruj alebo naimportuj diagram.");
       return;
@@ -5919,12 +6389,23 @@ export default function LinearWizardPage({ currentUser = null }) {
   };
 
   const handleImportClick = () => {
+    if (isDemoMode) {
+      setInfo("DEMO režim: import BPMN je vypnutý.");
+      return;
+    }
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
   };
 
   const handleImportChange = async (event) => {
+    if (isDemoMode) {
+      if (event.target) {
+        event.target.value = "";
+      }
+      setInfo("DEMO režim: import BPMN je vypnutý.");
+      return;
+    }
     const file = event.target?.files?.[0];
     if (!file) return;
     setError(null);
@@ -6198,6 +6679,25 @@ export default function LinearWizardPage({ currentUser = null }) {
   return (
     <div className="process-card-layout" ref={layoutRef}>
       <div className="process-card-rail">
+        {isDemoMode ? (
+          <div className="process-card-rail-group is-open">
+            <button type="button" className="process-card-rail-header" onClick={() => setDemoSetupOpen(true)}>
+              <span>DEMO</span>
+            </button>
+            <div className="process-card-rail-content">
+              <button type="button" className="process-card-toggle" onClick={() => setDemoSetupOpen(true)}>
+                Demo info
+              </button>
+              <button type="button" className="process-card-toggle process-card-toggle--new-model" onClick={resetDemoState}>
+                Reset demo
+              </button>
+              <a className="process-card-toggle" href="/register">
+                Create account
+              </a>
+            </div>
+          </div>
+        ) : (
+          <>
         <button className="guide-toggle" type="button" onClick={() => setGuideEnabled((prev) => !prev)}>
           {guideEnabled ? "Pomocník: On" : "Pomocník: Off"}
         </button>
@@ -6354,6 +6854,8 @@ export default function LinearWizardPage({ currentUser = null }) {
             </div>
           ) : null}
         </div>
+          </>
+        )}
 
       </div>
 
@@ -6748,6 +7250,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                         </div>
                       </div>
                     ) : null}
+                    {!isDemoMode ? (
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">VZORY</div>
                       <div className="wizard-lane-v2__section-sub">Dočasne: výber cez dropdown</div>
@@ -6774,6 +7277,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                         </select>
                       </div>
                     </div>
+                    ) : null}
                     <div className="wizard-lane-v2__onboarding">
                       <div className="wizard-lane-v2__onboarding-title">Typy krokov</div>
                       <div className="wizard-lane-v2__onboarding-list">
@@ -6818,6 +7322,9 @@ export default function LinearWizardPage({ currentUser = null }) {
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
                       <div className="wizard-lane-v2__section-sub">1 riadok = 1 krok</div>
+                      {isDemoMode ? (
+                        <div className="wizard-lane-v2__section-sub">Demo limit: max {DEMO_LIMITS.maxObjectsPerLane} objektov na rolu.</div>
+                      ) : null}
                       <textarea
                         ref={laneTextareaRef}
                         value={laneDescription}
@@ -6829,7 +7336,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                         onKeyDown={(e) => {
                           if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                             e.preventDefault();
-                            if (!isLoading && !isReadOnlyMode && laneDescription.trim()) {
+                            if (!isLoading && !(isReadOnlyMode && !isDemoMode) && laneDescription.trim()) {
                               void handleAppendToLane();
                             }
                           }
@@ -6864,7 +7371,7 @@ export default function LinearWizardPage({ currentUser = null }) {
                           className="btn btn-primary lane-primary-btn wizard-lane-v2__apply-btn"
                           type="button"
                           onClick={handleAppendToLane}
-                          disabled={isLoading || isReadOnlyMode || !laneDescription.trim()}
+                          disabled={isLoading || (isReadOnlyMode && !isDemoMode) || !laneDescription.trim()}
                         >
                           {isLoading ? "Pridávam..." : laneApplyButtonLabel}
                         </button>
@@ -7239,6 +7746,21 @@ export default function LinearWizardPage({ currentUser = null }) {
       ) : null}
 
         <div className="process-card-main">
+          {isDemoMode ? (
+            <div className="demo-banner">
+              <div className="demo-banner__text">
+                <strong>DEMO MODE</strong> - nic sa neuklada. Limity: 2 role, max 5 objektov na rolu, max 1 rozhodnutie.
+              </div>
+              <div className="demo-banner__actions">
+                <button className="btn btn--small" type="button" onClick={resetDemoState}>
+                  Reset demo
+                </button>
+                <a className="btn btn--small btn-primary" href="/register">
+                  Create account
+                </a>
+              </div>
+            </div>
+          ) : null}
           {isReadOnlyMode ? (
             <div
               style={{
@@ -7399,15 +7921,30 @@ export default function LinearWizardPage({ currentUser = null }) {
                     <div className="wizard-welcome__title">Vitaj znova v BPMNGen</div>
                     <div className="wizard-welcome__subtitle">Čo ideme robiť dnes?</div>
                     <div className="wizard-welcome__actions">
-                      <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
-                        Začať nový model
-                      </button>
-                      <button className="btn" type="button" onClick={openModels}>
-                        Pokračovať v rozpracovanom
-                      </button>
+                      {isDemoMode ? (
+                        <>
+                          <button className="btn btn-primary" type="button" onClick={() => setDemoSetupOpen(true)}>
+                            Otvoriť demo setup
+                          </button>
+                          <a className="btn" href="/register">
+                            Create account
+                          </a>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
+                            Začať nový model
+                          </button>
+                          <button className="btn" type="button" onClick={openModels}>
+                            Pokračovať v rozpracovanom
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div className="wizard-welcome__hint">
-                      Tip: Rozpracované modely nájdeš v sekcii Uložené modely.
+                      {isDemoMode
+                        ? "Demo je dočasné a po obnovení stránky sa vymaže."
+                        : "Tip: Rozpracované modely nájdeš v sekcii Uložené modely."}
                     </div>
                   </div>
                 </div>
@@ -7429,6 +7966,83 @@ export default function LinearWizardPage({ currentUser = null }) {
               </div>
               <div className="wizard-help-modal-body">
                 {renderHelpList()}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {isDemoMode && demoSetupOpen ? (
+          <div className="wizard-models-modal demo-setup-modal">
+            <div className="wizard-models-panel demo-setup-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div>
+                  <h3 style={{ margin: 0 }}>Guided lightweight sandbox</h3>
+                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+                    Zadaj názov procesu a max 2 roly. Potom vytvoríme skeleton mapy.
+                  </div>
+                </div>
+                {xml ? (
+                  <button className="btn btn--small" type="button" onClick={() => setDemoSetupOpen(false)}>
+                    Zavrieť
+                  </button>
+                ) : null}
+              </div>
+              <div className="demo-setup-content">
+                <div className="demo-setup-form">
+                  <label className="wizard-field">
+                    <span>Názov procesu</span>
+                    <input
+                      value={processCard.generatorInput.processName}
+                      onChange={(e) => updateGeneratorInput("processName", e.target.value)}
+                      placeholder="Napr. Schválenie žiadosti"
+                      disabled={demoBuilding}
+                    />
+                  </label>
+                  <label className="wizard-field">
+                    <span>Role (každá na nový riadok, max 2)</span>
+                    <textarea
+                      value={processCard.generatorInput.roles}
+                      onChange={(e) => updateGeneratorInput("roles", e.target.value)}
+                      rows={4}
+                      disabled={demoBuilding}
+                    />
+                  </label>
+                  {demoIntroError ? <div className="wizard-error">{demoIntroError}</div> : null}
+                  {demoBuilding ? (
+                    <div className="demo-build-steps">
+                      <div className={demoBuildStep >= 0 ? "is-active" : ""}>1. Creating skeleton...</div>
+                      <div className={demoBuildStep >= 1 ? "is-active" : ""}>2. Adding roles...</div>
+                      <div className={demoBuildStep >= 2 ? "is-active" : ""}>3. Generating BPMN...</div>
+                    </div>
+                  ) : null}
+                  <div className="demo-setup-actions">
+                    <button className="btn btn-primary" type="button" onClick={() => void runDemoGenerate()} disabled={demoBuilding}>
+                      {demoBuilding ? "Building..." : "Generate demo model"}
+                    </button>
+                  </div>
+                </div>
+                <aside className="demo-template-panel">
+                  <div className="demo-template-panel__title">Vybrať vzor</div>
+                  <div className="demo-template-panel__list">
+                    {DEMO_TEMPLATES.map((template) => {
+                      const isActive =
+                        processCard.generatorInput.processName?.trim() === template.processName &&
+                        processCard.generatorInput.roles?.trim() === template.roles;
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className={`demo-template-item ${isActive ? "is-active" : ""}`}
+                          onClick={() => applyDemoTemplate(template)}
+                          disabled={demoBuilding}
+                        >
+                          <span className="demo-template-item__label">{template.label}</span>
+                          <span className="demo-template-item__meta" aria-hidden />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </aside>
               </div>
             </div>
           </div>
