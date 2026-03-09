@@ -32,6 +32,7 @@ import {
   createOrgFolder,
   createOrgProcess,
   createOrgProcessFromOrgModel,
+  deleteOrgNode,
   getOrgModel,
   moveOrgNode,
   renameOrgNode,
@@ -603,16 +604,12 @@ const pickGuideCard = ({
           message:
             "Chýba nám koniec procesu. Kam to má celé dopadnúť? " +
             "Klikni na posledný krok a daj „Koniec sem“ — nech je proces uzavretý.",
-          primary: {
-            label: "Na mape",
-            action: "FOCUS_NODE",
-            payload: { nodeId: pickNode.id, laneId },
-          },
+          primary: null,
           secondary: { label: "Neskôr", action: "NOT_NOW" },
           tertiary: {
             label: "Koniec sem",
             action: "CONNECT_END_HERE",
-            payload: { nodeId: pickNode.id },
+            payload: { nodeId: pickNode.id, nodeName: label || "", laneId },
           },
         };
       }
@@ -1256,15 +1253,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     env: false,
     project: false,
   });
-  const [guideEnabled, setGuideEnabled] = useState(() => {
-    if (isDemoMode) return true;
-    if (typeof window === "undefined") return true;
-    const stored = window.localStorage.getItem("GUIDE_ENABLED");
-    if (stored === null) return true;
-    return stored === "true";
-  });
+  const guideEnabled = true;
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
+  const [guideHighlight, setGuideHighlight] = useState(null);
   const [activeLaneId, setActiveLaneId] = useState(null);
   const [modelVersion, setModelVersion] = useState(0);
   const [lastEditedLaneId, setLastEditedLaneId] = useState(null);
@@ -1300,6 +1292,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [orgMoveCurrentParentId, setOrgMoveCurrentParentId] = useState("root");
   const [orgMoveLoading, setOrgMoveLoading] = useState(false);
   const [orgMoveError, setOrgMoveError] = useState(null);
+  const [orgDeleteConfirmOpen, setOrgDeleteConfirmOpen] = useState(false);
+  const [orgDeleteFinalConfirmOpen, setOrgDeleteFinalConfirmOpen] = useState(false);
+  const [orgDeleteNode, setOrgDeleteNode] = useState(null);
+  const [orgDeleteLoading, setOrgDeleteLoading] = useState(false);
+  const [orgDeleteError, setOrgDeleteError] = useState(null);
   const [orgPushModalOpen, setOrgPushModalOpen] = useState(false);
   const [orgPushModel, setOrgPushModel] = useState(null);
   const [orgPushTargetFolderId, setOrgPushTargetFolderId] = useState("root");
@@ -1337,6 +1334,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const mentorReviewedEngineRef = useRef(null);
   const storyEngineRef = useRef(null);
   const guidePatchTimerRef = useRef(null);
+  const guideHighlightTimerRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const pendingOpenActionRef = useRef(null);
   const pendingOpenResolveRef = useRef(null);
@@ -1571,14 +1569,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const toggleRailSection = (key) => {
     setRailSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("GUIDE_ENABLED", guideEnabled ? "true" : "false");
-    if (!guideEnabled) {
-      setGuideState(null);
-    }
-  }, [guideEnabled]);
 
   const normalizeNodeId = (node) => node?.id || node?.nodeId || node?.refId || null;
   const normalizeFlowSource = (flow) => flow?.source || flow?.sourceRef || flow?.from || null;
@@ -1961,6 +1951,121 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   }, [guideEnabled, guideState, engineJson, processCard, runGuideReview]);
 
+  useEffect(
+    () => () => {
+      if (guideHighlightTimerRef.current) {
+        window.clearTimeout(guideHighlightTimerRef.current);
+        guideHighlightTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const applyGuideHighlight = useCallback((nextHighlight, ttlMs = null) => {
+    if (guideHighlightTimerRef.current) {
+      window.clearTimeout(guideHighlightTimerRef.current);
+      guideHighlightTimerRef.current = null;
+    }
+    setGuideHighlight(nextHighlight || null);
+    if (ttlMs && nextHighlight) {
+      const token = String(nextHighlight?.token || "");
+      guideHighlightTimerRef.current = window.setTimeout(() => {
+        setGuideHighlight((current) => {
+          if (!current) return null;
+          if (token && String(current?.token || "") !== token) return current;
+          return null;
+        });
+        guideHighlightTimerRef.current = null;
+      }, ttlMs);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!guideEnabled || !guideState) {
+      applyGuideHighlight(null);
+      return;
+    }
+
+    const key = String(guideState?.key || "");
+    const message = String(guideState?.message || "").toLowerCase();
+    const actions = [guideState?.primary, guideState?.secondary, guideState?.tertiary].filter(Boolean);
+    const openLaneAction = actions.find((action) => action?.action === "OPEN_LANE");
+    const focusNodeAction = actions.find((action) => action?.action === "FOCUS_NODE");
+    const connectEndAction = actions.find((action) => action?.action === "CONNECT_END_HERE");
+    const laneIdHint =
+      openLaneAction?.payload?.laneId || guideState?.laneId || activeLaneId || selectedLane?.id || null;
+
+    let hardFinding = null;
+    if (key.startsWith("hard:")) {
+      const hardId = key.slice("hard:".length);
+      hardFinding = (guideFindings || []).find((finding) => String(finding?.id || "") === hardId) || null;
+    }
+    const hardRule = hardFinding ? normalizeGuideRuleId(hardFinding) : "";
+    const hardTargetId = hardFinding?.target?.id ? String(hardFinding.target.id) : null;
+    const hardLaneId = hardFinding ? getLaneIdForFinding(hardFinding, buildGuideIndex(engineJson)) : null;
+    const isGatewayBranchHint = hardRule === "gateway_diverging_needs_two_outgoing";
+    const missingEndNodeId = key.startsWith("missing_end:") ? key.slice("missing_end:".length) : "";
+
+    const isConnectGuide =
+      key === "lanes_disconnected" ||
+      key.startsWith("task_no_") ||
+      key.startsWith("missing_end") ||
+      actions.some((action) => action?.action === "CONNECT_LANES_HEURISTIC" || action?.action === "CONNECT_END_HERE");
+
+    const isWriteGuide =
+      key === "process_empty" ||
+      key.startsWith("lane_empty:") ||
+      (message.includes("krok") && (message.includes("nap") || message.includes("dop")));
+
+    const highlight = {
+      token: `${key}:${Date.now()}`,
+      map: null,
+      laneInputLaneId: null,
+    };
+
+    if (isGatewayBranchHint) {
+      highlight.map = {
+        type: "upper_branch",
+        nodeId: hardTargetId || null,
+        laneId: hardLaneId || laneIdHint || null,
+        pulse: true,
+      };
+    } else if (missingEndNodeId || connectEndAction?.payload?.nodeId) {
+      highlight.map = {
+        type: "missing_end",
+        nodeId: String(missingEndNodeId || connectEndAction?.payload?.nodeId || ""),
+        nodeName: String(connectEndAction?.payload?.nodeName || ""),
+        laneId: connectEndAction?.payload?.laneId || laneIdHint || null,
+        pulse: true,
+      };
+    } else if (focusNodeAction?.payload?.nodeId) {
+      highlight.map = {
+        type: "node",
+        nodeId: String(focusNodeAction.payload.nodeId),
+        pulse: true,
+      };
+    } else if (openLaneAction?.payload?.laneId || guideState?.laneId) {
+      highlight.map = {
+        type: "lane",
+        laneId: String(openLaneAction?.payload?.laneId || guideState?.laneId),
+        pulse: true,
+      };
+    } else if (isConnectGuide) {
+      highlight.map = { type: "connect" };
+    }
+
+    if (
+      isWriteGuide &&
+      laneIdHint &&
+      selectedLane?.id &&
+      String(selectedLane.id) === String(laneIdHint)
+    ) {
+      highlight.laneInputLaneId = String(laneIdHint);
+    }
+
+    applyGuideHighlight(highlight);
+  }, [guideEnabled, guideState, guideFindings, engineJson, activeLaneId, selectedLane, applyGuideHighlight]);
+
   const runConnectHeuristic = useCallback(() => {
     const modeler = modelerRef.current;
     if (!modeler) return false;
@@ -2020,7 +2125,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setGuideState(null);
         return;
       }
-      setModelsOpen(true);
+      if (!activeOrgId) {
+        setInfo("Najprv si vyber alebo vytvor organizaciu.");
+        setGuideState(null);
+        return;
+      }
+      const saveResult = await handleSaveModel();
+      const savedModelId = saveResult?.modelId || routeModelId || null;
+      if (!savedModelId) {
+        return;
+      }
+      await openPushToOrgModal({
+        id: String(savedModelId),
+        name: String(saveResult?.name || deriveDefaultName() || "Proces"),
+      });
       setGuideState(null);
       return;
     }
@@ -2037,6 +2155,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           setActiveLaneId(String(lane.id));
           setLastEditedLaneId(String(lane.id));
           openSingleCard("lane");
+          applyGuideHighlight(
+            {
+              token: `open_lane:${lane.id}:${Date.now()}`,
+              map: { type: "lane", laneId: String(lane.id), pulse: true },
+              laneInputLaneId: String(lane.id),
+            },
+            2200,
+          );
           window.setTimeout(() => {
             runGuideReview("cta_lane_opened", String(lane.id));
           }, 0);
@@ -2094,6 +2220,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (actionId === "CONNECT_LANES_HEURISTIC") {
+      applyGuideHighlight(
+        {
+          token: `connect_hint:${Date.now()}`,
+          map: { type: "connect" },
+          laneInputLaneId: null,
+        },
+        1800,
+      );
       runConnectHeuristic();
       setGuideState(null);
       runGuideReview("connect_lanes");
@@ -2179,6 +2313,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       const target = element || laneEl;
       if (target) {
+        applyGuideHighlight(
+          {
+            token: `focus_node:${target.id || Date.now()}`,
+            map: {
+              type: "node",
+              nodeId: String(target.id || ""),
+              pulse: true,
+            },
+            laneInputLaneId: null,
+          },
+          2000,
+        );
         selection?.select(target);
         if (typeof canvas?.zoom === "function") {
           try {
@@ -2373,6 +2519,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           modeling.connect(sourceShape, endShape, { type: "bpmn:SequenceFlow" });
           console.log("[Guide][CONNECT_END_HERE] connect success");
         }
+        ensureLaneRightPaddingAfterInsert(laneForSource || createParent, endShape, modeler, modeling);
         try {
           await syncEngineFromCanvas();
         } catch (syncError) {
@@ -3310,6 +3457,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         diagramXmlOrEvent.kind === "canvas_edit"
       ) {
         bumpModelVersion();
+        setHasUnsavedChanges(true);
         const modeler = modelerRef.current;
         const elementRegistry = modeler?.get?.("elementRegistry");
         if (!elementRegistry || !engineJson) return;
@@ -3527,6 +3675,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   );
 
   const handleGenerate = async () => {
+    setDrawerOpen(false);
     if (isDemoMode) {
       await runDemoGenerate();
       return;
@@ -3789,11 +3938,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const orderedNodes = [...laneNodes].sort((a, b) => (a.x || 0) - (b.x || 0));
     const firstNode = orderedNodes[0] || null;
     const lastNode = orderedNodes[orderedNodes.length - 1] || null;
-    const lastCreatedElement = getLastCreatedElement(elementRegistry, engineJson);
-    const globalRightmost =
-      typeof lastCreatedElement?.x === "number"
-        ? lastCreatedElement.x
-        : computeGlobalRightmost(elementRegistry);
+    const globalRightmost = computeCrossLaneAnchorX(laneElement, elementRegistry, engineJson);
 
     const base = computeLaneInsertPosition(
       laneElement,
@@ -3951,6 +4096,79 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   };
 
+  const ensureLaneRightPaddingAfterInsert = (laneElement, anchorElement, modeler, modeling) => {
+    if (!laneElement?.id || !modeler || !modeling) return;
+    const elementRegistry = modeler.get("elementRegistry");
+    if (!elementRegistry) return;
+
+    const lane = elementRegistry.get(laneElement.id);
+    if (!lane) return;
+
+    const RIGHT_PADDING = 84;
+    const MIN_DELTA = 24;
+    const MAX_DELTA = 220;
+
+    const laneX = Number(lane.x || 0);
+    const laneW = Number(lane.width || 0);
+    const laneY = Number(lane.y || 0);
+    const laneH = Number(lane.height || 0);
+    if (!(laneW > 0 && laneH > 0)) return;
+
+    const laneNodes = collectLaneFlowNodes(lane, elementRegistry);
+    const laneRightByNodes = laneNodes.reduce((max, el) => {
+      const right = Number(el.x || 0) + Number(el.width || 0);
+      return Math.max(max, right);
+    }, Number(anchorElement?.x || 0) + Number(anchorElement?.width || 0));
+
+    const requiredRight = laneRightByNodes + RIGHT_PADDING;
+    const currentRight = laneX + laneW;
+    const rawDelta = Math.ceil(requiredRight - currentRight);
+    if (rawDelta <= 0) return;
+    const delta = Math.max(MIN_DELTA, Math.min(MAX_DELTA, rawDelta));
+
+    const applyResizeWidth = (shape, width) => {
+      try {
+        if (typeof modeling.resizeShape === "function") {
+          modeling.resizeShape(shape, {
+            x: Number(shape.x || 0),
+            y: Number(shape.y || 0),
+            width,
+            height: Number(shape.height || 0),
+          });
+        } else {
+          modeling.updateProperties(shape, { width });
+        }
+      } catch {
+        // ignore resize errors
+      }
+    };
+
+    applyResizeWidth(lane, laneW + delta);
+
+    const refreshedLane = elementRegistry.get(lane.id) || lane;
+    const container = refreshedLane.parent || null;
+    if (!container) return;
+
+    const siblingLanes = elementRegistry
+      .getAll()
+      .filter((el) => {
+        if (!el || el.id === refreshedLane.id) return false;
+        const isLane = String(el?.businessObject?.$type || el?.type || "").includes("Lane");
+        return isLane && (el.parent?.id || "") === (container.id || "");
+      });
+    siblingLanes.forEach((sibling) => {
+      const sW = Number(sibling.width || 0);
+      const sH = Number(sibling.height || 0);
+      if (!(sW > 0 && sH > 0)) return;
+      applyResizeWidth(sibling, sW + delta);
+    });
+
+    const cW = Number(container.width || 0);
+    const cH = Number(container.height || 0);
+    if (!(cW > 0 && cH > 0)) return;
+    applyResizeWidth(container, cW + delta);
+  };
+
   const isReadOnlyMode = modelSource?.kind === "org" && orgReadOnly;
 
   const handleEnableOrgEdit_unused2 = () => {
@@ -4054,6 +4272,54 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     });
     if (!allNodes.length) return null;
     return allNodes.reduce((max, node) => Math.max(max, node.x || 0), 0);
+  };
+
+  const computeCrossLaneAnchorX = (laneElement, elementRegistry, currentEngineJson) => {
+    if (!laneElement || !elementRegistry) return null;
+    const lanes = elementRegistry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || "").includes("Lane"))
+      .sort((a, b) => (a.y || 0) - (b.y || 0));
+    const laneIndex = lanes.findIndex((ln) => String(ln?.id || "") === String(laneElement?.id || ""));
+
+    if (laneIndex > 0) {
+      for (let idx = laneIndex - 1; idx >= 0; idx -= 1) {
+        const previousLane = lanes[idx];
+        const previousLaneNodes = collectLaneFlowNodes(previousLane, elementRegistry).sort(
+          (a, b) => (a.x || 0) - (b.x || 0),
+        );
+        const previousLast = previousLaneNodes[previousLaneNodes.length - 1];
+        if (typeof previousLast?.x === "number") {
+          return Number(previousLast.x || 0) + Number(previousLast.width || 0) / 2;
+        }
+      }
+    }
+
+    const lastCreatedElement = getLastCreatedElement(elementRegistry, currentEngineJson);
+    const lastCreatedCenterX =
+      typeof lastCreatedElement?.x === "number"
+        ? Number(lastCreatedElement.x || 0) + Number(lastCreatedElement.width || 0) / 2
+        : null;
+    const allFlowNodes = elementRegistry
+      .getAll()
+      .filter((el) => el && el.type !== "label" && el?.businessObject?.$instanceOf?.("bpmn:FlowNode"));
+    const rightmostNode = allFlowNodes.reduce((winner, node) => {
+      if (!winner) return node;
+      const right = Number(node?.x || 0) + Number(node?.width || 0);
+      const winnerRight = Number(winner?.x || 0) + Number(winner?.width || 0);
+      return right > winnerRight ? node : winner;
+    }, null);
+    const rightmostCenterX =
+      typeof rightmostNode?.x === "number"
+        ? Number(rightmostNode.x || 0) + Number(rightmostNode.width || 0) / 2
+        : null;
+
+    if (typeof lastCreatedCenterX === "number" && typeof rightmostCenterX === "number") {
+      return Math.max(lastCreatedCenterX, rightmostCenterX);
+    }
+    if (typeof lastCreatedCenterX === "number") return lastCreatedCenterX;
+    if (typeof rightmostCenterX === "number") return rightmostCenterX;
+    return null;
   };
 
   const getLaneCenterMidY = (laneElement) => {
@@ -4192,11 +4458,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       shapeProps.height = STANDARD_TASK_SIZE.height;
     }
     const shape = elementFactory.createShape(shapeProps);
-    const lastCreatedElement = getLastCreatedElement(elementRegistry, engineJson);
-    const globalRightmost =
-      typeof lastCreatedElement?.x === "number"
-        ? lastCreatedElement.x
-        : computeGlobalRightmost(elementRegistry);
+    const globalRightmost = computeCrossLaneAnchorX(laneElement, elementRegistry, engineJson);
     const position = computeLaneInsertPosition(
       laneElement,
       shape,
@@ -4268,7 +4530,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const orderedNodes = [...laneNodes].sort((a, b) => (a.x || 0) - (b.x || 0));
       const firstNode = orderedNodes[0] || null;
       const lastNode = orderedNodes[orderedNodes.length - 1] || null;
-      const globalRightmost = computeGlobalRightmost(elementRegistry);
+      const globalRightmost = computeCrossLaneAnchorX(laneElement, elementRegistry, engineJson);
 
       const spacing = 36;
       let cursorX = null;
@@ -4330,6 +4592,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   useEffect(() => () => clearLanePreviewOverlays(), []);
 
   const handleAppendToLane = async () => {
+    setLaneOpen(false);
     if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
       setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
@@ -4649,6 +4912,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         generator_input: processCard.generatorInput,
         process_meta: processCard.processMeta,
       };
+      let saveResult = null;
       if (modelSource?.kind === "org") {
         const orgId = modelSource?.orgId;
         const treeNodeId = modelSource?.treeNodeId;
@@ -4677,15 +4941,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           lastRouteModelIdRef.current = newModelId;
           navigate(`/model/${newModelId}`);
         }
+        saveResult = { ok: true, modelId: newModelId, name: payload.name, source: "org" };
       } else {
-        await saveWizardModel(payload);
+        const saved = await saveWizardModel(payload);
+        saveResult = { ok: true, modelId: saved?.id || null, name: payload.name, source: "sandbox" };
       }
       setLastSavedAt(Date.now());
       setInfo("Model bol ulozeny.");
       setHasUnsavedChanges(false);
+      return saveResult;
     } catch (e) {
       const message = e?.message || "Nepodarilo sa ulozit model.";
       setError(message);
+      return null;
     } finally {
       setSaveLoading(false);
     }
@@ -4770,6 +5038,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       onInsertBlock: insertLaneBlock,
       onXmlImported: handleXmlImported,
       overlayMessage: relayouting ? "Zarovnávam layout…" : "",
+      guideHighlight: guideHighlight?.map || null,
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
       },
@@ -4788,6 +5057,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       insertLaneBlock,
       saveLoading,
       relayouting,
+      guideHighlight,
       handleXmlImported,
       xml,
       modelSource,
@@ -5047,6 +5317,28 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgMoveModalOpen(true);
   };
 
+  const openDeleteProcessModal = (node) => {
+    if (!node || node.type !== "process") return;
+    setOrgMenuNodeId(null);
+    setOrgDeleteNode(node);
+    setOrgDeleteError(null);
+    setOrgDeleteConfirmOpen(true);
+    setOrgDeleteFinalConfirmOpen(false);
+  };
+
+  const closeDeleteProcessModal = () => {
+    if (orgDeleteLoading) return;
+    setOrgDeleteConfirmOpen(false);
+    setOrgDeleteFinalConfirmOpen(false);
+    setOrgDeleteNode(null);
+    setOrgDeleteError(null);
+  };
+
+  const openFinalDeleteConfirmModal = () => {
+    setOrgDeleteConfirmOpen(false);
+    setOrgDeleteFinalConfirmOpen(true);
+  };
+
   const closeOrgVersionsModal = () => {
     setOrgVersionsOpen(false);
     setOrgVersionsNode(null);
@@ -5234,6 +5526,51 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgPushOverwriteConfirmOpen(false);
   };
 
+  const buildExpandedFoldersMap = (tree) => {
+    const next = { root: true };
+    const visit = (node) => {
+      if (!node) return;
+      if (node.type === "folder") {
+        next[node.id] = true;
+        (node.children || []).forEach(visit);
+      }
+    };
+    visit(tree);
+    return next;
+  };
+
+  const expandAllOrgPushFolders = () => {
+    if (!orgTree) return;
+    setOrgPushExpandedFolders(buildExpandedFoldersMap(orgTree));
+  };
+
+  const collapseAllOrgPushFolders = () => {
+    setOrgPushExpandedFolders({ root: true });
+  };
+
+  const isOrgPushTreeFullyExpanded = useMemo(() => {
+    if (!orgTree) return false;
+    const allIds = new Set();
+    const visit = (node) => {
+      if (!node) return;
+      if (node.type === "folder") {
+        allIds.add(node.id);
+        (node.children || []).forEach(visit);
+      }
+    };
+    visit(orgTree);
+    if (!allIds.size) return true;
+    return Array.from(allIds).every((id) => orgPushExpandedFolders[id]);
+  }, [orgTree, orgPushExpandedFolders]);
+
+  const toggleOrgPushTreeExpand = () => {
+    if (isOrgPushTreeFullyExpanded) {
+      collapseAllOrgPushFolders();
+    } else {
+      expandAllOrgPushFolders();
+    }
+  };
+
   const executePushToOrg = async ({ nameOverride = null, overwriteModelId = null, skipConflictCheck = false } = {}) => {
     if (!orgPushModel?.id) return;
     if (!activeOrgId) {
@@ -5405,6 +5742,32 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   };
 
+  const handleConfirmDeleteProcess = async () => {
+    if (!orgDeleteNode?.id) return;
+    if (!activeOrgId) {
+      setOrgDeleteError("Najprv si vyber alebo vytvor organizaciu.");
+      return;
+    }
+    setOrgDeleteLoading(true);
+    setOrgDeleteError(null);
+    try {
+      const response = await deleteOrgNode(orgDeleteNode.id, activeOrgId);
+      if (response?.tree) {
+        setOrgTree(response.tree);
+      } else {
+        await refreshOrgTree(activeOrgId);
+      }
+      setOrgDeleteConfirmOpen(false);
+      setOrgDeleteFinalConfirmOpen(false);
+      setOrgDeleteNode(null);
+      setInfo("Proces bol odstránený.");
+    } catch (e) {
+      setOrgDeleteError(e?.message || "Nepodarilo sa odstranit proces.");
+    } finally {
+      setOrgDeleteLoading(false);
+    }
+  };
+
   const renderOrgFolderPickerNode = (node, depth = 0, options = {}) => {
     if (!node || node.type !== "folder") return null;
     const mode = options.mode || "move";
@@ -5490,6 +5853,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const isActivePath = activeOrgFolderIds.has(node.id);
       const processCount = orgProcessCountMap.get(node.id) || 0;
       const prefixDepth = Math.max(depth, 0);
+      const rawChildren = Array.isArray(node.children) ? node.children.filter(Boolean) : [];
+      const directProcesses = rawChildren.filter((child) => child?.type === "process");
+      const directFolders = rawChildren.filter((child) => child?.type === "folder");
+      const orderedChildren = [...directProcesses, ...directFolders];
       return (
         <div key={node.id} className="org-tree-entry" data-depth={depth} style={{ "--org-depth": depth }}>
           <div
@@ -5559,7 +5926,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             </button>
           </div>
           <div className={`org-tree-children ${expanded ? "is-open" : ""}`}>
-            {(node.children || []).map((child) => renderOrgTreeNode(child, depth + 1))}
+            {orderedChildren.map((child) => renderOrgTreeNode(child, depth + 1))}
           </div>
         </div>
       );
@@ -5568,7 +5935,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const isActive = modelId && routeModelId && String(modelId) === String(routeModelId);
     const pulse = isActive && orgPulseTargetId === node.id;
     const status = getProcessStatus(modelId);
-    const prefixDepth = Math.max(depth - 1, 0);
+    const prefixDepth = Math.max(depth, 0);
     const isMenuOpen = orgMenuNodeId === node.id;
     return (
       <div
@@ -5645,6 +6012,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             </button>
             <button type="button" className="org-tree-menu__item" onClick={() => openMoveProcessModal(node)}>
               Presunut do...
+            </button>
+            <div className="org-tree-menu__divider" />
+            <button
+              type="button"
+              className="org-tree-menu__item org-tree-menu__item--danger"
+              onClick={() => openDeleteProcessModal(node)}
+            >
+              Odstranit proces
             </button>
           </div>
         ) : null}
@@ -6698,9 +7073,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           </div>
         ) : (
           <>
-        <button className="guide-toggle" type="button" onClick={() => setGuideEnabled((prev) => !prev)}>
-          {guideEnabled ? "Pomocník: On" : "Pomocník: Off"}
-        </button>
         <div className={`process-card-rail-group ${railSections.org ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("org")}>
             <span>ORGANIZÁCIA</span>
@@ -7215,7 +7587,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               {guideState.primary.label}
                             </button>
                           ) : null}
-                          {guideState?.secondary ? (
+                          {guideState?.secondary && guideState.secondary.action !== "NOT_NOW" ? (
                             <button
                               className="btn btn--small"
                               type="button"
@@ -7343,7 +7715,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         }}
                         className={`wizard-lane-textarea wizard-lane-v2__textarea ${
                           inlineLaneHint || hasLaneStructure ? "wizard-lane-textarea--structure" : ""
-                        } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""}`}
+                        } ${laneTemplateFlash ? "wizard-lane-textarea--flash" : ""} ${
+                          guideHighlight?.laneInputLaneId &&
+                          selectedLane?.id &&
+                          String(guideHighlight.laneInputLaneId) === String(selectedLane.id)
+                            ? "guide-highlight-input"
+                            : ""
+                        }`}
                       />
                       {inlineLaneHint ? (
                         <div className="wizard-lane-inline-hint" role="status" aria-live="polite">
@@ -7842,7 +8220,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       {guideState.primary.label}
                     </button>
                   ) : null}
-                  {guideState?.secondary ? (
+                  {guideState?.secondary && guideState.secondary.action !== "NOT_NOW" ? (
                     <button
                       className="btn btn--small"
                       type="button"
@@ -8654,6 +9032,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 Model: <strong>{orgPushModel?.name || orgPushModel?.id || "-"}</strong>
               </div>
               {orgPushError ? <div className="wizard-error">{orgPushError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+                <button
+                  className="btn btn--small"
+                  type="button"
+                  onClick={toggleOrgPushTreeExpand}
+                  disabled={!orgTree || orgPushLoading}
+                >
+                  {isOrgPushTreeFullyExpanded ? "Zbalit strom" : "Rozbalit strom"}
+                </button>
+              </div>
               <div className="org-tree">
                 {orgTree
                   ? renderOrgFolderPickerNode(orgTree, 0, {
@@ -8757,6 +9145,71 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </button>
                 <button className="btn btn-danger" type="button" onClick={handleConfirmOverwrite}>
                   Áno, prepísať
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgDeleteConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={closeDeleteProcessModal}>
+            <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Odstrániť proces?</h3>
+                <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
+                  Zavrieť
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+                Proces "{orgDeleteNode?.name || "-"}" bude odstránený zo stromu organizácie.
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+                Táto akcia sa nedá vrátiť späť.
+              </div>
+              {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button className="btn" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
+                  Zrušiť
+                </button>
+                <button className="btn btn-danger" type="button" onClick={openFinalDeleteConfirmModal} disabled={orgDeleteLoading}>
+                  Odstrániť
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {orgDeleteFinalConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={closeDeleteProcessModal}>
+            <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Potvrdiť odstránenie procesu?</h3>
+                <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
+                  Zavrieť
+                </button>
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+                Naozaj chceš odstrániť proces "{orgDeleteNode?.name || "-"}"?
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+                Táto akcia sa nedá vrátiť späť.
+              </div>
+              {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => {
+                    if (orgDeleteLoading) return;
+                    setOrgDeleteFinalConfirmOpen(false);
+                    setOrgDeleteConfirmOpen(true);
+                  }}
+                  disabled={orgDeleteLoading}
+                >
+                  Späť
+                </button>
+                <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
+                  {orgDeleteLoading ? "Odstraňujem..." : "Áno, odstrániť"}
                 </button>
               </div>
             </div>

@@ -191,6 +191,28 @@ export function applyIncrementalAppend({
     }, nodes[0]);
   };
 
+  const findPreviousLaneAnchorX = (laneEl, shapeWidth = 100) => {
+    if (!laneEl) return null;
+    const lanes = elementRegistry
+      .getAll()
+      .filter((el) => String(el?.businessObject?.$type || "").includes("Lane"))
+      .sort((a, b) => Number(a?.y || 0) - Number(b?.y || 0));
+    const laneIndex = lanes.findIndex((ln) => String(ln?.id || "") === String(laneEl?.id || ""));
+    if (laneIndex <= 0) return null;
+
+    const targetW = Number(shapeWidth || 100);
+    for (let idx = laneIndex - 1; idx >= 0; idx -= 1) {
+      const previousLane = lanes[idx];
+      const previousLast = findLastFlowShapeInLane(previousLane);
+      if (!previousLast) continue;
+      const previousX = Number(previousLast.x || 0);
+      const previousW = Number(previousLast.width || targetW);
+      // Align by center with the last shape in the lane above.
+      return Math.round(previousX + previousW / 2);
+    }
+    return null;
+  };
+
   const toBpmnType = (node) => {
     const raw = String(node?.type || "").toLowerCase();
     if (raw.includes("start")) return "bpmn:StartEvent";
@@ -489,12 +511,18 @@ export function applyIncrementalAppend({
       // we want the first new shape's LEFT edge to start at (rightmost + H_GAP).
       start = typeof laneRightmost === "number" ? laneRightmost + H_GAP + targetW / 2 : start;
     } else {
+      const previousLaneAnchor = findPreviousLaneAnchorX(laneEl, targetW);
+      if (typeof previousLaneAnchor === "number") {
+        start = previousLaneAnchor;
+        laneCursorById.set(laneKey, start);
+        return start;
+      }
       const mapLast = findLastFlowShapeInMap();
       if (mapLast) {
         // Preserve cross-lane visual alignment for the first shape in a newly-used lane.
         const mapLastX = Number(mapLast.x || 0);
         const mapLastW = Number(mapLast.width || 0);
-        start = Math.round(mapLastX + mapLastW / 2 - targetW / 2);
+        start = Math.round(mapLastX + mapLastW / 2);
       } else {
         const laneRightmost = laneEl ? computeLaneRightmost(laneEl) : null;
         start = typeof laneRightmost === "number" ? laneRightmost + H_GAP : start;

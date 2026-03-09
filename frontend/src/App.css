@@ -393,6 +393,9 @@ body {
   max-height: 0;
   opacity: 0;
   overflow: hidden;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(96, 165, 250, 0.16);
   transition: max-height 140ms ease-out, opacity 140ms ease-out;
 }
 
@@ -695,6 +698,21 @@ body {
 
 .org-tree-menu__item:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.org-tree-menu__divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.org-tree-menu__item--danger {
+  color: #fca5a5;
+}
+
+.org-tree-menu__item--danger:hover {
+  background: rgba(220, 38, 38, 0.18);
+  color: #fecaca;
 }
 
 .app {
@@ -1305,6 +1323,24 @@ body {
   background: rgba(6, 95, 70, 0.76);
 }
 
+.map-toolbar__btn--main-menu {
+  border-color: rgba(148, 163, 184, 0.9);
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.95), rgba(30, 41, 59, 0.92));
+  color: #f8fafc;
+  font-weight: 700;
+  box-shadow:
+    0 0 0 1px rgba(148, 163, 184, 0.28),
+    0 0 12px rgba(59, 130, 246, 0.22);
+}
+
+.map-toolbar__btn--main-menu:hover {
+  border-color: rgba(191, 219, 254, 0.95);
+  background: linear-gradient(180deg, rgba(71, 85, 105, 0.95), rgba(51, 65, 85, 0.92));
+  box-shadow:
+    0 0 0 1px rgba(191, 219, 254, 0.4),
+    0 0 14px rgba(59, 130, 246, 0.3);
+}
+
 .map-toolbar__btn--zoom {
   border-color: rgba(244, 63, 94, 0.58);
   background: rgba(136, 19, 55, 0.56);
@@ -1325,6 +1361,70 @@ body {
 .map-viewer__canvas > div {
   width: 100%;
   height: 100%;
+}
+
+@keyframes guide-soft-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.28);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(20, 184, 166, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
+  }
+}
+
+.map-viewer__canvas--guide-connect::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 16px;
+  border: 1.5px dashed rgba(13, 148, 136, 0.34);
+  background: linear-gradient(180deg, rgba(153, 246, 228, 0.02), rgba(153, 246, 228, 0));
+  pointer-events: none;
+  animation: guide-soft-pulse 1.7s ease-out 1;
+  z-index: 2;
+}
+
+.map-viewer__canvas--guide-upper-branch::before {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 11%;
+  height: 24%;
+  border-radius: 16px;
+  border: 1px solid rgba(13, 148, 136, 0.28);
+  background: linear-gradient(180deg, rgba(94, 234, 212, 0.02), rgba(204, 251, 241, 0));
+  pointer-events: none;
+  animation: guide-soft-pulse 1.9s ease-out 1;
+  z-index: 2;
+}
+
+.map-viewer__canvas .djs-element.guide-highlight-target .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: rgba(15, 118, 110, 0.95) !important;
+  stroke-width: 2.7px !important;
+  filter: drop-shadow(0 0 6px rgba(45, 212, 191, 0.45));
+}
+
+/* Keep lane highlight subtle: light tint + softer border than tasks/events. */
+.map-viewer__canvas .djs-element.djs-lane.guide-highlight-target .djs-visual > rect {
+  stroke: rgba(13, 148, 136, 0.46) !important;
+  stroke-width: 1.4px !important;
+  fill: rgba(20, 184, 166, 0.005) !important;
+  filter: none !important;
+}
+
+.map-viewer__canvas .djs-element.guide-highlight-pulse .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  animation: guide-soft-pulse 1.8s ease-out 1;
+}
+
+.guide-highlight-input {
+  border-color: rgba(13, 148, 136, 0.64) !important;
+  box-shadow:
+    0 0 0 2px rgba(20, 184, 166, 0.22),
+    0 10px 22px rgba(15, 118, 110, 0.12);
 }
 
 /* Hide bpmn-js palette + context pad (custom toolbar will replace). */
@@ -1529,52 +1629,56 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-   padding: 12px 14px;
-   border-radius: 12px;
-   border: 1px solid rgba(96, 165, 250, 0.45);
+  gap: 16px;
+   padding: 16px 18px;
+   border-radius: 14px;
+   border: 1px solid rgba(20, 184, 166, 0.58);
    background:
-     linear-gradient(90deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.06) 40%, rgba(15, 23, 42, 0.92)),
-     linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.97));
-   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12) inset, 0 10px 24px rgba(2, 6, 23, 0.28);
+     linear-gradient(90deg, rgba(15, 118, 110, 0.22), rgba(20, 184, 166, 0.12) 40%, rgba(15, 23, 42, 0.94)),
+     linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98));
+   box-shadow:
+     0 0 0 1px rgba(20, 184, 166, 0.16) inset,
+     0 14px 30px rgba(2, 6, 23, 0.34);
    color: #f8fbff;
   margin-bottom: 10px;
 }
 
 .guide-bar__text {
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.5;
   font-weight: 700;
+  max-width: 980px;
 }
 
 .guide-bar__title {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 28px;
+  padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  background: rgba(148, 163, 184, 0.08);
-  color: #cbd5e1;
-  font-size: 12px;
+  border: 1px solid rgba(153, 246, 228, 0.38);
+  background: rgba(20, 184, 166, 0.14);
+  color: #e6fffb;
+  font-size: 14px;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   opacity: 1;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .guide-bar__actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .guide-bar__actions .btn,
 .guide-panel__actions .btn {
-  min-height: 34px;
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 13px;
+  min-height: 44px;
+  padding: 9px 16px;
+  border-radius: 11px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.15;
   border-width: 1px;
@@ -1590,7 +1694,7 @@ body {
 .guide-panel__actions .btn.btn-primary {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 6px 16px rgba(37, 99, 235, 0.28);
+    0 6px 16px rgba(13, 148, 136, 0.28);
 }
 
 .guide-bar__actions .btn:not(.btn-primary),
@@ -1608,37 +1712,38 @@ body {
 }
 
 .guide-panel {
-  border: 1px solid rgba(96, 165, 250, 0.28);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border: 1px solid rgba(20, 184, 166, 0.28);
+  border-radius: 12px;
+  padding: 14px 16px;
   background:
-    linear-gradient(90deg, rgba(37, 99, 235, 0.08), rgba(15, 23, 42, 0.5)),
+    linear-gradient(90deg, rgba(13, 148, 136, 0.08), rgba(15, 23, 42, 0.5)),
     rgba(15, 23, 42, 0.72);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .guide-panel__text {
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.5;
   font-weight: 600;
   color: #f1f5f9;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .guide-panel__title {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 0 7px;
+  min-height: 26px;
+  padding: 0 9px;
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(148, 163, 184, 0.06);
-  color: #cbd5e1;
-  font-size: 11px;
+  border: 1px solid rgba(153, 246, 228, 0.32);
+  background: rgba(20, 184, 166, 0.1);
+  color: #e6fffb;
+  font-size: 12px;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   opacity: 1;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .guide-panel__actions {
@@ -4507,6 +4612,16 @@ body {
   fill: rgba(255, 165, 0, 0.1) !important;
   stroke: rgba(255, 165, 0, 0.7) !important;
   stroke-width: 3px !important;
+}
+
+/* Force subtle guide highlight on lanes even when lane is hover/selected. */
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target:not(.dragging):not(.moving) .djs-visual > rect,
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target.hover:not(.dragging):not(.moving) .djs-visual > rect,
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target.selected:not(.dragging):not(.moving) .djs-visual > rect {
+  fill: rgba(20, 184, 166, 0.003) !important;
+  stroke: rgba(13, 148, 136, 0.42) !important;
+  stroke-width: 1.3px !important;
+  filter: none !important;
 }
 
 /* Hover efekt pre sequence flows */

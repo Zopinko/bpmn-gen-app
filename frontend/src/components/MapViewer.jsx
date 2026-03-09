@@ -45,6 +45,7 @@ export default function MapViewer({
   onXmlImported,
   overlayMessage,
   onInsertBlock,
+  guideHighlight = null,
   readOnly = false,
 }) {
   const ENABLE_LANE_HANDLES = false;
@@ -56,7 +57,6 @@ export default function MapViewer({
   const [toastMessage, setToastMessage] = useState("");
   const [localCanUndo, setLocalCanUndo] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
-  const [blocksOpen, setBlocksOpen] = useState(false);
   const isImportingRef = useRef(false);
   const toastTimerRef = useRef(null);
   const hasSubtitle = Boolean(subtitle || subtitleMeta || subtitleBadge || subtitleTag);
@@ -72,6 +72,7 @@ export default function MapViewer({
   const laneHandleOverlayIdsRef = useRef([]);
   const laneHandleMapRef = useRef(new Map());
   const laneDragStartMapRef = useRef(new Map());
+  const guideHighlightRef = useRef({ elementId: null, pulseTimer: null });
   const nameCacheRef = useRef(new Map());
   const laneCacheRef = useRef(new Map());
   const lastClickedElementRef = useRef(null);
@@ -233,6 +234,150 @@ export default function MapViewer({
   useEffect(() => {
     diagramChangeRef.current = onDiagramChange;
   }, [onDiagramChange]);
+
+  useEffect(() => {
+    const modeler = modelerRef.current;
+    if (!modeler) return undefined;
+    const canvas = modeler.get("canvas", false);
+    const elementRegistry = modeler.get("elementRegistry", false);
+    if (!canvas || !elementRegistry) return undefined;
+    const safeRemoveMarker = (activeCanvas, elementId, marker) => {
+      if (!activeCanvas || !elementId || !marker) return;
+      try {
+        activeCanvas.removeMarker(elementId, marker);
+      } catch {
+        // ignore marker cleanup races during model refresh
+      }
+    };
+    const safeAddMarker = (activeCanvas, elementId, marker) => {
+      if (!activeCanvas || !elementId || !marker) return;
+      try {
+        activeCanvas.addMarker(elementId, marker);
+      } catch {
+        // ignore marker add races during model refresh
+      }
+    };
+
+    const previous = guideHighlightRef.current;
+    if (previous?.pulseTimer) {
+      window.clearTimeout(previous.pulseTimer);
+    }
+    if (previous?.elementId) {
+      safeRemoveMarker(canvas, previous.elementId, "guide-highlight-target");
+      safeRemoveMarker(canvas, previous.elementId, "guide-highlight-pulse");
+    }
+    guideHighlightRef.current = { elementId: null, pulseTimer: null };
+
+    if (!guideHighlight || typeof guideHighlight !== "object") {
+      return undefined;
+    }
+
+    const resolveByIdOrEngineId = (id) => {
+      if (!id) return null;
+      const direct = elementRegistry.get(id);
+      if (direct) return direct;
+      return (
+        elementRegistry
+          .getAll()
+          .find((el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "") === String(id)) || null
+      );
+    };
+
+    const resolveElement = (id) => {
+      if (String(guideHighlight?.type || "") === "missing_end") {
+        const candidates = elementRegistry
+          .getAll()
+          .filter((el) => {
+            if (!el || el.type === "label") return false;
+            const boType = String(el?.businessObject?.$type || el?.type || "");
+            const isFlowNode = Boolean(el?.businessObject?.$instanceOf?.("bpmn:FlowNode"));
+            const isEnd = boType.includes("EndEvent");
+            if (!isFlowNode || isEnd) return false;
+            const incoming = Array.isArray(el?.incoming) ? el.incoming.length : 0;
+            const outgoing = Array.isArray(el?.outgoing) ? el.outgoing.length : 0;
+            return incoming > 0 && outgoing === 0;
+          });
+        if (candidates.length) {
+          const rightmost = candidates.reduce((winner, el) => {
+            if (!winner) return el;
+            const right = Number(el?.x || 0) + Number(el?.width || 0);
+            const winnerRight = Number(winner?.x || 0) + Number(winner?.width || 0);
+            return right > winnerRight ? el : winner;
+          }, null);
+          if (rightmost) return rightmost;
+        }
+      }
+
+      const direct = resolveByIdOrEngineId(id);
+      if (direct) return direct;
+
+      const nodeName = String(guideHighlight?.nodeName || "").trim();
+      if (!nodeName) return null;
+
+      const laneIdHint = guideHighlight?.laneId ? String(guideHighlight.laneId) : "";
+      const laneEl = laneIdHint ? resolveByIdOrEngineId(laneIdHint) : null;
+      const laneBounds = laneEl
+        ? {
+            top: Number(laneEl.y || 0),
+            bottom: Number(laneEl.y || 0) + Number(laneEl.height || 0),
+          }
+        : null;
+      const isInLane = (el) => {
+        if (!laneBounds || !el) return true;
+        const centerY = Number(el.y || 0) + Number(el.height || 0) / 2;
+        return centerY >= laneBounds.top && centerY <= laneBounds.bottom;
+      };
+
+      const candidates = elementRegistry
+        .getAll()
+        .filter((el) => {
+          if (!el || el.type === "label") return false;
+          const boType = String(el?.businessObject?.$type || el?.type || "");
+          if (
+            !boType.includes("Task") &&
+            !boType.includes("Gateway") &&
+            !boType.includes("Event")
+          ) {
+            return false;
+          }
+          const name = String(el?.businessObject?.name || "").trim();
+          return name && name === nodeName;
+        });
+      if (!candidates.length) return null;
+      return candidates.find((el) => isInLane(el)) || candidates[0] || null;
+    };
+
+    const isLane = String(guideHighlight?.type || "") === "lane";
+    const targetId = isLane ? guideHighlight?.laneId : guideHighlight?.nodeId;
+    const targetEl = resolveElement(targetId);
+    if (!targetEl?.id) {
+      return undefined;
+    }
+
+    safeAddMarker(canvas, targetEl.id, "guide-highlight-target");
+    guideHighlightRef.current.elementId = targetEl.id;
+
+    if (guideHighlight?.pulse) {
+      safeAddMarker(canvas, targetEl.id, "guide-highlight-pulse");
+      guideHighlightRef.current.pulseTimer = window.setTimeout(() => {
+        const activeCanvas = modelerRef.current?.get?.("canvas", false);
+        if (!activeCanvas) return;
+        safeRemoveMarker(activeCanvas, targetEl.id, "guide-highlight-pulse");
+      }, 1900);
+    }
+
+    return () => {
+      const current = guideHighlightRef.current;
+      if (current?.pulseTimer) {
+        window.clearTimeout(current.pulseTimer);
+      }
+      if (current?.elementId) {
+        safeRemoveMarker(canvas, current.elementId, "guide-highlight-target");
+        safeRemoveMarker(canvas, current.elementId, "guide-highlight-pulse");
+      }
+      guideHighlightRef.current = { elementId: null, pulseTimer: null };
+    };
+  }, [guideHighlight, xml]);
 
   const zoomBy = (delta) => {
     const modeler = modelerRef.current;
@@ -587,8 +732,7 @@ export default function MapViewer({
       if (
         boType === "bpmn:Process" ||
         boType === "bpmn:Collaboration" ||
-        boType === "bpmn:Participant" ||
-        boType === "bpmn:SequenceFlow"
+        boType === "bpmn:Participant"
       ) {
         return false;
       }
@@ -606,6 +750,7 @@ export default function MapViewer({
       container.className = "custom-context-pad";
       const boType = element.businessObject?.$type || "";
       const isLane = boType === "bpmn:Lane" || boType === "bpmn:Participant";
+      const isSequenceFlow = boType === "bpmn:SequenceFlow";
 
       contextPadContainer = container;
       contextPadSuppressed = false;
@@ -700,6 +845,26 @@ export default function MapViewer({
             hideOnAction: true,
           }),
         );
+      } else if (isSequenceFlow) {
+        if (!readOnly) {
+          container.appendChild(
+            makeButton("Zmazať", "bpmn-icon-trash", {
+              onClick: () => {
+                clearContextPad();
+                openConfirmModal({
+                  title: "Zmazať prepojenie?",
+                  message:
+                    "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+                  onConfirm: () => {
+                    executeDeleteElements([element]);
+                  },
+                });
+              },
+              className: "custom-context-pad__btn--danger",
+              hideOnAction: false,
+            }),
+          );
+        }
       } else {
         const appendShape = (type, width, height) => {
           const defaults = {
@@ -1681,13 +1846,12 @@ export default function MapViewer({
   }, [annotations, xml]);
 
   const displayError = error || importError;
-  const handleInsertBlock = (type) => {
-    if (typeof onInsertBlock === "function") {
-      onInsertBlock(type);
-    }
-    setBlocksOpen(false);
-  };
-
+  const guideCanvasClass =
+    guideHighlight?.type === "connect"
+      ? "map-viewer__canvas--guide-connect"
+      : guideHighlight?.type === "upper_branch"
+        ? "map-viewer__canvas--guide-upper-branch"
+        : "";
   return (
     <div className="map-viewer">
       <div className="map-viewer__header">
@@ -1761,7 +1925,7 @@ export default function MapViewer({
                   ) : null}
                   {onMainMenu ? (
                     <button
-                      className="map-toolbar__btn"
+                      className="map-toolbar__btn map-toolbar__btn--main-menu"
                       type="button"
                       onClick={onMainMenu}
                       title="Hlavné menu"
@@ -1771,30 +1935,8 @@ export default function MapViewer({
                   ) : null}
                 </div>
               ) : null}
-              <div className="map-toolbar__blocks-panel">
-                <button
-                  className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--blocks"
-                  type="button"
-                  onClick={() => setBlocksOpen((prev) => !prev)}
-                  title="Vložiť blok"
-                >
-                  Bloky
-                </button>
-                {blocksOpen ? (
-                  <div className="map-toolbar__blocks-menu">
-                    <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("xor")}>
-                      <span className="map-toolbar__btn-icon bpmn-icon-gateway-xor" aria-hidden="true" />
-                      Rozhodnutie
-                    </button>
-                    <button className="map-toolbar__btn map-toolbar__btn--icon" type="button" onClick={() => handleInsertBlock("and")}>
-                      <span className="map-toolbar__btn-icon bpmn-icon-gateway-parallel" aria-hidden="true" />
-                      Paralela
-                    </button>
-                  </div>
-                ) : null}
-              </div>
             </div>
-          </div><div ref={containerRef} className="map-viewer__canvas" />
+          </div><div ref={containerRef} className={`map-viewer__canvas ${guideCanvasClass}`} />
         {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
         {overlayMessage ? (
           <div className="map-viewer__status">{overlayMessage}</div>
