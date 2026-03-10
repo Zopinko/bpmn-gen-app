@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
+import logging
 from threading import Lock
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -21,6 +22,7 @@ from core.auth_config import get_auth_config
 
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+logger = logging.getLogger(__name__)
 
 _RATE_LIMIT_WINDOW_SECONDS = 60
 _RATE_LIMIT_MESSAGE = "Too many attempts. Please try again later."
@@ -75,25 +77,51 @@ def _user_payload(user: AuthUser) -> dict:
     }
 
 
-def _set_session_cookie(response: Response, session_token: str) -> None:
+def _request_host(request: Request) -> str:
+    forwarded_host = request.headers.get("x-forwarded-host")
+    host_header = (forwarded_host or request.headers.get("host") or "").split(",")[0].strip()
+    return host_header.split(":")[0].strip().lower()
+
+
+def _resolve_cookie_domain(request: Request, configured_domain: str | None) -> str | None:
+    if not configured_domain:
+        return None
+    request_host = _request_host(request)
+    normalized_domain = configured_domain.lstrip(".").lower()
+    if not request_host:
+        return configured_domain
+    if request_host == normalized_domain or request_host.endswith(f".{normalized_domain}"):
+        return configured_domain
+    logger.warning(
+        "Ignoring invalid SESSION_COOKIE_DOMAIN '%s' for request host '%s'; using host-only cookie.",
+        configured_domain,
+        request_host,
+    )
+    return None
+
+
+def _set_session_cookie(response: Response, request: Request, session_token: str) -> str | None:
     cfg = get_auth_config()
+    cookie_domain = _resolve_cookie_domain(request, cfg.cookie_domain)
     response.set_cookie(
         key=cfg.cookie_name,
         value=session_token,
-        domain=cfg.cookie_domain,
+        domain=cookie_domain,
         httponly=cfg.cookie_httponly,
         secure=cfg.cookie_secure,
         samesite=cfg.cookie_samesite,
         max_age=cfg.session_ttl_seconds,
         path="/",
     )
+    return cookie_domain
 
 
-def _clear_session_cookie(response: Response) -> None:
+def _clear_session_cookie(request: Request, response: Response) -> None:
     cfg = get_auth_config()
+    cookie_domain = _resolve_cookie_domain(request, cfg.cookie_domain)
     response.delete_cookie(
         key=cfg.cookie_name,
-        domain=cfg.cookie_domain,
+        domain=cookie_domain,
         path="/",
         secure=cfg.cookie_secure,
         httponly=cfg.cookie_httponly,
@@ -130,7 +158,16 @@ def login(payload: LoginRequest, request: Request, response: Response):
         user_agent=request.headers.get("user-agent"),
     )
     update_last_login(user.id)
-    _set_session_cookie(response, session_token)
+    cookie_domain = _set_session_cookie(response, request, session_token)
+    logger.warning(
+        "Auth login set-cookie prepared: name=%s domain=%s path=/ httponly=%s secure=%s samesite=%s max_age=%s",
+        cfg.cookie_name,
+        cookie_domain or "<host-only>",
+        cfg.cookie_httponly,
+        cfg.cookie_secure,
+        cfg.cookie_samesite,
+        cfg.session_ttl_seconds,
+    )
     return {"user": _user_payload(user)}
 
 
@@ -140,7 +177,7 @@ def logout(request: Request, response: Response):
     token = request.cookies.get(cfg.cookie_name)
     if token:
         revoke_session(token)
-    _clear_session_cookie(response)
+    _clear_session_cookie(request, response)
     return {"message": "Odhlasenie bolo uspesne."}
 
 
@@ -148,9 +185,16 @@ def logout(request: Request, response: Response):
 def me(request: Request):
     cfg = get_auth_config()
     token = request.cookies.get(cfg.cookie_name)
+    logger.warning(
+        "Auth /me cookie lookup: expected_name=%s present=%s cookies_seen=%s",
+        cfg.cookie_name,
+        bool(token),
+        ",".join(sorted(request.cookies.keys())) if request.cookies else "<none>",
+    )
     if not token:
         raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
     user = find_user_by_session(token)
+    logger.warning("Auth /me session lookup result: found=%s", bool(user))
     if not user:
         raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
     return {"user": _user_payload(user)}
