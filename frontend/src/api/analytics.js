@@ -1,6 +1,6 @@
-import { buildApiUrl } from "./config";
+import { buildAnalyticsApiUrl } from "./config";
 
-const ANALYTICS_TRACK_URL = buildApiUrl("/api/analytics/track");
+const ANALYTICS_TRACK_URL = buildAnalyticsApiUrl("/api/analytics/track");
 
 export async function trackSignupCompleted(sessionId) {
   const payload = {
