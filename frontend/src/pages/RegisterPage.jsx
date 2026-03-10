@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { trackSignupCompleted } from "../api/analytics";
 import { registerAuth } from "../api/auth";
 
 function RegisterPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -19,6 +21,8 @@ function RegisterPage() {
     setStatus({ loading: true, error: "", success: "" });
     try {
       const result = await registerAuth({ email, password });
+      const sid = new URLSearchParams(location.search).get("sid");
+      void trackSignupCompleted(sid || undefined);
       setStatus({ loading: false, error: "", success: result?.message || "Registracia bola uspesna." });
       setTimeout(() => navigate("/login"), 800);
     } catch (error) {
