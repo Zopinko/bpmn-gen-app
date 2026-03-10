@@ -63,7 +63,11 @@ def get_auth_config() -> AuthConfig:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-    prod_default_origins = ["https://bpmn-gen-frontend.onrender.com"]
+    prod_default_origins = [
+        "https://app.bpmngen.com",
+        "https://bpmngen.com",
+        "https://bpmn-gen-frontend.onrender.com",
+    ]
     allowed_origins = _split_csv(os.getenv("CORS_ALLOW_ORIGINS"))
     if not allowed_origins:
         allowed_origins = prod_default_origins if is_prod else dev_origins
