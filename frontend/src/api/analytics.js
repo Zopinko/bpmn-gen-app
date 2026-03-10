@@ -1,4 +1,6 @@
-const ANALYTICS_TRACK_URL = "https://www.bpmngen.com/api/analytics/track";
+import { buildApiUrl } from "./config";
+
+const ANALYTICS_TRACK_URL = buildApiUrl("/api/analytics/track");
 
 export async function trackSignupCompleted(sessionId) {
   const payload = {
@@ -19,7 +21,8 @@ export async function trackSignupCompleted(sessionId) {
       body: JSON.stringify(payload),
       keepalive: true,
     });
-  } catch {
+  } catch (error) {
     // Analytics must never block signup.
+    console.warn("Analytics tracking failed:", error);
   }
 }

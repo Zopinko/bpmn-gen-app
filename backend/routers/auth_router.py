@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import time
+from collections import defaultdict, deque
+from threading import Lock
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
@@ -18,6 +22,11 @@ from core.auth_config import get_auth_config
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_RATE_LIMIT_MESSAGE = "Too many attempts. Please try again later."
+_rate_limit_lock = Lock()
+_rate_limit_buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+
 
 class RegisterRequest(BaseModel):
     email: str
@@ -27,6 +36,31 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        first_ip = forwarded_for.split(",")[0].strip()
+        if first_ip:
+            return first_ip
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_rate_limit(request: Request, endpoint_key: str, limit: int) -> None:
+    now = time.monotonic()
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    client_ip = _get_client_ip(request)
+    bucket_key = (endpoint_key, client_ip)
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets[bucket_key]
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            raise HTTPException(status_code=429, detail=_RATE_LIMIT_MESSAGE)
+        bucket.append(now)
 
 
 def _user_payload(user: AuthUser) -> dict:
@@ -66,7 +100,8 @@ def _clear_session_cookie(response: Response) -> None:
 
 
 @router.post("/register", status_code=201)
-def register(payload: RegisterRequest):
+def register(payload: RegisterRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="register", limit=5)
     try:
         user = register_user(payload.email, payload.password)
     except ValueError as exc:
@@ -79,6 +114,7 @@ def register(payload: RegisterRequest):
 
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, response: Response):
+    _enforce_rate_limit(request, endpoint_key="login", limit=10)
     cfg = get_auth_config()
     user = authenticate_user(payload.email, payload.password)
     if not user:

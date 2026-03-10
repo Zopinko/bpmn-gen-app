@@ -1,11 +1,4 @@
-const defaultApiBase =
-  typeof window !== "undefined"
-    ? ["localhost", "127.0.0.1"].includes(window.location.hostname)
-      ? `${window.location.protocol}//${window.location.hostname}:8000`
-      : ""
-    : "http://localhost:8000";
-
-const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase;
+import { API_BASE } from "./config";
 
 export async function generateLinearWizardDiagram(payload) {
   const response = await fetch(`${API_BASE}/wizard/linear`, {
