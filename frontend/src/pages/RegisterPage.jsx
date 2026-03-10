@@ -38,6 +38,7 @@ function RegisterPage() {
         <input
           id="register-email"
           type="email"
+          autoComplete="username"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           required
@@ -47,6 +48,7 @@ function RegisterPage() {
         <input
           id="register-password"
           type="password"
+          autoComplete="new-password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           minLength={8}
@@ -57,6 +59,7 @@ function RegisterPage() {
         <input
           id="register-confirm-password"
           type="password"
+          autoComplete="new-password"
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           minLength={8}

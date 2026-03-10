@@ -65,6 +65,7 @@ function LoginPage({ onLoginSuccess }) {
         <input
           id="login-email"
           type="email"
+          autoComplete="username"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           required
@@ -74,6 +75,7 @@ function LoginPage({ onLoginSuccess }) {
         <input
           id="login-password"
           type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           required
