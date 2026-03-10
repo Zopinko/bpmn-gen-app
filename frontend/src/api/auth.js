@@ -12,7 +12,10 @@ async function request(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data?.detail || `HTTP ${response.status} ${response.statusText}`;
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    error.detail = data?.detail || null;
+    throw error;
   }
   return data;
 }
