@@ -7,6 +7,17 @@ const defaultApiBase =
 
 export const API_BASE = import.meta.env.VITE_API_BASE || defaultApiBase;
 
+const forcedSameOriginAuthHosts = new Set(["app.bpmngen.com"]);
+const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+
+export const AUTH_API_BASE =
+  import.meta.env.VITE_AUTH_API_BASE ||
+  (forcedSameOriginAuthHosts.has(currentHost) ? "" : API_BASE);
+
 export function buildApiUrl(path) {
   return `${API_BASE}${path}`;
+}
+
+export function buildAuthApiUrl(path) {
+  return `${AUTH_API_BASE}${path}`;
 }

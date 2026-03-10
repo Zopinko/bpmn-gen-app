@@ -39,6 +39,7 @@ class AuthConfig:
     cors_allowed_origins: list[str]
     cors_allow_credentials: bool
     cookie_name: str
+    cookie_domain: str | None
     cookie_samesite: str
     cookie_secure: bool
     cookie_httponly: bool
@@ -65,6 +66,7 @@ def get_auth_config() -> AuthConfig:
     ]
     prod_default_origins = [
         "https://app.bpmngen.com",
+        "https://www.bpmngen.com",
         "https://bpmngen.com",
         "https://bpmn-gen-frontend.onrender.com",
     ]
@@ -78,6 +80,12 @@ def get_auth_config() -> AuthConfig:
     cookie_samesite = _env("SESSION_COOKIE_SAMESITE", cookie_samesite_default).lower()
     if cookie_samesite not in {"lax", "strict", "none"}:
         cookie_samesite = cookie_samesite_default
+    if cookie_samesite == "none" and not cookie_secure:
+        # Browsers reject SameSite=None cookies without Secure.
+        cookie_secure = True
+    cookie_domain = os.getenv("SESSION_COOKIE_DOMAIN")
+    if cookie_domain is not None:
+        cookie_domain = cookie_domain.strip() or None
 
     return AuthConfig(
         app_env=env,
@@ -85,6 +93,7 @@ def get_auth_config() -> AuthConfig:
         cors_allowed_origins=allowed_origins,
         cors_allow_credentials=True,
         cookie_name=_env("SESSION_COOKIE_NAME", "bpmngen_session"),
+        cookie_domain=cookie_domain,
         cookie_samesite=cookie_samesite,
         cookie_secure=cookie_secure,
         cookie_httponly=True,

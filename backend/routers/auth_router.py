@@ -80,6 +80,7 @@ def _set_session_cookie(response: Response, session_token: str) -> None:
     response.set_cookie(
         key=cfg.cookie_name,
         value=session_token,
+        domain=cfg.cookie_domain,
         httponly=cfg.cookie_httponly,
         secure=cfg.cookie_secure,
         samesite=cfg.cookie_samesite,
@@ -92,6 +93,7 @@ def _clear_session_cookie(response: Response) -> None:
     cfg = get_auth_config()
     response.delete_cookie(
         key=cfg.cookie_name,
+        domain=cfg.cookie_domain,
         path="/",
         secure=cfg.cookie_secure,
         httponly=cfg.cookie_httponly,

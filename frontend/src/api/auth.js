@@ -1,7 +1,7 @@
-import { API_BASE } from "./config";
+import { buildAuthApiUrl } from "./config";
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(buildAuthApiUrl(path), {
     ...options,
     headers: {
       "content-type": "application/json",
