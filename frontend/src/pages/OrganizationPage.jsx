@@ -22,6 +22,7 @@ function OrganizationPage() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteMeta, setInviteMeta] = useState(null);
 
   const [newOrgName, setNewOrgName] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
@@ -98,6 +99,34 @@ function OrganizationPage() {
     [orgs],
   );
   const isActiveOrgOwner = String(activeOrg?.role || "").toLowerCase() === "owner";
+  const inviteStatus = String(inviteMeta?.status || "missing").toLowerCase();
+
+  const formatDateTime = (value) => {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString("sk-SK");
+  };
+
+  const inviteStatusLabel = (status) => {
+    if (status === "active") return "Aktívna";
+    if (status === "expired") return "Vypršaná";
+    if (status === "revoked") return "Zrušená";
+    if (status === "used") return "Použitá";
+    return "Nevytvorená";
+  };
+
+  const inviteStatusHint = (status) => {
+    if (status === "active") {
+      return inviteMeta?.expires_at
+        ? `Pozvánka je aktívna do ${formatDateTime(inviteMeta.expires_at)}.`
+        : "Pozvánka je aktívna.";
+    }
+    if (status === "expired") return "Táto pozvánka už vypršala. Vygeneruj novú.";
+    if (status === "revoked") return "Táto pozvánka bola zrušená po vygenerovaní novšej pozvánky.";
+    if (status === "used") return "Táto pozvánka už bola použitá a nie je možné ju použiť znovu.";
+    return "Zatiaľ nemáš vytvorenú žiadnu pozvánku.";
+  };
 
   const refreshMembers = useCallback(async () => {
     if (!activeOrgId) {
@@ -118,12 +147,39 @@ function OrganizationPage() {
     }
   }, [activeOrgId]);
 
+  const refreshInviteStatus = useCallback(async () => {
+    if (!activeOrgId || !isActiveOrgOwner) {
+      setInviteMeta(null);
+      setInviteLink("");
+      return;
+    }
+    setInviteLoading(true);
+    setInviteError("");
+    try {
+      const response = await getOrgInviteLink(activeOrgId, { createIfMissing: false });
+      setInviteMeta(response || { status: "missing" });
+      if (response?.token) {
+        const origin = typeof window !== "undefined" ? window.location.origin : "";
+        setInviteLink(`${origin}/join-org/${response.token}`);
+      } else {
+        setInviteLink("");
+      }
+    } catch (e) {
+      setInviteMeta(null);
+      setInviteLink("");
+      setInviteError(e?.message || "Nepodarilo sa načítať stav pozvánky.");
+    } finally {
+      setInviteLoading(false);
+    }
+  }, [activeOrgId, isActiveOrgOwner]);
+
   useEffect(() => {
     void refreshOrgs();
   }, [refreshOrgs]);
 
   useEffect(() => {
     setInviteLink("");
+    setInviteMeta(null);
     setInviteError("");
     setInviteCopied(false);
     setAddMemberError("");
@@ -131,6 +187,10 @@ function OrganizationPage() {
     setAddMemberEmail("");
     void refreshMembers();
   }, [activeOrgId, refreshMembers]);
+
+  useEffect(() => {
+    void refreshInviteStatus();
+  }, [refreshInviteStatus]);
 
   const handleSelectActiveOrg = (org) => {
     if (!org?.id) return;
@@ -188,13 +248,16 @@ function OrganizationPage() {
     setInviteCopied(false);
     try {
       const response = await getOrgInviteLink(activeOrgId, { regenerate });
+      setInviteMeta(response || null);
       const token = response?.token || "";
       if (!token) {
-        throw new Error("Nepodarilo sa získať invite token.");
+        setInviteLink("");
+        return;
       }
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       setInviteLink(`${origin}/join-org/${token}`);
     } catch (e) {
+      setInviteMeta(null);
       setInviteError(e?.message || "Nepodarilo sa získať invite link.");
       setInviteLink("");
     } finally {
@@ -455,6 +518,13 @@ function OrganizationPage() {
             <p className="organization-hint">
               Pozvánka je naviazaná na aktuálne aktívnu organizáciu. Pri regenerovaní sa vygeneruje nový link.
             </p>
+            <div className="organization-invite-status">
+              <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>{inviteStatusLabel(inviteStatus)}</span>
+              <span className="organization-hint">{inviteStatusHint(inviteStatus)}</span>
+            </div>
+            {inviteMeta?.expires_at ? (
+              <p className="organization-hint organization-inline-note">Vyprší: {formatDateTime(inviteMeta.expires_at)}</p>
+            ) : null}
             <div className="organization-inline-actions">
               <button
                 type="button"
@@ -481,7 +551,12 @@ function OrganizationPage() {
                 readOnly
                 placeholder="Pozývací link sa zobrazí tu..."
               />
-              <button type="button" className="btn btn--small" onClick={handleCopyInvite} disabled={!inviteLink}>
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={handleCopyInvite}
+                disabled={!inviteLink || inviteStatus !== "active"}
+              >
                 {inviteCopied ? "Skopírované" : "Kopírovať"}
               </button>
             </div>

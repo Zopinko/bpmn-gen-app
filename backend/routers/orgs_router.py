@@ -11,6 +11,7 @@ from auth.service import (
     create_org_with_owner,
     find_user_id_by_email,
     get_or_create_org_invite,
+    get_latest_org_invite,
     get_user_orgs,
     get_user_primary_org,
     get_user_org_role,
@@ -55,6 +56,7 @@ class AddOrgMemberRequest(BaseModel):
 class AcceptOrgInviteResponse(BaseModel):
     org: dict
     membership: dict
+    invite: dict | None = None
 
 
 class RemoveOrgMemberRequest(BaseModel):
@@ -139,20 +141,28 @@ def remove_org_member_endpoint(payload: RemoveOrgMemberRequest, current_user: Au
 def get_org_invite_link(
     org_id: str,
     regenerate: bool = False,
+    create_if_missing: bool = True,
     current_user: AuthUser = Depends(require_user),
 ):
     resolved_org_id = _resolve_org_id(current_user, org_id)
     role = get_user_org_role(current_user.id, resolved_org_id)
     if role != "owner":
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
-    invite = (
-        regenerate_org_invite(resolved_org_id, current_user.id)
-        if regenerate
-        else get_or_create_org_invite(resolved_org_id, current_user.id)
-    )
+    if regenerate:
+        invite = regenerate_org_invite(resolved_org_id, current_user.id)
+    elif create_if_missing:
+        invite = get_or_create_org_invite(resolved_org_id, current_user.id)
+    else:
+        invite = get_latest_org_invite(resolved_org_id)
     return {
         "org_id": resolved_org_id,
-        "token": invite["token"],
+        "token": invite["token"] if invite else None,
+        "status": invite.get("status") if invite else "missing",
+        "created_at": invite.get("created_at") if invite else None,
+        "expires_at": invite.get("expires_at") if invite else None,
+        "revoked_at": invite.get("revoked_at") if invite else None,
+        "used_at": invite.get("used_at") if invite else None,
+        "used_by_user_id": invite.get("used_by_user_id") if invite else None,
     }
 
 

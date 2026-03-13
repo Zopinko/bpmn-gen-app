@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
@@ -519,49 +519,104 @@ def get_org_by_id(org_id: str) -> dict | None:
     return {"id": row["id"], "name": row["name"]}
 
 
-def get_active_org_invite(org_id: str) -> dict | None:
+def _row_value(row: dict | None, key: str):
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except Exception:
+        return None
+
+
+def _invite_status_from_row(row: dict | None, now=None) -> str:
+    if not row:
+        return "missing"
+    if _row_value(row, "revoked_at"):
+        return "revoked"
+    if _row_value(row, "used_at"):
+        return "used"
+    expires_at = _row_value(row, "expires_at")
+    if expires_at:
+        current = now or utcnow()
+        try:
+            if from_iso_z(expires_at) <= current:
+                return "expired"
+        except Exception:
+            return "expired"
+    return "active"
+
+
+def _serialize_org_invite(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "id": _row_value(row, "id"),
+        "organization_id": _row_value(row, "organization_id"),
+        "token": _row_value(row, "token"),
+        "created_by_user_id": _row_value(row, "created_by_user_id"),
+        "created_at": _row_value(row, "created_at"),
+        "expires_at": _row_value(row, "expires_at"),
+        "revoked_at": _row_value(row, "revoked_at"),
+        "used_at": _row_value(row, "used_at"),
+        "used_by_user_id": _row_value(row, "used_by_user_id"),
+        "status": _invite_status_from_row(row),
+    }
+
+
+def get_latest_org_invite(org_id: str) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, organization_id, token, created_by_user_id, created_at
+            SELECT id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
             FROM organization_invites
-            WHERE organization_id = ? AND revoked_at IS NULL
+            WHERE organization_id = ?
             ORDER BY created_at DESC
             LIMIT 1
             """,
             (org_id,),
         ).fetchone()
-    if not row:
+    return _serialize_org_invite(row)
+
+
+def get_active_org_invite(org_id: str) -> dict | None:
+    latest = get_latest_org_invite(org_id)
+    if not latest:
         return None
-    return {
-        "id": row["id"],
-        "organization_id": row["organization_id"],
-        "token": row["token"],
-        "created_by_user_id": row["created_by_user_id"],
-        "created_at": row["created_at"],
-    }
+    return latest if latest.get("status") == "active" else None
 
 
 def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    cfg = get_auth_config()
     now = to_iso_z(utcnow())
+    expires_at = expires_in(cfg.org_invite_ttl_seconds)
     invite_id = str(uuid4())
     token = secrets.token_urlsafe(32)
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO organization_invites(id, organization_id, token, created_by_user_id, created_at, revoked_at)
-            VALUES (?, ?, ?, ?, ?, NULL)
+            INSERT INTO organization_invites(
+                id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
             """,
-            (invite_id, org_id, token, created_by_user_id, now),
+            (invite_id, org_id, token, created_by_user_id, now, expires_at),
         )
         conn.commit()
-    return {
-        "id": invite_id,
-        "organization_id": org_id,
-        "token": token,
-        "created_by_user_id": created_by_user_id,
-        "created_at": now,
-    }
+    return _serialize_org_invite(
+        {
+            "id": invite_id,
+            "organization_id": org_id,
+            "token": token,
+            "created_by_user_id": created_by_user_id,
+            "created_at": now,
+            "expires_at": expires_at,
+            "revoked_at": None,
+            "used_at": None,
+            "used_by_user_id": None,
+        }
+    )
 
 
 def revoke_active_org_invites(org_id: str) -> None:
@@ -571,9 +626,12 @@ def revoke_active_org_invites(org_id: str) -> None:
             """
             UPDATE organization_invites
             SET revoked_at = ?
-            WHERE organization_id = ? AND revoked_at IS NULL
+            WHERE organization_id = ?
+              AND revoked_at IS NULL
+              AND used_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
             """,
-            (now, org_id),
+            (now, org_id, now),
         )
         conn.commit()
 
@@ -593,20 +651,40 @@ def regenerate_org_invite(org_id: str, created_by_user_id: str) -> dict:
 def accept_org_invite(token: str, user_id: str) -> dict:
     cleaned = (token or "").strip()
     if not cleaned:
-        raise ValueError("Invite token je povinny.")
+        raise ValueError("Pozývací link je neplatný.")
+    now_dt = utcnow()
+    now_iso = to_iso_z(now_dt)
     with get_connection() as conn:
         invite = conn.execute(
             """
-            SELECT i.organization_id, o.name
+            SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
             FROM organization_invites i
             JOIN organizations o ON o.id = i.organization_id
-            WHERE i.token = ? AND i.revoked_at IS NULL
+            WHERE i.token = ?
             LIMIT 1
             """,
             (cleaned,),
         ).fetchone()
         if not invite:
-            raise ValueError("Invite link je neplatný alebo už neaktívny.")
+            raise ValueError("Pozývací link je neplatný.")
+        invite_row = {
+            "id": invite["id"],
+            "organization_id": invite["organization_id"],
+            "token": invite["token"],
+            "created_at": invite["created_at"],
+            "expires_at": invite["expires_at"],
+            "revoked_at": invite["revoked_at"],
+            "used_at": invite["used_at"],
+            "used_by_user_id": invite["used_by_user_id"],
+        }
+        invite_status = _invite_status_from_row(invite_row, now_dt)
+        if invite_status == "expired":
+            raise ValueError("Pozývací link už vypršal.")
+        if invite_status == "revoked":
+            raise ValueError("Pozývací link bol zrušený.")
+        if invite_status == "used":
+            raise ValueError("Pozývací link už bol použitý.")
+
         existing = conn.execute(
             """
             SELECT role
@@ -616,25 +694,42 @@ def accept_org_invite(token: str, user_id: str) -> dict:
             """,
             (invite["organization_id"], user_id),
         ).fetchone()
+
+        updated = conn.execute(
+            """
+            UPDATE organization_invites
+            SET used_at = ?, used_by_user_id = ?
+            WHERE id = ?
+              AND used_at IS NULL
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (now_iso, user_id, invite["id"], now_iso),
+        )
+        if updated.rowcount == 0:
+            raise ValueError("Pozývací link už bol použitý.")
+
         if existing:
+            conn.commit()
             return {
                 "org": {"id": invite["organization_id"], "name": invite["name"]},
                 "membership": {"role": normalize_org_role(existing["role"]), "already_member": True},
+                "invite": {"status": "used", "used_at": now_iso, "used_by_user_id": user_id},
             }
-        now = to_iso_z(utcnow())
+
         conn.execute(
             """
             INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
             VALUES (?, ?, ?, 'member', ?)
             """,
-            (str(uuid4()), invite["organization_id"], user_id, now),
+            (str(uuid4()), invite["organization_id"], user_id, now_iso),
         )
         conn.commit()
     return {
         "org": {"id": invite["organization_id"], "name": invite["name"]},
         "membership": {"role": "member", "already_member": False},
+        "invite": {"status": "used", "used_at": now_iso, "used_by_user_id": user_id},
     }
-
 
 def normalize_org_role(role: str | None) -> str:
     cleaned = str(role or "").strip().lower()
@@ -657,3 +752,4 @@ def resolve_accessible_org_id(user_id: str, org_id: str | None) -> str:
         return str(orgs[0]["id"])
     raise ValueError("Vyber aktivnu organizaciu.")
 logger = logging.getLogger(__name__)
+

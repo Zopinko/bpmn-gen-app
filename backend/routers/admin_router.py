@@ -66,6 +66,7 @@ def list_admin_users():
                 u.email_verified_at,
                 u.created_at,
                 u.last_login_at,
+                GROUP_CONCAT(DISTINCT o.name) AS org_names,
                 COUNT(DISTINCT om.organization_id) AS org_count,
                 COUNT(DISTINCT CASE
                     WHEN s.revoked_at IS NULL THEN s.id
@@ -73,6 +74,7 @@ def list_admin_users():
                 END) AS session_count
             FROM users u
             LEFT JOIN organization_members om ON om.user_id = u.id
+            LEFT JOIN organizations o ON o.id = om.organization_id
             LEFT JOIN auth_sessions s ON s.user_id = u.id
             GROUP BY u.id, u.email, u.role, u.email_verified_at, u.created_at, u.last_login_at
             ORDER BY u.created_at DESC
@@ -87,6 +89,7 @@ def list_admin_users():
             "created_at": row["created_at"],
             "last_login_at": row["last_login_at"],
             "org_count": int(row["org_count"] or 0),
+            "org_names": [name.strip() for name in str(row["org_names"] or "").split(",") if name.strip()],
             "session_count": int(row["session_count"] or 0),
         }
         for row in rows

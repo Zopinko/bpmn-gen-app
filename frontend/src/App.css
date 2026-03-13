@@ -4995,6 +4995,47 @@ body {
   margin-top: 6px;
 }
 
+.organization-invite-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.organization-chip.organization-chip--invite {
+  font-size: 0.74rem;
+}
+
+.organization-chip.organization-chip--invite.is-active {
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.28);
+}
+
+.organization-chip.organization-chip--invite.is-expired {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fcd34d;
+  background: rgba(120, 53, 15, 0.32);
+}
+
+.organization-chip.organization-chip--invite.is-revoked {
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: #cbd5e1;
+  background: rgba(51, 65, 85, 0.45);
+}
+
+.organization-chip.organization-chip--invite.is-used {
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  color: #bfdbfe;
+  background: rgba(30, 58, 138, 0.34);
+}
+
+.organization-chip.organization-chip--invite.is-missing {
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  color: #cbd5e1;
+  background: rgba(30, 41, 59, 0.42);
+}
+
 .organization-owner-tools {
   margin-top: 10px;
   padding-top: 10px;

@@ -1,9 +1,26 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { acceptOrgInvite } from "../api/wizard";
 
 const PENDING_INVITE_STORAGE_KEY = "PENDING_ORG_INVITE_TOKEN";
+
+function mapInviteErrorMessage(rawMessage) {
+  const message = String(rawMessage || "").toLowerCase();
+  if (message.includes("vypršal")) {
+    return "Táto pozvánka už vypršala. Požiadaj ownera o novú pozvánku.";
+  }
+  if (message.includes("zrušen")) {
+    return "Táto pozvánka bola zrušená. Požiadaj ownera o nový link.";
+  }
+  if (message.includes("použit")) {
+    return "Táto pozvánka už bola použitá a nie je možné ju použiť znovu.";
+  }
+  if (message.includes("neplat")) {
+    return "Pozývací link je neplatný.";
+  }
+  return "Nepodarilo sa prijať pozvánku do organizácie.";
+}
 
 function JoinOrgPage() {
   const navigate = useNavigate();
@@ -14,7 +31,7 @@ function JoinOrgPage() {
     let isCancelled = false;
     const run = async () => {
       if (!token) {
-        setStatus({ loading: false, error: "Neplatný invite link.", message: "" });
+        setStatus({ loading: false, error: "Pozývací link je neplatný.", message: "" });
         return;
       }
       setStatus({ loading: true, error: "", message: "" });
@@ -28,14 +45,17 @@ function JoinOrgPage() {
           window.localStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
           window.dispatchEvent(new Event("active-org-changed"));
         }
+        const alreadyMember = Boolean(response?.membership?.already_member);
         setStatus({
           loading: false,
           error: "",
-          message: `Organizácia ${org?.name || org?.id || ""} bola úspešne pripojená.`,
+          message: alreadyMember
+            ? `Už si členom organizácie ${org?.name || org?.id || ""}.`
+            : `Organizácia ${org?.name || org?.id || ""} bola úspešne pripojená.`,
         });
         window.setTimeout(() => {
           navigate("/", { replace: true });
-        }, 900);
+        }, 1100);
       } catch (error) {
         if (isCancelled) return;
         if (error?.status === 401) {
@@ -47,7 +67,7 @@ function JoinOrgPage() {
         }
         setStatus({
           loading: false,
-          error: error?.message || "Nepodarilo sa prijať invite link.",
+          error: mapInviteErrorMessage(error?.message),
           message: "",
         });
       }
@@ -61,8 +81,8 @@ function JoinOrgPage() {
   return (
     <section className="auth-page">
       <div className="auth-card">
-        <h1>Pridanie do organizácie</h1>
-        {status.loading ? <p>Spracúvam invite link...</p> : null}
+        <h1>Pozvánka do organizácie</h1>
+        {status.loading ? <p>Spracúvam pozývací link...</p> : null}
         {status.message ? <p className="auth-message auth-message--success">{status.message}</p> : null}
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
         {!status.loading ? (

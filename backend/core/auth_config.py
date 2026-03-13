@@ -48,6 +48,7 @@ class AuthConfig:
     auth_db_path: str
     password_reset_ttl_seconds: int
     password_reset_url_base: str
+    org_invite_ttl_seconds: int
 
 
 def get_auth_config() -> AuthConfig:
@@ -108,4 +109,5 @@ def get_auth_config() -> AuthConfig:
         auth_db_path=_env("AUTH_DB_PATH", "data/auth.db"),
         password_reset_ttl_seconds=_env_int("PASSWORD_RESET_TTL_SECONDS", 60 * 30),
         password_reset_url_base=password_reset_url_base,
+        org_invite_ttl_seconds=max(60, _env_int("ORG_INVITE_TTL_HOURS", 24 * 7) * 60 * 60),
     )

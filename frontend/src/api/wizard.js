@@ -385,6 +385,9 @@ export async function createOrg(name) {
 export async function getOrgInviteLink(orgId, options = {}) {
   const query = new URLSearchParams();
   if (options?.regenerate) query.set("regenerate", "true");
+  if (typeof options?.createIfMissing === "boolean") {
+    query.set("create_if_missing", options.createIfMissing ? "true" : "false");
+  }
   const response = await fetch(
     `${API_BASE}/api/orgs/${encodeURIComponent(orgId)}/invite-link${query.toString() ? `?${query.toString()}` : ""}`,
     {
