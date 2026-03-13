@@ -14,9 +14,9 @@ from services.model_storage import (
     save_model as storage_save_model,
 )
 try:
-    from services.project_notes_storage import load_project_notes, save_project_notes
+    from services.project_notes_storage import has_legacy_global_notes, load_project_notes, save_project_notes
 except ModuleNotFoundError:
-    from backend.services.project_notes_storage import load_project_notes, save_project_notes
+    from backend.services.project_notes_storage import has_legacy_global_notes, load_project_notes, save_project_notes
 from schemas.engine import validate_payload, validate_xml
 from services.engine_normalizer import find_gateway_warnings
 from schemas.wizard import (
@@ -30,7 +30,7 @@ from schemas.wizard import (
 )
 import logging
 from auth.deps import require_user
-from auth.service import AuthUser
+from auth.service import AuthUser, resolve_accessible_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -226,19 +226,41 @@ def rename_wizard_model(
     return updated
 
 
+def _resolve_notes_org_id(current_user: AuthUser, org_id: str | None) -> str:
+    try:
+        return resolve_accessible_org_id(current_user.id, org_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/wizard/project-notes")
-def get_project_notes():
-    notes = load_project_notes()
-    return {"notes": notes}
+def get_project_notes(
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_notes_org_id(current_user, org_id)
+    notes = load_project_notes(resolved_org_id)
+    return {
+        "notes": notes,
+        "org_id": resolved_org_id,
+        "legacy_global_notes_present": has_legacy_global_notes(),
+    }
 
 
 @router.put("/wizard/project-notes")
-def put_project_notes(payload: dict = Body(...)):
+def put_project_notes(
+    payload: dict = Body(...),
+    current_user: AuthUser = Depends(require_user),
+):
     notes = payload.get("notes") if isinstance(payload, dict) else None
     if not isinstance(notes, list):
         raise HTTPException(status_code=400, detail="notes je povinne a musi byt list.")
-    saved = save_project_notes(notes)
-    return {"notes": saved}
+    org_id = payload.get("org_id") if isinstance(payload, dict) else None
+    resolved_org_id = _resolve_notes_org_id(current_user, org_id)
+    saved = save_project_notes(resolved_org_id, notes)
+    return {"notes": saved, "org_id": resolved_org_id}
 
 
 @router.post("/generate")

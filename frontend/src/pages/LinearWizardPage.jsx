@@ -3113,7 +3113,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (notesOpen) {
       void fetchProjectNotes();
     }
-  }, [notesOpen]);
+  }, [notesOpen, activeOrgId]);
 
   useEffect(() => {
     if (!isResizingSidebar) return;
@@ -3748,10 +3748,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const fetchProjectNotes = async () => {
+    const scopedOrgId = String(activeOrgId || "").trim();
+    if (!scopedOrgId) {
+      setProjectNotes([]);
+      setProjectNotesError(null);
+      setProjectNotesLoading(false);
+      setEditingNoteId(null);
+      setEditingNoteText("");
+      return;
+    }
     setProjectNotesLoading(true);
     setProjectNotesError(null);
     try {
-      const resp = await getProjectNotes();
+      const resp = await getProjectNotes(scopedOrgId);
       const incoming = Array.isArray(resp?.notes) ? resp.notes.map(normalizeNote) : [];
       setProjectNotes(incoming);
       setEditingNoteId(null);
@@ -3765,12 +3774,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const persistProjectNotes = async (nextNotes) => {
+    const scopedOrgId = String(activeOrgId || "").trim();
+    if (!scopedOrgId) {
+      setProjectNotesError("Najprv si zvoľ aktívnu organizáciu.");
+      return;
+    }
     const normalized = (nextNotes || []).map(normalizeNote);
     setProjectNotes(normalized);
     setProjectNotesSaving(true);
     setProjectNotesError(null);
     try {
-      const resp = await saveProjectNotes(normalized);
+      const resp = await saveProjectNotes(normalized, scopedOrgId);
       if (Array.isArray(resp?.notes)) {
         setProjectNotes(resp.notes.map(normalizeNote));
       }
@@ -8113,7 +8127,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       ) : (
                         <>
                           <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
-                            Začať nový model
+                            Vytvoriť mapu procesu
                           </button>
                           <button className="btn" type="button" onClick={openModels}>
                             Pokračovať v rozpracovanom
@@ -8124,7 +8138,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     <div className="wizard-welcome__hint">
                       {isDemoMode
                         ? "Demo je dočasné a po obnovení stránky sa vymaže."
-                        : "Tip: Rozpracované modely nájdeš v sekcii Uložené modely."}
+                        : (
+                          <>
+                            <div>Tip: Rozpracované modely nájdeš v sekcii Uložené modely.</div>
+                            <div>Tip: napíš proces bežným jazykom. My ho premeníme na BPMN mapu.</div>
+                          </>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -8836,29 +8855,42 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="project-notes-body">
                 {projectNotesError ? <div className="wizard-error">{projectNotesError}</div> : null}
-                <label className="wizard-field">
-                  <span>Nová poznámka</span>
-                  <textarea
-                    className="project-notes-textarea project-notes-textarea--draft"
-                    value={noteDraft}
-                    onChange={(e) => setNoteDraft(e.target.value)}
-                    placeholder={"Dohody, otvorené otázky, rozhodnutia...\n- \n- "}
-                    rows={6}
-                  />
-                </label>
-                <div className="project-notes-actions">
-                  <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
-                    Pridat poznamku
-                  </button>
-                  {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladam...</div> : null}
+                <div className="project-note-meta" style={{ marginBottom: 8 }}>
+                  Organizácia: {activeOrgName || "Nezvolená"}
                 </div>
+                {activeOrgId ? (
+                  <>
+                    <label className="wizard-field">
+                      <span>Nová poznámka</span>
+                      <textarea
+                        className="project-notes-textarea project-notes-textarea--draft"
+                        value={noteDraft}
+                        onChange={(e) => setNoteDraft(e.target.value)}
+                        placeholder={"Dohody, otvorené otázky, rozhodnutia...\n- \n- "}
+                        rows={6}
+                      />
+                    </label>
+                    <div className="project-notes-actions">
+                      <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
+                        Pridať poznámku
+                      </button>
+                      {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladám...</div> : null}
+                    </div>
+                  </>
+                ) : (
+                  <div className="project-notes-empty" style={{ marginBottom: 8 }}>
+                    Poznámky sú viazané na organizáciu. Najprv si zvoľ aktívnu organizáciu.
+                  </div>
+                )}
 
                 <div className="project-notes-list">
                   {projectNotesLoading ? (
                     <div className="project-notes-empty">Načítavam poznámky...</div>
+                  ) : !activeOrgId ? (
+                    <div className="project-notes-empty">Po výbere organizácie sa zobrazia jej poznámky.</div>
                   ) : projectNotes.length === 0 ? (
                     <div className="project-notes-empty">
-                      Zatiaľ žiadne poznámky. Pridaj prvú vyššie.
+                      Táto organizácia zatiaľ nemá poznámky. Pridaj prvú vyššie.
                     </div>
                   ) : (
                     projectNotes.map((note) => (

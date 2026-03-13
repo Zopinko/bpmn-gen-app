@@ -168,8 +168,9 @@ export async function renameWizardModel(modelId, name) {
   return response.json();
 }
 
-export async function getProjectNotes() {
-  const response = await fetch(`${API_BASE}/wizard/project-notes`, {
+export async function getProjectNotes(orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/wizard/project-notes${query}`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -179,11 +180,13 @@ export async function getProjectNotes() {
   return response.json();
 }
 
-export async function saveProjectNotes(notes) {
+export async function saveProjectNotes(notes, orgId) {
+  const payload = { notes };
+  if (orgId) payload.org_id = orgId;
   const response = await fetch(`${API_BASE}/wizard/project-notes`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ notes }),
+    body: JSON.stringify(payload),
     credentials: "include",
   });
   if (!response.ok) {
