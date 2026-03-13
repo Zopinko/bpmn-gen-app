@@ -12,8 +12,12 @@ from auth.deps import is_admin_panel_available, is_super_admin_user
 from auth.service import (
     AuthUser,
     authenticate_user,
+    change_password,
+    confirm_password_reset,
     create_session_for_user,
     find_user_by_session,
+    get_user_primary_org,
+    request_password_reset,
     register_user,
     revoke_session,
     update_last_login,
@@ -38,6 +42,20 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 def _get_client_ip(request: Request) -> str:
@@ -66,15 +84,30 @@ def _enforce_rate_limit(request: Request, endpoint_key: str, limit: int) -> None
 
 
 def _user_payload(user: AuthUser) -> dict:
+    org = get_user_primary_org(user.id)
     return {
         "id": user.id,
         "email": user.email,
+        "name": None,
+        "org_id": org["id"] if org else None,
+        "org_name": org["name"] if org else None,
         "role": user.role,
         "admin_panel_available": is_admin_panel_available(),
         "is_super_admin": is_super_admin_user(user),
         "email_verified": bool(user.email_verified_at),
         "created_at": user.created_at,
     }
+
+
+def _require_authenticated_user(request: Request) -> AuthUser:
+    cfg = get_auth_config()
+    token = request.cookies.get(cfg.cookie_name)
+    if not token:
+        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
+    user = find_user_by_session(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
+    return user
 
 
 def _request_host(request: Request) -> str:
@@ -183,18 +216,35 @@ def logout(request: Request, response: Response):
 
 @router.get("/me")
 def me(request: Request):
-    cfg = get_auth_config()
-    token = request.cookies.get(cfg.cookie_name)
-    logger.warning(
-        "Auth /me cookie lookup: expected_name=%s present=%s cookies_seen=%s",
-        cfg.cookie_name,
-        bool(token),
-        ",".join(sorted(request.cookies.keys())) if request.cookies else "<none>",
-    )
-    if not token:
-        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
-    user = find_user_by_session(token)
-    logger.warning("Auth /me session lookup result: found=%s", bool(user))
-    if not user:
-        raise HTTPException(status_code=401, detail="Pouzivatel nie je prihlaseny.")
+    user = _require_authenticated_user(request)
     return {"user": _user_payload(user)}
+
+
+@router.post("/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="forgot_password", limit=5)
+    request_password_reset(payload.email)
+    return {
+        "message": "If an account with that email exists, we sent a password reset link.",
+    }
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetPasswordRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="reset_password", limit=10)
+    try:
+        confirm_password_reset(payload.token, payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"message": "Password was reset successfully."}
+
+
+@router.post("/change-password")
+def change_password_logged_in(payload: ChangePasswordRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="change_password", limit=10)
+    user = _require_authenticated_user(request)
+    try:
+        change_password(user.id, payload.current_password, payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"message": "Password changed successfully."}

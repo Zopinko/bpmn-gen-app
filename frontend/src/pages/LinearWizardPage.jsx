@@ -15,16 +15,12 @@ import {
   renameWizardModel,
   pushSandboxModelToOrg,
   listMyOrgs,
-  createOrg,
-  getOrgInviteLink,
   loadOrgModel,
   listOrgModels,
   createOrgModelVersion,
   saveOrgModel,
   getProjectNotes,
   saveProjectNotes,
-  addOrgMember,
-  listOrgMembers,
   mentorReview,
   mentorApply,
 } from "../api/wizard";
@@ -1219,32 +1215,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [myOrgsEmpty, setMyOrgsEmpty] = useState(null);
   const [modelsSearch, setModelsSearch] = useState("");
   const renderModeRef = useRef("full");
-  const [orgsModalOpen, setOrgsModalOpen] = useState(false);
   const [myOrgs, setMyOrgs] = useState([]);
-  const [myOrgsLoading, setMyOrgsLoading] = useState(false);
-  const [myOrgsError, setMyOrgsError] = useState(null);
   const [activeOrgId, setActiveOrgId] = useState(() => {
     if (typeof window === "undefined") return null;
     return window.localStorage.getItem("ACTIVE_ORG_ID");
   });
   const [activeOrgName, setActiveOrgName] = useState("");
   const [activeOrgRole, setActiveOrgRole] = useState("");
-  const [newOrgName, setNewOrgName] = useState("");
-  const [addMemberEmail, setAddMemberEmail] = useState("");
-  const [addMemberOrgId, setAddMemberOrgId] = useState("");
-  const [addMemberRole, setAddMemberRole] = useState("owner");
-  const [addMemberLoading, setAddMemberLoading] = useState(false);
-  const [addMemberError, setAddMemberError] = useState(null);
-  const [addMemberInfo, setAddMemberInfo] = useState(null);
-  const [inviteOrgId, setInviteOrgId] = useState("");
-  const [inviteLink, setInviteLink] = useState("");
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteError, setInviteError] = useState(null);
-  const [inviteCopied, setInviteCopied] = useState(false);
-  const [orgMembersOpen, setOrgMembersOpen] = useState(false);
-  const [orgMembers, setOrgMembers] = useState([]);
-  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
-  const [orgMembersError, setOrgMembersError] = useState(null);
   const [railSections, setRailSections] = useState({
     org: false,
     process: false,
@@ -3329,7 +3306,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setStoryOpen(false);
     setOrgOpen(false);
     setModelsOpen(false);
-    setOrgsModalOpen(false);
   }, [isDemoMode]);
 
   useEffect(() => {
@@ -4879,7 +4855,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setError("Nie je čo uložiť – vygeneruj alebo naimportuj diagram.");
       return;
     }
-    const canEditOrg = modelSource?.kind !== "org" || activeOrgRole === "owner";
+    const normalizedOrgRole = String(activeOrgRole || "").toLowerCase();
+    const canEditOrg = modelSource?.kind !== "org" || ["owner", "member"].includes(normalizedOrgRole);
     if (modelSource?.kind === "org" && !canEditOrg) {
       setInfo("Nemáš právo upravovať org model.");
       return;
@@ -6267,41 +6244,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDemoMode]);
 
-  const selectedInviteOrgRole = useMemo(() => {
-    if (!inviteOrgId) return "";
-    const org = myOrgs.find((item) => String(item.id) === String(inviteOrgId));
-    return String(org?.role || "").toLowerCase();
-  }, [inviteOrgId, myOrgs]);
-
-  const hasAnyAdminOrg = useMemo(
-    () => myOrgs.some((org) => ["owner", "admin"].includes(String(org?.role || "").toLowerCase())),
-    [myOrgs],
-  );
-  const adminCapableOrgs = useMemo(
-    () => myOrgs.filter((org) => ["owner", "admin"].includes(String(org?.role || "").toLowerCase())),
-    [myOrgs],
-  );
-
-  const isActiveOrgAdmin = useMemo(
-    () => ["owner", "admin"].includes(String(activeOrgRole || "").toLowerCase()),
-    [activeOrgRole],
-  );
-
-  useEffect(() => {
-    if (!orgsModalOpen) return;
-    const fallback = activeOrgId || (myOrgs.length ? myOrgs[0].id : "");
-    const fallbackInvite =
-      activeOrgId && adminCapableOrgs.find((org) => String(org.id) === String(activeOrgId))
-        ? activeOrgId
-        : (adminCapableOrgs[0]?.id || "");
-    if (!addMemberOrgId && fallback) {
-      setAddMemberOrgId(fallback);
-    }
-    if (!inviteOrgId && fallbackInvite) {
-      setInviteOrgId(fallbackInvite);
-    }
-  }, [orgsModalOpen, activeOrgId, myOrgs, addMemberOrgId, inviteOrgId, adminCapableOrgs]);
-
   const fetchModels = async () => {
     if (isDemoMode) {
       setModels([]);
@@ -6510,51 +6452,28 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setMyOrgsEmpty(null);
       return;
     }
-    setMyOrgsLoading(true);
-    setMyOrgsError(null);
     try {
       const orgs = await listMyOrgs();
       setMyOrgs(orgs || []);
       applyActiveOrgFromList(orgs || [], preferredId);
     } catch (e) {
-      setMyOrgsError(e?.message || "Nepodarilo sa nacitat organizacie.");
       setMyOrgs([]);
       setMyOrgsEmpty(null);
-    } finally {
-      setMyOrgsLoading(false);
     }
   };
 
-  const handleCreateOrg = async () => {
-    const name = window.prompt("Nazov organizacie");
-    if (name === null) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    setModelsError(null);
-    setInfo(null);
-    try {
-      const created = await createOrg(trimmed);
-      setInfo("Organizacia bola vytvorena.");
-      await refreshMyOrgs(created?.id || null);
-    } catch (e) {
-      setModelsError(e?.message || "Nepodarilo sa vytvorit organizaciu.");
-    }
-  };
-
-  const openOrgsModal = async () => {
+  const openOrgsModal = () => {
     if (isDemoMode) {
       setInfo("DEMO režim: organizácie sú vypnuté.");
       return;
     }
-    setOrgsModalOpen(true);
-    setInviteError(null);
-    setInviteCopied(false);
-    await refreshMyOrgs(activeOrgId);
+    navigate("/organization");
   };
 
   const handleEnableOrgEdit = () => {
     if (modelSource?.kind !== "org") return;
-    if (activeOrgRole !== "owner") {
+    const normalizedOrgRole = String(activeOrgRole || "").toLowerCase();
+    if (!["owner", "member"].includes(normalizedOrgRole)) {
       setInfo("Nemáš právo upravovať org model.");
       return;
     }
@@ -6570,149 +6489,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleCancelEnableOrgEdit = () => {
     setOrgEditConfirmOpen(false);
   };
-
-  const handleSelectOrg = async (org) => {
-    if (!org?.id) return;
-    setActiveOrgId(org.id);
-    setActiveOrgName(org?.name || "");
-    setActiveOrgRole(org?.role || "");
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("ACTIVE_ORG_ID", org.id);
-      window.localStorage.setItem("ACTIVE_ORG_NAME", org?.name || "");
-      window.dispatchEvent(new Event("active-org-changed"));
-    }
-    setInfo("Aktivna organizacia bola zmenena.");
-    setMyOrgsEmpty(false);
-    setOrgModelsOpen(false);
-    if (orgOpen) {
-      await refreshOrgTree(org.id);
-    }
-  };
-
-  const handleCreateOrgInline = async () => {
-    const trimmed = newOrgName.trim();
-    if (!trimmed) return;
-    setMyOrgsError(null);
-    setInfo(null);
-    try {
-      const created = await createOrg(trimmed);
-      setNewOrgName("");
-      setInfo("Organizacia bola vytvorena.");
-      await refreshMyOrgs(created?.id || null);
-      if (created?.id) {
-        setActiveOrgId(created.id);
-        setActiveOrgName(created?.name || "");
-        setActiveOrgRole("owner");
-      }
-    } catch (e) {
-      setMyOrgsError(e?.message || "Nepodarilo sa vytvorit organizaciu.");
-    }
-  };
-
-  const handleAddOrgMember = async () => {
-    const email = addMemberEmail.trim();
-    const orgId = addMemberOrgId || activeOrgId;
-    if (!email || !orgId) return;
-    setAddMemberLoading(true);
-    setAddMemberError(null);
-    setAddMemberInfo(null);
-    try {
-      const resp = await addOrgMember(email, orgId, addMemberRole);
-      if (resp?.already_member) {
-        setAddMemberInfo("Pouzivatel uz je clen organizacie.");
-      } else {
-        setAddMemberInfo("Pouzivatel bol pridany do organizacie.");
-      }
-      setAddMemberEmail("");
-      await refreshMyOrgs(activeOrgId);
-    } catch (e) {
-      setAddMemberError(e?.message || "Nepodarilo sa pridat pouzivatela.");
-    } finally {
-      setAddMemberLoading(false);
-    }
-  };
-
-  const handleGetInviteLink = async (regenerate = false) => {
-    const orgId = inviteOrgId || activeOrgId;
-    if (!orgId) {
-      setInviteError("Vyber organizaciu.");
-      return;
-    }
-    setInviteLoading(true);
-    setInviteError(null);
-    setInviteCopied(false);
-    try {
-      const response = await getOrgInviteLink(orgId, { regenerate });
-      const token = response?.token || "";
-      if (!token) {
-        throw new Error("Nepodarilo sa získať invite token.");
-      }
-      const origin = typeof window !== "undefined" ? window.location.origin : "";
-      setInviteLink(`${origin}/join-org/${token}`);
-    } catch (e) {
-      setInviteError(e?.message || "Nepodarilo sa získať invite link.");
-      setInviteLink("");
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const handleCopyInviteLink = async () => {
-    if (!inviteLink) return;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(inviteLink);
-      } else {
-        const textArea = document.createElement("textarea");
-        textArea.value = inviteLink;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand("copy");
-        textArea.remove();
-      }
-      setInviteCopied(true);
-      window.setTimeout(() => setInviteCopied(false), 1600);
-    } catch {
-      setInviteError("Kopírovanie zlyhalo. Skús skopírovať link manuálne.");
-    }
-  };
-
-  const handleToggleOrgMembers = async () => {
-    const nextOpen = !orgMembersOpen;
-    setOrgMembersOpen(nextOpen);
-    if (!nextOpen) return;
-    if (!activeOrgId) {
-      setOrgMembers([]);
-      setOrgMembersError("Najprv si vyber organizaciu.");
-      return;
-    }
-    setOrgMembersLoading(true);
-    setOrgMembersError(null);
-    try {
-      const members = await listOrgMembers(activeOrgId);
-      setOrgMembers(members || []);
-    } catch (e) {
-      setOrgMembersError(e?.message || "Nepodarilo sa nacitat clenov organizacie.");
-      setOrgMembers([]);
-    } finally {
-      setOrgMembersLoading(false);
-    }
-  };
-
-  const handleDeactivateOrg = () => {
-    setActiveOrgId(null);
-    setActiveOrgName("");
-    setActiveOrgRole("");
-    setOrgTree(null);
-    setOrgError("Najprv si vyber alebo vytvor organizaciu.");
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("ACTIVE_ORG_ID");
-      window.localStorage.removeItem("ACTIVE_ORG_NAME");
-      window.dispatchEvent(new Event("active-org-changed"));
-    }
-    setInfo("Aktivna organizacia bola zrusena.");
-  };
-
 
   const handleExportBpmn = async () => {
     if (isDemoMode) {
@@ -6772,6 +6548,31 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       fileInputRef.current.click();
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const syncActiveOrgFromStorage = () => {
+      const nextId = window.localStorage.getItem("ACTIVE_ORG_ID");
+      const nextName = window.localStorage.getItem("ACTIVE_ORG_NAME") || "";
+      setActiveOrgId(nextId || null);
+      setActiveOrgName(nextName);
+      if (!nextId) {
+        setActiveOrgRole("");
+        return;
+      }
+      const matched = myOrgs.find((org) => String(org.id) === String(nextId));
+      if (matched) {
+        setActiveOrgRole(matched.role || "");
+      }
+    };
+    syncActiveOrgFromStorage();
+    window.addEventListener("active-org-changed", syncActiveOrgFromStorage);
+    window.addEventListener("storage", syncActiveOrgFromStorage);
+    return () => {
+      window.removeEventListener("active-org-changed", syncActiveOrgFromStorage);
+      window.removeEventListener("storage", syncActiveOrgFromStorage);
+    };
+  }, [myOrgs]);
 
   const handleImportChange = async (event) => {
     if (isDemoMode) {
@@ -7097,7 +6898,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {orgOpen ? "Skryť model organizacie" : "Model organizacie"}
               </button>
               <button type="button" className="process-card-toggle" onClick={openOrgsModal}>
-                Organizacie
+                Sprava organizacie
               </button>
             </div>
           ) : null}
@@ -7384,7 +7185,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {modelSource?.kind === "org" ? (
                   <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
                     Režim: {orgReadOnly ? "Len na čítanie" : "Editácia"} (Organizácia)
-                    {orgReadOnly && activeOrgRole === "owner" ? (
+                    {orgReadOnly ? (
                       <button
                         className="btn btn--small"
                         style={{ marginLeft: 8 }}
@@ -7448,7 +7249,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       Aktivna organizacia: {activeOrgId ? activeOrgName || activeOrgId : "Ziadna organizacia"}
                     </span>
                     <button className="btn btn--small" type="button" onClick={openOrgsModal}>
-                      Zmenit
+                      Sprava
                     </button>
                   </div>
                 </div>
@@ -7515,7 +7316,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     Najprv si vyber alebo vytvor organizaciu.
                     <div style={{ marginTop: 6 }}>
                       <button className="btn btn--small" type="button" onClick={openOrgsModal}>
-                        Organizacie
+                        Sprava organizacie
                       </button>
                     </div>
                   </div>
@@ -8157,12 +7958,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div>
                 <div style={{ fontWeight: 600 }}>READ-ONLY režim</div>
                 <div style={{ fontSize: 12, opacity: 0.8 }}>
-                  {activeOrgRole === "owner"
+                  {String(activeOrgRole || "").toLowerCase() === "owner"
                     ? "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."
-                    : "Tento org model je len na čítanie. Novú verziu môžeš publikovať z pieskoviska cez Push do organizácie."}
+                    : "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."}
                 </div>
               </div>
-              {activeOrgRole === "owner" ? (
+              {String(activeOrgRole || "").toLowerCase() === "owner" ||
+              String(activeOrgRole || "").toLowerCase() === "member" ? (
                 <button className="btn btn--small" type="button" onClick={handleEnableOrgEdit}>
                   Upraviť
                 </button>
@@ -8467,8 +8269,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               ) : null}
               {myOrgsEmpty === true ? (
                 <div style={{ marginTop: 8 }}>
-                  <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrg}>
-                    Vytvoriť organizáciu
+                  <button className="btn btn--small btn-primary" type="button" onClick={openOrgsModal}>
+                    Spravovat organizaciu
                   </button>
                 </div>
               ) : null}
@@ -8735,247 +8537,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn" type="button" onClick={closeOrgVersionsModal}>
-                  Zavriet
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {orgsModalOpen ? (
-          <div className="wizard-models-modal" onClick={() => setOrgsModalOpen(false)}>
-            <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
-              <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Organizacie</h3>
-                <div className="wizard-models-tools">
-                  <button className="btn btn--small" type="button" onClick={() => refreshMyOrgs(activeOrgId)} disabled={myOrgsLoading}>
-                    {myOrgsLoading ? "Nacitavam..." : "Obnovit"}
-                  </button>
-                </div>
-              </div>
-              {myOrgsError ? <div className="wizard-error">{myOrgsError}</div> : null}
-              <div style={{ overflow: "auto" }}>
-                <table className="wizard-models-table">
-                  <thead>
-                    <tr>
-                      <th>Nazov</th>
-                      <th>Rola</th>
-                      <th>Stav</th>
-                      <th>Akcia</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {myOrgsLoading ? (
-                      <tr>
-                        <td colSpan={4}>Nacitavam...</td>
-                      </tr>
-                    ) : myOrgs.length ? (
-                      myOrgs.map((org) => {
-                        const isActive = String(org.id) === String(activeOrgId);
-                        return (
-                          <tr key={org.id}>
-                            <td>{org.name || org.id}</td>
-                            <td>{org.role || "-"}</td>
-                            <td>{isActive ? "Aktivna" : "-"}</td>
-                            <td>
-                              <div className="wizard-models-actions">
-                                <button
-                                  className="btn btn--small btn-primary"
-                                  type="button"
-                                  onClick={() => handleSelectOrg(org)}
-                                  disabled={isActive}
-                                >
-                                  {isActive ? "Aktivna" : "Nastavit aktivnu"}
-                                </button>
-                                {isActive ? (
-                                  <button className="btn btn--small btn-danger" type="button" onClick={handleDeactivateOrg}>
-                                    Zrusit aktivnu
-                                  </button>
-                                ) : null}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    ) : (
-                      <tr>
-                        <td colSpan={4}>Zatial nemas ziadnu organizaciu.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              {isActiveOrgAdmin ? (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Invite link do organizácie</div>
-                  {inviteError ? <div className="wizard-error">{inviteError}</div> : null}
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <select
-                      className="wizard-models-search"
-                      value={inviteOrgId}
-                      onChange={(e) => {
-                        setInviteOrgId(e.target.value);
-                        setInviteError(null);
-                        setInviteCopied(false);
-                        setInviteLink("");
-                      }}
-                    >
-                      <option value="">Vyber organizaciu</option>
-                      {adminCapableOrgs.map((org) => (
-                        <option key={org.id} value={org.id}>
-                          {org.name || org.id}
-                        </option>
-                      ))}
-                    </select>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        className="btn btn--small btn-primary"
-                        type="button"
-                        onClick={() => handleGetInviteLink(false)}
-                        disabled={inviteLoading || !inviteOrgId}
-                      >
-                        {inviteLoading ? "Načítavam..." : "Získať link"}
-                      </button>
-                      {(selectedInviteOrgRole === "owner" || selectedInviteOrgRole === "admin") ? (
-                        <button
-                          className="btn btn--small"
-                          type="button"
-                          onClick={() => handleGetInviteLink(true)}
-                          disabled={inviteLoading || !inviteOrgId}
-                        >
-                          Regenerovať
-                        </button>
-                      ) : null}
-                    </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <input
-                        type="text"
-                        className="wizard-models-search"
-                        value={inviteLink}
-                        placeholder="Link sa zobrazí tu..."
-                        readOnly
-                      />
-                      <button
-                        className="btn btn--small"
-                        type="button"
-                        onClick={handleCopyInviteLink}
-                        disabled={!inviteLink}
-                      >
-                        {inviteCopied ? "Skopírované" : "Kopírovať"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {hasAnyAdminOrg ? (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Vytvorit organizaciu</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input
-                      type="text"
-                      className="wizard-models-search"
-                      placeholder="Nazov organizacie"
-                      value={newOrgName}
-                      onChange={(e) => setNewOrgName(e.target.value)}
-                    />
-                    <button className="btn btn--small btn-primary" type="button" onClick={handleCreateOrgInline}>
-                      Vytvorit
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              {isActiveOrgAdmin ? (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Pridat pouzivatela do organizacie</div>
-                  {addMemberError ? <div className="wizard-error">{addMemberError}</div> : null}
-                  {addMemberInfo ? <div className="wizard-info">{addMemberInfo}</div> : null}
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <input
-                      type="email"
-                      className="wizard-models-search"
-                      placeholder="Email pouzivatela"
-                      value={addMemberEmail}
-                      onChange={(e) => setAddMemberEmail(e.target.value)}
-                    />
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <select
-                        className="wizard-models-search"
-                        value={addMemberOrgId}
-                        onChange={(e) => setAddMemberOrgId(e.target.value)}
-                      >
-                        <option value="">Vyber organizaciu</option>
-                        {adminCapableOrgs.map((org) => (
-                          <option key={org.id} value={org.id}>
-                            {org.name || org.id}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="wizard-models-search"
-                        value={addMemberRole}
-                        onChange={(e) => setAddMemberRole(e.target.value)}
-                      >
-                        <option value="owner">owner</option>
-                        <option value="member">member</option>
-                      </select>
-                      <button
-                        className="btn btn--small btn-primary"
-                        type="button"
-                        onClick={handleAddOrgMember}
-                        disabled={addMemberLoading || !addMemberEmail.trim() || !addMemberOrgId}
-                      >
-                        {addMemberLoading ? "Pridavam..." : "Pridat"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>Clenovia aktivnej organizacie</div>
-                  <button
-                    className="btn btn--small"
-                    type="button"
-                    onClick={handleToggleOrgMembers}
-                    disabled={orgMembersLoading}
-                  >
-                    {orgMembersOpen ? "Skryt" : "Zobrazit"}
-                  </button>
-                </div>
-                {orgMembersError ? <div className="wizard-error">{orgMembersError}</div> : null}
-                {orgMembersOpen ? (
-                  <div style={{ overflow: "auto" }}>
-                    <table className="wizard-models-table">
-                      <thead>
-                        <tr>
-                          <th>Email</th>
-                          <th>Rola</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orgMembersLoading ? (
-                          <tr>
-                            <td colSpan={2}>Nacitavam...</td>
-                          </tr>
-                        ) : orgMembers.length ? (
-                          orgMembers.map((member) => (
-                            <tr key={`${member.email}-${member.role}`}>
-                              <td>{member.email}</td>
-                              <td>{member.role || "-"}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={2}>Ziadni clenovia.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                <button className="btn" type="button" onClick={() => setOrgsModalOpen(false)}>
                   Zavriet
                 </button>
               </div>

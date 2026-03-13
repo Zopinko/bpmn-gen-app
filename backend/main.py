@@ -31,10 +31,10 @@ def create_app() -> FastAPI:
         print("Auth DB exists: false | size: 0")
     with get_connection() as conn:
         legacy_org_admin_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM organization_members WHERE role = 'admin'"
+            "SELECT COUNT(*) AS c FROM organization_members WHERE LOWER(role) NOT IN ('owner', 'member')"
         ).fetchone()["c"]
     if legacy_org_admin_count:
-        print(f"WARNING: legacy organization_members.role='admin' rows: {legacy_org_admin_count}")
+        print(f"WARNING: legacy organization_members rows with unsupported role: {legacy_org_admin_count}")
 
     apply_cors(app)
 

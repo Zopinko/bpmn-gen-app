@@ -41,3 +41,24 @@ export function logoutAuth() {
 export function getMe() {
   return request("/api/auth/me", { method: "GET" });
 }
+
+export function requestPasswordReset(payload) {
+  return request("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function resetPassword(payload) {
+  return request("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function changePassword(payload) {
+  return request("/api/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

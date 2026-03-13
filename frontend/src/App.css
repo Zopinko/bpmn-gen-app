@@ -228,6 +228,11 @@ body {
   padding: 6px 10px;
 }
 
+.app-nav__profile {
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
 .app-shell__body {
   flex: 1;
   min-height: 0;
@@ -4693,6 +4698,21 @@ body {
   cursor: not-allowed;
 }
 
+.auth-link-row {
+  margin: 0;
+  text-align: right;
+  font-size: 0.85rem;
+}
+
+.auth-link-row a {
+  color: #93c5fd;
+  text-decoration: none;
+}
+
+.auth-link-row a:hover {
+  text-decoration: underline;
+}
+
 .auth-message {
   margin: 2px 0;
   font-size: 0.88rem;
@@ -4710,6 +4730,294 @@ body {
   margin: 4px 0 0;
   color: #9ca3af;
   font-size: 0.9rem;
+}
+
+.account-page {
+  min-height: 100%;
+  display: grid;
+  gap: 16px;
+  justify-content: center;
+  align-content: center;
+  padding: 24px;
+  background: #05070c;
+}
+
+.account-card {
+  width: min(520px, 100%);
+}
+
+.account-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-card-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-nav__link-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.account-card-head h1 {
+  margin: 0;
+}
+
+.auth-card .account-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 0;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: transparent;
+  color: #e5e7eb;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.auth-card .account-section-toggle:hover {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.auth-card .account-section-toggle:focus-visible {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+}
+
+.account-section-toggle h1 {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.account-section-toggle__icon {
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid #9ca3af;
+  border-bottom: 2px solid #9ca3af;
+  transform: rotate(45deg);
+  margin-right: 4px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.account-section-toggle.is-open .account-section-toggle__icon {
+  transform: rotate(225deg);
+  margin-top: 4px;
+}
+
+.account-section-toggle.is-open {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.account-password-form {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-info-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.account-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.account-info-row span {
+  color: #9ca3af;
+  font-size: 0.88rem;
+}
+
+.account-info-row strong {
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  word-break: break-all;
+  text-align: right;
+}
+
+.organization-page {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 960px);
+  gap: 16px;
+  justify-content: center;
+  align-content: start;
+  padding: 24px;
+  background: #05070c;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.organization-card {
+  width: 100%;
+  gap: 12px;
+}
+
+.organization-card h2 {
+  margin: 0;
+  font-size: 1.02rem;
+  color: #e5e7eb;
+}
+
+.organization-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #cbd5e1;
+}
+
+.organization-active {
+  display: grid;
+  gap: 8px;
+}
+
+.organization-hint {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.organization-form {
+  display: grid;
+  gap: 10px;
+}
+
+.organization-inline-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.organization-remove-member-btn {
+  background: #b91c1c !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.organization-remove-member-btn:hover:not(:disabled) {
+  background: #991b1b !important;
+  border-color: #b91c1c !important;
+}
+
+.organization-hero .account-card-head {
+  align-items: flex-start;
+}
+
+.organization-intro {
+  margin: 6px 0 0;
+  color: #93a3ba;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  max-width: 650px;
+}
+
+.organization-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.organization-section-subtle {
+  color: #93a3ba;
+  font-size: 0.86rem;
+  text-align: right;
+}
+
+.organization-active-card {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.28);
+}
+
+.organization-active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #bae6fd;
+  background: rgba(14, 116, 144, 0.22);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.organization-active-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.organization-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.organization-chip.is-owned {
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: #bbf7d0;
+  background: rgba(21, 128, 61, 0.18);
+}
+
+.organization-chip.is-joined {
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  color: #dbeafe;
+  background: rgba(51, 65, 85, 0.34);
+}
+
+.organization-inline-note {
+  margin-top: 6px;
+}
+
+.organization-owner-tools {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(51, 65, 85, 0.6);
+}
+
+.organization-info-box {
+  border: 1px solid rgba(100, 116, 139, 0.4);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.45);
+  padding: 10px 12px;
+}
+
+@media (max-width: 760px) {
+  .organization-section-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .organization-section-subtle {
+    text-align: left;
+  }
 }
 
 .map-viewer__canvas .djs-connection.dragging .djs-visual > path,

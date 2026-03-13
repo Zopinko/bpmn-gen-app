@@ -6,6 +6,10 @@ import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import AccountPage from "./pages/AccountPage";
+import OrganizationPage from "./pages/OrganizationPage";
 import JoinOrgPage from "./pages/JoinOrgPage";
 import AdminPanelPage from "./pages/AdminPanelPage";
 import "./App.css";
@@ -176,11 +180,16 @@ function AppLayout() {
                   <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
                   {activeOrgLabel ? (
                     <span className="app-nav__auth-status">Aktivna organizacia: {activeOrgLabel}</span>
-                  ) : null}
+                  ) : (
+                    <span className="app-nav__auth-status">Zatial nemas aktivnu organizaciu</span>
+                  )}
                 </div>
-                <button type="button" className="btn app-nav__logout" onClick={handleLogout} disabled={authState.loading}>
-                  Odhlasit
-                </button>
+                <Link to="/organization" className="btn app-nav__profile">
+                  Organizacia
+                </Link>
+                <Link to="/account" className="btn app-nav__profile">
+                  Profil
+                </Link>
               </div>
             )}
           </nav>
@@ -190,6 +199,11 @@ function AppLayout() {
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/demo" element={<LinearWizardPage isDemo />} />
             <Route path="/admin" element={renderSuperAdminOnly(<AdminPanelPage />)} />
+            <Route
+              path="/account"
+              element={renderProtected(<AccountPage currentUser={authState.user} onLogout={handleLogout} />)}
+            />
+            <Route path="/organization" element={renderProtected(<OrganizationPage />)} />
             <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route
@@ -197,6 +211,8 @@ function AppLayout() {
               element={renderPublicOnly(<LoginPage onLoginSuccess={refreshAuthState} />)}
             />
             <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
+            <Route path="/forgot-password" element={renderPublicOnly(<ForgotPasswordPage />)} />
+            <Route path="/reset-password" element={renderPublicOnly(<ResetPasswordPage />)} />
             <Route path="/join-org/:token" element={<JoinOrgPage />} />
             <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

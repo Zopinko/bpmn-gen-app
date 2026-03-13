@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
-from auth.deps import require_primary_org_id, require_user
+from auth.deps import require_user
 from auth.service import (
     accept_org_invite,
     AuthUser,
@@ -17,6 +17,8 @@ from auth.service import (
     is_user_member_of_org,
     list_org_members,
     regenerate_org_invite,
+    remove_org_member_by_email,
+    resolve_accessible_org_id,
 )
 from auth.security import to_iso_z, utcnow
 from services.model_storage import load_model, save_model
@@ -55,6 +57,11 @@ class AcceptOrgInviteResponse(BaseModel):
     membership: dict
 
 
+class RemoveOrgMemberRequest(BaseModel):
+    email: str
+    org_id: str | None = None
+
+
 @router.post("", status_code=201)
 def create_org(payload: CreateOrgRequest, current_user: AuthUser = Depends(require_user)):
     try:
@@ -71,10 +78,18 @@ def list_my_orgs(current_user: AuthUser = Depends(require_user)):
 
 
 @router.get("/current")
-def get_current_org(current_user: AuthUser = Depends(require_user)):
+def get_current_org(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
+    if org_id:
+        resolved_org_id = _resolve_org_id(current_user, org_id)
+        role = get_user_org_role(current_user.id, resolved_org_id)
+        for org in get_user_orgs(current_user.id):
+            if str(org["id"]) == str(resolved_org_id):
+                return {"id": org["id"], "name": org["name"], "role": role}
     org = get_user_primary_org(current_user.id)
     if not org:
         raise HTTPException(status_code=404, detail="Pouzivatel nema organizaciu.")
+    if len(get_user_orgs(current_user.id)) > 1:
+        raise HTTPException(status_code=400, detail="Vyber aktivnu organizaciu.")
     return {"id": org["id"], "name": org["name"], "role": org["role"]}
 
 
@@ -82,8 +97,8 @@ def get_current_org(current_user: AuthUser = Depends(require_user)):
 def add_org_member_endpoint(payload: AddOrgMemberRequest, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, payload.org_id)
     role = (payload.role or "member").strip().lower()
-    if role not in {"owner", "member"}:
-        raise HTTPException(status_code=400, detail="Neplatna rola. Pouzi 'owner' alebo 'member'.")
+    if role != "member":
+        raise HTTPException(status_code=400, detail="Pridanie clena podporuje iba rolu 'member'.")
     current_role = get_user_org_role(current_user.id, org_id)
     if current_role != "owner":
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
@@ -102,10 +117,22 @@ def add_org_member_endpoint(payload: AddOrgMemberRequest, current_user: AuthUser
 @router.get("/members")
 def list_org_members_endpoint(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, org_id)
+    return list_org_members(org_id)
+
+
+@router.post("/members/remove")
+def remove_org_member_endpoint(payload: RemoveOrgMemberRequest, current_user: AuthUser = Depends(require_user)):
+    org_id = _resolve_org_id(current_user, payload.org_id)
     role = get_user_org_role(current_user.id, org_id)
     if role != "owner":
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
-    return list_org_members(org_id)
+    try:
+        result = remove_org_member_by_email(org_id=org_id, email=payload.email)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, **result}
 
 
 @router.get("/{org_id}/invite-link")
@@ -141,11 +168,14 @@ def accept_org_invite_endpoint(token: str, current_user: AuthUser = Depends(requ
 
 
 def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
-    if org_id:
-        if not is_user_member_of_org(user.id, org_id):
-            raise HTTPException(status_code=403, detail="Pouzivatel nema pristup k organizacii.")
-        return org_id
-    return require_primary_org_id(user)
+    try:
+        return resolve_accessible_org_id(user.id, org_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/push-model")
@@ -229,9 +259,6 @@ def update_org_model(
     current_user: AuthUser = Depends(require_user),
 ):
     org_id = _resolve_org_id(current_user, org_id)
-    role = get_user_org_role(current_user.id, org_id)
-    if role != "owner":
-        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
     name = payload.get("name")
     engine_json = payload.get("engine_json")
     diagram_xml = payload.get("diagram_xml")

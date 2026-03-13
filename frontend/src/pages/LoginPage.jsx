@@ -80,6 +80,9 @@ function LoginPage({ onLoginSuccess }) {
           onChange={(event) => setPassword(event.target.value)}
           required
         />
+        <p className="auth-link-row">
+          <Link to="/forgot-password">Zabudnuté heslo?</Link>
+        </p>
 
         <button type="submit" disabled={status.loading}>
           {status.loading ? "Prihlasujem..." : "Prihlasit sa"}

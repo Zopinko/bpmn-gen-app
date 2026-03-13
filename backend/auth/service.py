@@ -6,6 +6,7 @@ import secrets
 from uuid import uuid4
 
 from auth.db import get_connection
+from auth.email_service import send_password_reset_email
 from auth.security import (
     digest_token,
     expires_in,
@@ -98,6 +99,124 @@ def authenticate_user(email: str, password: str) -> AuthUser | None:
     )
 
 
+def change_password(user_id: str, current_password: str, new_password: str) -> None:
+    if not current_password:
+        raise ValueError("Aktualne heslo je povinne.")
+    if not _validate_password(new_password):
+        raise ValueError("Heslo musi mat aspon 8 znakov.")
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Pouzivatel neexistuje.")
+        if not verify_password(row["password_hash"], current_password):
+            raise ValueError("Aktualne heslo nie je spravne.")
+
+        now_iso = to_iso_z(utcnow())
+        conn.execute(
+            """
+            UPDATE users
+            SET password_hash = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (hash_password(new_password), now_iso, user_id),
+        )
+        conn.commit()
+
+
+def request_password_reset(email: str) -> None:
+    normalized_email = normalize_email(email)
+    cfg = get_auth_config()
+    if not _validate_email(normalized_email):
+        return
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, email FROM users WHERE email = ? LIMIT 1",
+            (normalized_email,),
+        ).fetchone()
+        if not row:
+            return
+        reset_token = secrets.token_urlsafe(48)
+        reset_token_hash = digest_token(reset_token)
+        expires_at = expires_in(cfg.password_reset_ttl_seconds)
+        now = to_iso_z(utcnow())
+        conn.execute(
+            """
+            UPDATE users
+            SET password_reset_token_hash = ?, password_reset_expires_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (reset_token_hash, expires_at, now, row["id"]),
+        )
+        conn.commit()
+
+    base_url = cfg.password_reset_url_base.rstrip("/")
+    reset_link = f"{base_url}?token={reset_token}"
+    send_password_reset_email(row["email"], reset_link)
+
+
+def confirm_password_reset(token: str, new_password: str) -> None:
+    cleaned_token = (token or "").strip()
+    if not cleaned_token:
+        raise ValueError("Reset token je povinny.")
+    if not _validate_password(new_password):
+        raise ValueError("Heslo musi mat aspon 8 znakov.")
+
+    token_hash = digest_token(cleaned_token)
+    now = utcnow()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, password_reset_expires_at
+            FROM users
+            WHERE password_reset_token_hash = ?
+            LIMIT 1
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Reset link je neplatny alebo expirovany.")
+
+        expires_at = row["password_reset_expires_at"]
+        if not expires_at or from_iso_z(expires_at) <= now:
+            conn.execute(
+                """
+                UPDATE users
+                SET password_reset_token_hash = NULL, password_reset_expires_at = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (to_iso_z(now), row["id"]),
+            )
+            conn.commit()
+            raise ValueError("Reset link je neplatny alebo expirovany.")
+
+        password_hash = hash_password(new_password)
+        now_iso = to_iso_z(now)
+        conn.execute(
+            """
+            UPDATE users
+            SET password_hash = ?,
+                password_reset_token_hash = NULL,
+                password_reset_expires_at = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (password_hash, now_iso, row["id"]),
+        )
+        conn.execute(
+            """
+            UPDATE auth_sessions
+            SET revoked_at = ?
+            WHERE user_id = ? AND revoked_at IS NULL
+            """,
+            (now_iso, row["id"]),
+        )
+        conn.commit()
+
+
 def update_last_login(user_id: str) -> None:
     now = to_iso_z(utcnow())
     with get_connection() as conn:
@@ -188,6 +307,9 @@ def create_org_with_owner(name: str, user_id: str) -> dict:
     cleaned = name.strip()
     if not cleaned:
         raise ValueError("Nazov organizacie je povinny.")
+    owned_org = get_user_owned_org(user_id)
+    if owned_org:
+        raise ValueError("Uz mas svoju organizaciu. Mozes vlastnit iba jednu organizaciu.")
     now = to_iso_z(utcnow())
     org_id = str(uuid4())
     membership_id = str(uuid4())
@@ -227,12 +349,30 @@ def get_user_orgs(user_id: str) -> list[dict]:
         {
             "id": row["id"],
             "name": row["name"],
-            "role": row["role"],
+            "role": normalize_org_role(row["role"]),
             "org_created_at": row["org_created_at"],
             "member_created_at": row["member_created_at"],
         }
         for row in rows
     ]
+
+
+def get_user_owned_org(user_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT o.id, o.name, m.role
+            FROM organization_members m
+            JOIN organizations o ON o.id = m.organization_id
+            WHERE m.user_id = ? AND LOWER(m.role) IN ('owner', 'admin')
+            ORDER BY o.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {"id": row["id"], "name": row["name"], "role": normalize_org_role(row["role"])}
 
 
 def get_user_primary_org(user_id: str) -> dict | None:
@@ -242,14 +382,14 @@ def get_user_primary_org(user_id: str) -> dict | None:
             SELECT o.id, o.name, m.role
             FROM organization_members m
             JOIN organizations o ON o.id = m.organization_id
-            WHERE m.user_id = ? AND m.role = 'owner'
+            WHERE m.user_id = ? AND LOWER(m.role) IN ('owner', 'admin')
             ORDER BY o.created_at DESC
             LIMIT 1
             """,
             (user_id,),
         ).fetchone()
         if owner:
-            return {"id": owner["id"], "name": owner["name"], "role": owner["role"]}
+            return {"id": owner["id"], "name": owner["name"], "role": normalize_org_role(owner["role"])}
         member = conn.execute(
             """
             SELECT o.id, o.name, m.role
@@ -263,7 +403,7 @@ def get_user_primary_org(user_id: str) -> dict | None:
         ).fetchone()
     if not member:
         return None
-    return {"id": member["id"], "name": member["name"], "role": member["role"]}
+    return {"id": member["id"], "name": member["name"], "role": normalize_org_role(member["role"])}
 
 
 def is_user_member_of_org(user_id: str, org_id: str) -> bool:
@@ -291,7 +431,7 @@ def get_user_org_role(user_id: str, org_id: str) -> str | None:
             """,
             (user_id, org_id),
         ).fetchone()
-    return row["role"] if row else None
+    return normalize_org_role(row["role"]) if row else None
 
 
 def find_user_id_by_email(email: str) -> str | None:
@@ -305,6 +445,9 @@ def find_user_id_by_email(email: str) -> str | None:
 
 
 def add_org_member(user_id: str, org_id: str, role: str) -> None:
+    normalized_role = normalize_org_role(role)
+    if normalized_role not in {"owner", "member"}:
+        raise ValueError("Neplatna rola clena organizacie.")
     now = to_iso_z(utcnow())
     with get_connection() as conn:
         conn.execute(
@@ -312,7 +455,7 @@ def add_org_member(user_id: str, org_id: str, role: str) -> None:
             INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (str(uuid4()), org_id, user_id, role, now),
+            (str(uuid4()), org_id, user_id, normalized_role, now),
         )
         conn.commit()
 
@@ -329,7 +472,35 @@ def list_org_members(org_id: str) -> list[dict]:
             """,
             (org_id,),
         ).fetchall()
-    return [{"email": row["email"], "role": row["role"]} for row in rows]
+    return [{"email": row["email"], "role": normalize_org_role(row["role"])} for row in rows]
+
+
+def remove_org_member_by_email(org_id: str, email: str) -> dict:
+    normalized_email = normalize_email(email)
+    if not normalized_email:
+        raise ValueError("Email je povinny.")
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT m.id AS membership_id, m.role AS role, u.email AS email
+            FROM organization_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.organization_id = ? AND u.email = ?
+            LIMIT 1
+            """,
+            (org_id, normalized_email),
+        ).fetchone()
+        if not row:
+            raise LookupError("Pouzivatel nie je clenom organizacie.")
+        role = normalize_org_role(row["role"])
+        if role == "owner":
+            raise ValueError("Ownera organizacie nie je mozne odstranit.")
+        conn.execute(
+            "DELETE FROM organization_members WHERE id = ?",
+            (row["membership_id"],),
+        )
+        conn.commit()
+    return {"email": row["email"], "removed": True}
 
 
 def get_org_by_id(org_id: str) -> dict | None:
@@ -448,7 +619,7 @@ def accept_org_invite(token: str, user_id: str) -> dict:
         if existing:
             return {
                 "org": {"id": invite["organization_id"], "name": invite["name"]},
-                "membership": {"role": existing["role"], "already_member": True},
+                "membership": {"role": normalize_org_role(existing["role"]), "already_member": True},
             }
         now = to_iso_z(utcnow())
         conn.execute(
@@ -463,4 +634,26 @@ def accept_org_invite(token: str, user_id: str) -> dict:
         "org": {"id": invite["organization_id"], "name": invite["name"]},
         "membership": {"role": "member", "already_member": False},
     }
+
+
+def normalize_org_role(role: str | None) -> str:
+    cleaned = str(role or "").strip().lower()
+    if cleaned == "admin":
+        return "owner"
+    return cleaned
+
+
+def resolve_accessible_org_id(user_id: str, org_id: str | None) -> str:
+    cleaned_org_id = str(org_id or "").strip()
+    if cleaned_org_id:
+        if not is_user_member_of_org(user_id, cleaned_org_id):
+            raise PermissionError("Pouzivatel nema pristup k organizacii.")
+        return cleaned_org_id
+
+    orgs = get_user_orgs(user_id)
+    if not orgs:
+        raise LookupError("Pouzivatel nema organizaciu.")
+    if len(orgs) == 1:
+        return str(orgs[0]["id"])
+    raise ValueError("Vyber aktivnu organizaciu.")
 logger = logging.getLogger(__name__)

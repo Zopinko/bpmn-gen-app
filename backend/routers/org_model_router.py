@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from auth.deps import require_primary_org_id, require_user
-from auth.service import AuthUser, is_user_member_of_org
+from auth.deps import require_user
+from auth.service import AuthUser, resolve_accessible_org_id
 from services.org_model_storage import (
     create_folder,
     create_process,
@@ -20,11 +20,14 @@ router = APIRouter(prefix="/api/org-model", tags=["OrganizationModel"])
 
 
 def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
-    if org_id:
-        if not is_user_member_of_org(user.id, org_id):
-            raise HTTPException(status_code=403, detail="Pouzivatel nema pristup k organizacii.")
-        return org_id
-    return require_primary_org_id(user)
+    try:
+        return resolve_accessible_org_id(user.id, org_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("")

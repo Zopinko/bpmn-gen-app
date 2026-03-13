@@ -46,6 +46,8 @@ class AuthConfig:
     session_ttl_seconds: int
     require_verified_email: bool
     auth_db_path: str
+    password_reset_ttl_seconds: int
+    password_reset_url_base: str
 
 
 def get_auth_config() -> AuthConfig:
@@ -86,6 +88,10 @@ def get_auth_config() -> AuthConfig:
     cookie_domain = os.getenv("SESSION_COOKIE_DOMAIN")
     if cookie_domain is not None:
         cookie_domain = cookie_domain.strip() or None
+    password_reset_url_base = _env(
+        "PASSWORD_RESET_URL_BASE",
+        "https://app.bpmngen.com/reset-password" if is_prod else "http://localhost:5173/reset-password",
+    )
 
     return AuthConfig(
         app_env=env,
@@ -100,4 +106,6 @@ def get_auth_config() -> AuthConfig:
         session_ttl_seconds=_env_int("SESSION_TTL_SECONDS", 60 * 60 * 24 * 7),
         require_verified_email=_env("AUTH_REQUIRE_VERIFIED_EMAIL", "false").lower() == "true",
         auth_db_path=_env("AUTH_DB_PATH", "data/auth.db"),
+        password_reset_ttl_seconds=_env_int("PASSWORD_RESET_TTL_SECONDS", 60 * 30),
+        password_reset_url_base=password_reset_url_base,
     )
