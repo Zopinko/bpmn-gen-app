@@ -23,6 +23,7 @@ from auth.service import (
 )
 from auth.security import to_iso_z, utcnow
 from services.model_storage import load_model, save_model
+from services.org_model_storage import get_process_model_ref
 from services.org_models_storage import list_org_models, load_org_model, save_org_model, save_org_model_copy
 
 
@@ -45,6 +46,8 @@ class CreateOrgModelVersionRequest(BaseModel):
     diagram_xml: str
     generator_input: dict | None = None
     process_meta: dict | None = None
+    base_model_id: str | None = None
+    tree_node_id: str | None = None
 
 
 class AddOrgMemberRequest(BaseModel):
@@ -238,6 +241,20 @@ def create_org_model_version(
     current_user: AuthUser = Depends(require_user),
 ):
     org_id = _resolve_org_id(current_user, org_id)
+    if payload.tree_node_id:
+        if not payload.base_model_id:
+            raise HTTPException(status_code=400, detail="base_model_id je povinny pre proces v strome.")
+        try:
+            current_model_id = get_process_model_ref(org_id, payload.tree_node_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if not current_model_id:
+            raise HTTPException(status_code=400, detail="Proces nema aktualnu verziu modelu.")
+        if str(current_model_id) != str(payload.base_model_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Proces bol medzicasom zmeneny inym pouzivatelom. Obnov najnovsiu verziu a skus ulozit znova.",
+            )
     model = {
         "name": payload.name.strip() if isinstance(payload.name, str) else "",
         "engine_json": payload.engine_json,

@@ -14,6 +14,7 @@ from services.org_model_storage import (
     rename_node,
     set_process_model_ref,
 )
+from services.org_edit_presence import clear_editor_presence, heartbeat_editor_presence, list_org_editor_presence
 
 
 router = APIRouter(prefix="/api/org-model", tags=["OrganizationModel"])
@@ -34,6 +35,30 @@ def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
 def get_org_model(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, org_id)
     return get_tree(org_id)
+
+
+@router.get("/presence")
+def get_org_model_presence(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
+    org_id = _resolve_org_id(current_user, org_id)
+    return {"items": list_org_editor_presence(org_id)}
+
+
+@router.post("/presence/heartbeat")
+def heartbeat_org_model_presence(
+    payload: dict = Body(...),
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    tree_node_id = payload.get("treeNodeId")
+    active = payload.get("active", True)
+    if not isinstance(tree_node_id, str) or not tree_node_id.strip():
+        raise HTTPException(status_code=400, detail="treeNodeId je povinny.")
+    org_id = _resolve_org_id(current_user, org_id)
+    if active is False:
+        clear_editor_presence(org_id, tree_node_id.strip(), current_user.id)
+        return {"ok": True}
+    heartbeat_editor_presence(org_id, tree_node_id.strip(), current_user.id, current_user.email)
+    return {"ok": True}
 
 
 @router.post("/folder")

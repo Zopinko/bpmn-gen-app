@@ -148,3 +148,89 @@ def test_create_process_from_org_model_requires_existing_same_org_model(tmp_path
     finally:
         _restore_env(previous)
 
+
+def test_org_process_save_rejects_stale_base_version_when_tree_ref_changed(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("member@example.com", "password123")
+        owner_client = _authed_client("owner@example.com")
+        member_client = _authed_client("member@example.com")
+        org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+        owner_client.post(
+            "/api/orgs/members",
+            json={"email": "member@example.com", "org_id": org_id, "role": "member"},
+        )
+
+        created = owner_client.post(
+            f"/api/org-model/process?org_id={org_id}",
+            json={"parentId": "root", "name": "Shared process"},
+        )
+        assert created.status_code == 200
+        node = created.json()["node"]
+        tree_node_id = node["id"]
+        base_model_id = node["processRef"]["modelId"]
+
+        member_save = member_client.post(
+            f"/api/orgs/models?org_id={org_id}",
+            json={
+                "name": "Shared process",
+                "engine_json": {"nodes": [], "flows": [], "lanes": []},
+                "diagram_xml": "<definitions />",
+                "base_model_id": base_model_id,
+                "tree_node_id": tree_node_id,
+            },
+        )
+        assert member_save.status_code == 200
+        new_model_id = member_save.json()["org_model_id"]
+
+        member_ref_update = member_client.patch(
+            f"/api/org-model/process/{tree_node_id}/model-ref?org_id={org_id}",
+            json={"modelId": new_model_id},
+        )
+        assert member_ref_update.status_code == 200
+
+        stale_save = owner_client.post(
+            f"/api/orgs/models?org_id={org_id}",
+            json={
+                "name": "Shared process",
+                "engine_json": {"nodes": [], "flows": [], "lanes": []},
+                "diagram_xml": "<definitions />",
+                "base_model_id": base_model_id,
+                "tree_node_id": tree_node_id,
+            },
+        )
+        assert stale_save.status_code == 409
+        assert "medzicasom zmeneny" in (stale_save.json().get("detail") or "").lower()
+    finally:
+        _restore_env(previous)
+
+
+def test_org_presence_lists_active_editor_for_process_node(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        client = _authed_client("owner@example.com")
+        org_id = client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+        created = client.post(
+            f"/api/org-model/process?org_id={org_id}",
+            json={"parentId": "root", "name": "Presence process"},
+        )
+        assert created.status_code == 200
+        node_id = created.json()["node"]["id"]
+
+        heartbeat = client.post(
+            f"/api/org-model/presence/heartbeat?org_id={org_id}",
+            json={"treeNodeId": node_id, "active": True},
+        )
+        assert heartbeat.status_code == 200
+
+        listing = client.get(f"/api/org-model/presence?org_id={org_id}")
+        assert listing.status_code == 200
+        items = listing.json().get("items") or {}
+        assert node_id in items
+        assert any((row.get("email") or "").lower() == "owner@example.com" for row in items[node_id])
+    finally:
+        _restore_env(previous)

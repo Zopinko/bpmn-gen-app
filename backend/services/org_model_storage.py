@@ -77,6 +77,16 @@ def _find_node_and_parent(
     return None, None
 
 
+def get_process_model_ref(org_id: str, node_id: str) -> str | None:
+    tree = _read_tree(org_id)
+    node, _ = _find_node_and_parent(tree, node_id)
+    if not node or node.get("type") != "process":
+        raise ValueError("Cielova polozka nie je proces.")
+    process_ref = node.get("processRef") if isinstance(node.get("processRef"), dict) else {}
+    model_id = process_ref.get("modelId")
+    return str(model_id) if model_id else None
+
+
 def _assert_folder(node: dict[str, Any] | None, message: str) -> dict[str, Any]:
     if not node or node.get("type") != "folder":
         raise ValueError(message)

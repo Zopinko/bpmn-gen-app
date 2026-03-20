@@ -481,6 +481,7 @@ export async function createOrgModelVersion(orgId, payload) {
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
     const error = new Error(message);
     error.status = response.status;
+    error.detail = detail;
     throw error;
   }
   return response.json();

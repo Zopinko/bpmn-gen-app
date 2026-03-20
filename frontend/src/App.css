@@ -493,6 +493,14 @@ body {
   color: #dbeafe;
 }
 
+.org-tree-label.is-editing-self {
+  color: #93c5fd;
+}
+
+.org-tree-label.is-editing-other {
+  color: #fbbf24;
+}
+
 
 .org-tree-node:hover {
   border-color: var(--border-subtle);

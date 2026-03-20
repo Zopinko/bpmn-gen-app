@@ -431,6 +431,30 @@ export default function MapViewer({
       keyboard: readOnly ? { bindTo: null } : undefined,
     });
     modelerRef.current = modeler;
+    const zoomTarget =
+      containerRef.current?.querySelector(".djs-container") ||
+      containerRef.current?.querySelector(".diagram-js") ||
+      containerRef.current?.firstElementChild ||
+      containerRef.current;
+    const handleWheelZoom = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const canvas = modeler.get("canvas");
+      if (!canvas?.zoom || !containerRef.current) return;
+
+      const currentZoom = Number(canvas.zoom()) || 1;
+      const zoomFactor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const nextZoom = Math.min(2.5, Math.max(0.2, currentZoom * zoomFactor));
+      const rect = containerRef.current.getBoundingClientRect();
+      const center = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+
+      canvas.zoom(nextZoom, center);
+    };
+    zoomTarget?.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
 
     if (typeof onModelerReady === "function") {
       onModelerReady(modeler);
@@ -1396,6 +1420,7 @@ export default function MapViewer({
       if (typeof onModelerReady === "function") {
         onModelerReady(null);
       }
+      zoomTarget?.removeEventListener("wheel", handleWheelZoom, { capture: true });
       if (eventBus) {
         eventBus.off("element.mousedown", preventConnectionManualBending);
         eventBus.off("bendpoint.move.start", preventConnectionBendpointMove);

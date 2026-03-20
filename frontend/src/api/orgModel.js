@@ -83,3 +83,16 @@ export function updateOrgProcessModelRef(nodeId, modelId, orgId) {
     body: JSON.stringify({ modelId }),
   });
 }
+
+export function getOrgModelPresence(orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/presence${query}`);
+}
+
+export function heartbeatOrgModelPresence(treeNodeId, orgId, active = true) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  return request(`/api/org-model/presence/heartbeat${query}`, {
+    method: "POST",
+    body: JSON.stringify({ treeNodeId, active }),
+  });
+}

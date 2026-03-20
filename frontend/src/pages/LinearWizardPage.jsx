@@ -26,10 +26,12 @@ import {
 } from "../api/wizard";
 import {
   createOrgFolder,
+  getOrgModelPresence,
   createOrgProcess,
   createOrgProcessFromOrgModel,
   deleteOrgNode,
   getOrgModel,
+  heartbeatOrgModelPresence,
   moveOrgNode,
   renameOrgNode,
   updateOrgProcessModelRef,
@@ -1263,6 +1265,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [orgVersionsLoading, setOrgVersionsLoading] = useState(false);
   const [orgVersionsError, setOrgVersionsError] = useState(null);
   const [orgVersionPreview, setOrgVersionPreview] = useState(null);
+  const [orgEditorPresence, setOrgEditorPresence] = useState({});
   const [orgMoveModalOpen, setOrgMoveModalOpen] = useState(false);
   const [orgMoveNode, setOrgMoveNode] = useState(null);
   const [orgMoveTargetFolderId, setOrgMoveTargetFolderId] = useState("root");
@@ -2569,6 +2572,26 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     bumpModelVersion();
     return importedEngine;
   }, [bumpModelVersion]);
+
+  const getSyncedCanvasSnapshot = useCallback(async () => {
+    const modeler = modelerRef.current;
+    if (!modeler?.saveXML) {
+      throw new Error("Modeler nie je inicializovaný.");
+    }
+    const { xml: diagramXml } = await modeler.saveXML({ format: true });
+    if (!diagramXml || !diagramXml.trim()) {
+      throw new Error("Diagram sa nepodarilo serializovať.");
+    }
+    const file = new File([diagramXml], "diagram.bpmn", { type: "application/bpmn+xml" });
+    const importResp = await importBpmn(file);
+    const syncedEngine = importResp?.engine_json || importResp;
+    if (!syncedEngine) {
+      throw new Error("Nepodarilo sa zosynchronizovať model pred uložením.");
+    }
+    setEngineJson(syncedEngine);
+    setXmlFull(diagramXml, "save_snapshot_sync");
+    return { engine: syncedEngine, diagramXml };
+  }, []);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -4883,9 +4906,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setInfo(null);
     setSaveLoading(true);
     try {
-      if (!modelerRef.current?.saveXML) {
-        throw new Error("Modeler nie je inicializovaný.");
-      }
       if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_LAYOUT_STABILITY) {
         // eslint-disable-next-line no-console
         console.log("[layout-stability] save source", { source: "modeler.saveXML" });
@@ -4895,10 +4915,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           sampleSequenceFlowWaypoints(modelerRef.current),
         );
       }
-      const { xml: diagramXml } = await modelerRef.current.saveXML({ format: true });
+      const { engine: syncedEngine, diagramXml } = await getSyncedCanvasSnapshot();
       const payload = {
-        name: deriveDefaultName(),
-        engine_json: engineJson,
+        name:
+          syncedEngine?.name ||
+          syncedEngine?.processName ||
+          syncedEngine?.processId ||
+          deriveDefaultName(),
+        engine_json: syncedEngine,
         diagram_xml: diagramXml,
         generator_input: processCard.generatorInput,
         process_meta: processCard.processMeta,
@@ -4907,8 +4931,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (modelSource?.kind === "org") {
         const orgId = modelSource?.orgId;
         const treeNodeId = modelSource?.treeNodeId;
+        const baseModelId = modelSource?.modelId;
         if (!orgId) {
           throw new Error("Chyba: chyba org kontext.");
+        }
+        if (treeNodeId && !baseModelId) {
+          throw new Error("Chyba: chyba verzia org modelu.");
+        }
+        if (treeNodeId) {
+          payload.tree_node_id = treeNodeId;
+          payload.base_model_id = baseModelId;
         }
         const created = await createOrgModelVersion(orgId, payload);
         const newModelId = created?.org_model_id;
@@ -4942,7 +4974,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setHasUnsavedChanges(false);
       return saveResult;
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa ulozit model.";
+      const message =
+        e?.status === 409
+          ? e?.message || "Proces bol medzicasom zmeneny inym pouzivatelom. Obnov najnovsiu verziu a skus ulozit znova."
+          : e?.message || "Nepodarilo sa ulozit model.";
       setError(message);
       return null;
     } finally {
@@ -5308,6 +5343,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgMoveModalOpen(true);
   };
 
+  const refreshOrgPresence = useCallback(async (orgId = activeOrgId) => {
+    if (!orgId) {
+      setOrgEditorPresence({});
+      return;
+    }
+    try {
+      const response = await getOrgModelPresence(orgId);
+      setOrgEditorPresence(response?.items || {});
+    } catch {
+      // Presence is best-effort UI state; ignore failures and keep last known snapshot.
+    }
+  }, [activeOrgId]);
+
   const openDeleteProcessModal = (node) => {
     if (!node || node.type !== "process") return;
     setOrgMenuNodeId(null);
@@ -5369,9 +5417,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleOpenOrgVersion = (modelId, versionLabel = "") => {
     if (!modelId) return;
-    const treeNodeId = orgVersionsNode?.id || null;
+    const processNode = orgVersionsNode || null;
+    const treeNodeId = processNode?.id || null;
+    const latestModelId = processNode?.processRef?.modelId || null;
+    const isLatestVersion = latestModelId && String(latestModelId) === String(modelId);
     if (treeNodeId) {
-      void loadOrgModelFromTree(modelId, treeNodeId, { preview: true, previewLabel: versionLabel });
+      void loadOrgModelFromTree(modelId, treeNodeId, {
+        preview: !isLatestVersion,
+        previewLabel: isLatestVersion ? "" : versionLabel,
+      });
     } else {
       void loadOrgModelDirect(modelId);
     }
@@ -5928,6 +5982,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const status = getProcessStatus(modelId);
     const prefixDepth = Math.max(depth, 0);
     const isMenuOpen = orgMenuNodeId === node.id;
+    const editors = Array.isArray(orgEditorPresence?.[node.id]) ? orgEditorPresence[node.id] : [];
+    const selfEmail = String(currentUser?.email || "").trim().toLowerCase();
+    const selfEditors = editors.filter((item) => String(item?.email || "").trim().toLowerCase() === selfEmail);
+    const otherEditors = editors.filter((item) => String(item?.email || "").trim().toLowerCase() !== selfEmail);
+    const isEditedBySelf = selfEditors.length > 0;
+    const isEditedByOthers = otherEditors.length > 0;
+    const processPresenceTitle = isEditedByOthers
+      ? `Práve upravuje: ${otherEditors.map((item) => item.email).join(", ")}`
+      : isEditedBySelf
+        ? "Tento proces práve upravuješ."
+        : "";
     return (
       <div
         key={node.id}
@@ -5970,7 +6035,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             />
             <span className="org-tree-process-badge">P</span>
           </span>
-          <span className={`org-tree-label ${isActive ? "is-path" : ""}`}>{node.name}</span>
+          <span
+            className={`org-tree-label ${isActive ? "is-path" : ""} ${
+              isEditedBySelf ? "is-editing-self" : isEditedByOthers ? "is-editing-other" : ""
+            }`}
+            title={processPresenceTitle || undefined}
+          >
+            {node.name}
+          </span>
         </button>
         <button
           type="button"
@@ -6030,7 +6102,52 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isDemoMode) return;
     if (!orgOpen) return;
     void refreshOrgTree(activeOrgId);
-  }, [orgOpen, activeOrgId, isDemoMode]);
+    void refreshOrgPresence(activeOrgId);
+  }, [orgOpen, activeOrgId, isDemoMode, refreshOrgPresence]);
+
+  useEffect(() => {
+    if (isDemoMode) return undefined;
+    if (!orgOpen || !activeOrgId) return undefined;
+    void refreshOrgPresence(activeOrgId);
+    const intervalId = window.setInterval(() => {
+      void refreshOrgPresence(activeOrgId);
+    }, 25000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeOrgId, isDemoMode, orgOpen, refreshOrgPresence]);
+
+  useEffect(() => {
+    if (isDemoMode) return undefined;
+    if (modelSource?.kind !== "org") return undefined;
+    if (orgReadOnly) return undefined;
+    const orgId = modelSource?.orgId;
+    const treeNodeId = modelSource?.treeNodeId;
+    if (!orgId || !treeNodeId) return undefined;
+
+    let isClosed = false;
+    const sendHeartbeat = async (active = true) => {
+      try {
+        await heartbeatOrgModelPresence(treeNodeId, orgId, active);
+        if (active && !isClosed) {
+          void refreshOrgPresence(orgId);
+        }
+      } catch {
+        // ignore best-effort presence failures
+      }
+    };
+
+    void sendHeartbeat(true);
+    const intervalId = window.setInterval(() => {
+      void sendHeartbeat(true);
+    }, 25000);
+
+    return () => {
+      isClosed = true;
+      window.clearInterval(intervalId);
+      void sendHeartbeat(false);
+    };
+  }, [isDemoMode, modelSource, orgReadOnly, refreshOrgPresence]);
 
   const activeOrgPath = useMemo(() => {
     if (!orgTree || !routeModelId) return null;
@@ -6513,20 +6630,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setError("Najprv vygeneruj alebo naimportuj diagram.");
       return;
     }
-    if (!modelerRef.current?.saveXML) {
-      setError("Modeler nie je inicializovany.");
-      return;
-    }
     setError(null);
     setInfo(null);
     setExportLoading(true);
     try {
-      const { xml: diagramXml } = await modelerRef.current.saveXML({ format: true });
-
-      const name = engineJson.name || engineJson.processName || engineJson.processId || "process";
+      const { engine: syncedEngine, diagramXml } = await getSyncedCanvasSnapshot();
+      const name = syncedEngine?.name || syncedEngine?.processName || syncedEngine?.processId || "process";
       await saveWizardModel({
         name,
-        engine_json: engineJson,
+        engine_json: syncedEngine,
         diagram_xml: diagramXml,
         generator_input: processCard.generatorInput,
         process_meta: processCard.processMeta,
