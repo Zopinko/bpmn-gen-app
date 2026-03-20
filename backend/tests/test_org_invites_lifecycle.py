@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from auth.db import get_connection, run_auth_migrations
 from auth.deps import require_user
+from auth.security import parse_org_invite_public_token, to_iso_z, utcnow
 from auth.service import create_session_for_user, find_user_by_session, find_user_id_by_email, register_user
 from core.auth_config import get_auth_config
 from routers.auth_router import router as auth_router
@@ -61,11 +62,18 @@ def _authed_client(email: str) -> TestClient:
 
 
 def _expire_invite(token: str) -> None:
+    invite_id = parse_org_invite_public_token(token)
     with get_connection() as conn:
-        conn.execute(
-            "UPDATE organization_invites SET expires_at = ? WHERE token = ?",
-            ("2000-01-01T00:00:00Z", token),
-        )
+        if invite_id:
+            conn.execute(
+                "UPDATE organization_invites SET expires_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00Z", invite_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE organization_invites SET expires_at = ? WHERE token = ?",
+                ("2000-01-01T00:00:00Z", token),
+            )
         conn.commit()
 
 
@@ -81,9 +89,36 @@ def test_generated_invite_is_active_with_expiry(tmp_path):
 
         assert invite["status"] == "active"
         assert invite["token"]
+        assert "." in invite["token"]
         assert invite["expires_at"]
         assert invite["used_at"] is None
         assert invite["revoked_at"] is None
+
+        with get_connection() as conn:
+            stored = conn.execute(
+                "SELECT token FROM organization_invites WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1",
+                (org_id,),
+            ).fetchone()
+        assert stored is not None
+        assert stored["token"] != invite["token"]
+    finally:
+        _restore_env(previous)
+
+
+def test_existing_active_invite_returns_same_public_token(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        owner_client = _authed_client("owner@example.com")
+        org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+
+        created = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
+        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
+
+        assert created["token"]
+        assert latest["token"] == created["token"]
+        assert latest["status"] == "active"
     finally:
         _restore_env(previous)
 
@@ -192,5 +227,44 @@ def test_invite_status_is_missing_when_no_invite_exists(tmp_path):
         invite = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
         assert invite["status"] == "missing"
         assert invite["token"] is None
+    finally:
+        _restore_env(previous)
+
+
+def test_legacy_plaintext_invite_token_is_still_accepted(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("invitee@example.com", "password123")
+        owner_id = find_user_id_by_email("owner@example.com")
+        assert owner_id
+        owner_client = _authed_client("owner@example.com")
+        invitee_client = _authed_client("invitee@example.com")
+        org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+
+        legacy_token = "legacy-invite-token"
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO organization_invites(
+                    id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                """,
+                (
+                    "legacy-invite-id",
+                    org_id,
+                    legacy_token,
+                    owner_id,
+                    to_iso_z(utcnow()),
+                    "2999-01-01T00:00:00Z",
+                ),
+            )
+            conn.commit()
+
+        accepted = invitee_client.post(f"/api/orgs/invite/{legacy_token}/accept")
+        assert accepted.status_code == 200
+        assert accepted.json().get("membership", {}).get("already_member") is False
     finally:
         _restore_env(previous)

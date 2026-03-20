@@ -12,7 +12,9 @@ from auth.security import (
     expires_in,
     from_iso_z,
     hash_password,
+    make_org_invite_public_token,
     new_session_token,
+    parse_org_invite_public_token,
     to_iso_z,
     utcnow,
     verify_password,
@@ -551,10 +553,16 @@ def _invite_status_from_row(row: dict | None, now=None) -> str:
 def _serialize_org_invite(row: dict | None) -> dict | None:
     if not row:
         return None
+    stored_token = _row_value(row, "token")
+    public_token = stored_token
+    if isinstance(stored_token, str):
+        token_value = stored_token.strip()
+        if len(token_value) == 64 and all(ch in "0123456789abcdef" for ch in token_value.lower()):
+            public_token = make_org_invite_public_token(str(_row_value(row, "id") or ""))
     return {
         "id": _row_value(row, "id"),
         "organization_id": _row_value(row, "organization_id"),
-        "token": _row_value(row, "token"),
+        "token": public_token,
         "created_by_user_id": _row_value(row, "created_by_user_id"),
         "created_at": _row_value(row, "created_at"),
         "expires_at": _row_value(row, "expires_at"),
@@ -592,7 +600,8 @@ def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
     now = to_iso_z(utcnow())
     expires_at = expires_in(cfg.org_invite_ttl_seconds)
     invite_id = str(uuid4())
-    token = secrets.token_urlsafe(32)
+    public_token = make_org_invite_public_token(invite_id)
+    stored_token = digest_token(public_token)
     with get_connection() as conn:
         conn.execute(
             """
@@ -601,14 +610,14 @@ def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
             )
             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
             """,
-            (invite_id, org_id, token, created_by_user_id, now, expires_at),
+            (invite_id, org_id, stored_token, created_by_user_id, now, expires_at),
         )
         conn.commit()
     return _serialize_org_invite(
         {
             "id": invite_id,
             "organization_id": org_id,
-            "token": token,
+            "token": stored_token,
             "created_by_user_id": created_by_user_id,
             "created_at": now,
             "expires_at": expires_at,
@@ -655,16 +664,29 @@ def accept_org_invite(token: str, user_id: str) -> dict:
     now_dt = utcnow()
     now_iso = to_iso_z(now_dt)
     with get_connection() as conn:
-        invite = conn.execute(
-            """
-            SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
-            FROM organization_invites i
-            JOIN organizations o ON o.id = i.organization_id
-            WHERE i.token = ?
-            LIMIT 1
-            """,
-            (cleaned,),
-        ).fetchone()
+        invite_id = parse_org_invite_public_token(cleaned)
+        if invite_id:
+            invite = conn.execute(
+                """
+                SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
+                FROM organization_invites i
+                JOIN organizations o ON o.id = i.organization_id
+                WHERE i.id = ?
+                LIMIT 1
+                """,
+                (invite_id,),
+            ).fetchone()
+        else:
+            invite = conn.execute(
+                """
+                SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
+                FROM organization_invites i
+                JOIN organizations o ON o.id = i.organization_id
+                WHERE i.token = ?
+                LIMIT 1
+                """,
+                (cleaned,),
+            ).fetchone()
         if not invite:
             raise ValueError("Pozývací link je neplatný.")
         invite_row = {

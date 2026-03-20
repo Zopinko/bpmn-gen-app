@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 
 try:
@@ -77,3 +78,35 @@ def digest_token(token: str) -> str:
 
 def expires_in(seconds: int) -> str:
     return to_iso_z(utcnow() + timedelta(seconds=seconds))
+
+
+def _org_invite_signing_secret() -> bytes:
+    raw = os.getenv("ORG_INVITE_TOKEN_SECRET")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().encode("utf-8")
+    # Dev-safe fallback to avoid breaking existing deployments; set ORG_INVITE_TOKEN_SECRET in production.
+    fallback = f"{os.getenv('AUTH_DB_PATH', 'data/auth.db')}|{os.getenv('SESSION_COOKIE_NAME', 'bpmngen_session')}|org-invite"
+    return fallback.encode("utf-8")
+
+
+def make_org_invite_public_token(invite_id: str) -> str:
+    signature = hmac.new(
+        _org_invite_signing_secret(),
+        invite_id.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature_b64 = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return f"{invite_id}.{signature_b64}"
+
+
+def parse_org_invite_public_token(token: str) -> str | None:
+    cleaned = (token or "").strip()
+    if "." not in cleaned:
+        return None
+    invite_id, _, provided_signature = cleaned.partition(".")
+    if not invite_id or not provided_signature:
+        return None
+    expected = make_org_invite_public_token(invite_id).partition(".")[2]
+    if not hmac.compare_digest(provided_signature, expected):
+        return None
+    return invite_id
