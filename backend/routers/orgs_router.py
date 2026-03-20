@@ -199,18 +199,18 @@ def push_model(payload: PushOrgModelRequest, current_user: AuthUser = Depends(re
     if isinstance(payload.name, str) and payload.name.strip():
         name_override = payload.name.strip()
     org_model_id = save_org_model_copy(org_id=org_id, model=model, name_override=name_override)
+    process_meta = dict(model.get("process_meta") or {})
+    pushes = list(process_meta.get("org_pushes") or [])
+    pushes = [p for p in pushes if p.get("org_id") != org_id]
+    pushes.append(
+        {
+            "org_id": org_id,
+            "org_model_id": org_model_id,
+            "pushed_at": to_iso_z(utcnow()),
+        }
+    )
+    process_meta["org_pushes"] = pushes
     try:
-        process_meta = dict(model.get("process_meta") or {})
-        pushes = list(process_meta.get("org_pushes") or [])
-        pushes = [p for p in pushes if p.get("org_id") != org_id]
-        pushes.append(
-            {
-                "org_id": org_id,
-                "org_model_id": org_model_id,
-                "pushed_at": to_iso_z(utcnow()),
-            }
-        )
-        process_meta["org_pushes"] = pushes
         save_model(
             name=model.get("name") or (name_override or payload.model_id),
             engine_json=model.get("engine_json") or {},
@@ -220,8 +220,8 @@ def push_model(payload: PushOrgModelRequest, current_user: AuthUser = Depends(re
             process_meta=process_meta,
             user_id=current_user.id,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Nepodarilo sa aktualizovat metadata modelu.") from exc
     return {"org_model_id": org_model_id, "org_id": org_id}
 
 

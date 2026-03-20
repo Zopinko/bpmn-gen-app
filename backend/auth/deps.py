@@ -33,7 +33,9 @@ def is_super_admin_user(user: AuthUser) -> bool:
 
 
 def require_user(request: Request) -> AuthUser:
-    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("BPMN_TEST_AUTH") == "1":
+    app_env = (os.environ.get("APP_ENV") or "development").strip().lower()
+    test_auth_enabled = os.environ.get("BPMN_TEST_AUTH") == "1"
+    if os.environ.get("PYTEST_CURRENT_TEST") or (test_auth_enabled and app_env in {"dev", "development", "local"}):
         return AuthUser(
             id="",
             email="test@example.com",

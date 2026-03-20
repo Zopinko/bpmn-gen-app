@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from services.model_storage import save_model
+from services.org_models_storage import load_org_model, save_org_model_copy
 
 
 def _models_dir() -> Path:
@@ -127,11 +127,11 @@ def _create_empty_process_model(name: str) -> dict[str, Any]:
   </process>
 </definitions>
 """
-    return save_model(
-        name=name,
-        engine_json=engine_json,
-        diagram_xml=diagram_xml,
-    )
+    return {
+        "name": name,
+        "engine_json": engine_json,
+        "diagram_xml": diagram_xml,
+    }
 
 
 def create_process(org_id: str, parent_id: str, name: str) -> dict[str, Any]:
@@ -139,11 +139,12 @@ def create_process(org_id: str, parent_id: str, name: str) -> dict[str, Any]:
     parent, _ = _find_node_and_parent(tree, parent_id)
     parent = _assert_folder(parent, "Nadriadena polozka musi byt priecinok.")
     model = _create_empty_process_model(name.strip() or "Novy proces")
+    org_model_id = save_org_model_copy(org_id=org_id, model=model, name_override=model.get("name"))
     node = {
         "id": f"prc_{uuid4().hex[:12]}",
         "type": "process",
         "name": model.get("name") or "Novy proces",
-        "processRef": {"modelId": model["id"]},
+        "processRef": {"modelId": org_model_id},
     }
     parent.setdefault("children", []).append(node)
     _write_tree(org_id, tree)
@@ -159,6 +160,10 @@ def create_process_from_org_model(
     tree = _read_tree(org_id)
     parent, _ = _find_node_and_parent(tree, parent_id)
     parent = _assert_folder(parent, "Nadriadena polozka musi byt priecinok.")
+    try:
+        load_org_model(org_id, org_model_id)
+    except FileNotFoundError as exc:
+        raise ValueError("Model organizacie neexistuje.") from exc
     node = {
         "id": f"prc_{uuid4().hex[:12]}",
         "type": "process",
@@ -228,6 +233,10 @@ def set_process_model_ref(org_id: str, node_id: str, model_id: str) -> dict[str,
         raise ValueError("Polozka neexistuje.")
     if node.get("type") != "process":
         raise ValueError("Cielova polozka nie je proces.")
+    try:
+        load_org_model(org_id, model_id)
+    except FileNotFoundError as exc:
+        raise ValueError("Model organizacie neexistuje.") from exc
     node["processRef"] = {"modelId": model_id}
     _write_tree(org_id, tree)
     return node

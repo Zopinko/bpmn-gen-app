@@ -81,3 +81,28 @@ def test_change_password_requires_correct_current_password(tmp_path):
         assert new_login.status_code == 200
     finally:
         _restore_auth_env(old_db)
+
+
+def test_bpmn_test_auth_does_not_bypass_auth_in_production(tmp_path):
+    old_db = _set_auth_env(tmp_path)
+    old_app_env = os.environ.get("APP_ENV")
+    old_test_auth = os.environ.get("BPMN_TEST_AUTH")
+    try:
+        run_auth_migrations()
+        client = _make_client()
+        os.environ["APP_ENV"] = "production"
+        os.environ["BPMN_TEST_AUTH"] = "1"
+
+        response = client.get("/api/auth/me")
+
+        assert response.status_code == 401
+    finally:
+        if old_app_env is None:
+            os.environ.pop("APP_ENV", None)
+        else:
+            os.environ["APP_ENV"] = old_app_env
+        if old_test_auth is None:
+            os.environ.pop("BPMN_TEST_AUTH", None)
+        else:
+            os.environ["BPMN_TEST_AUTH"] = old_test_auth
+        _restore_auth_env(old_db)
