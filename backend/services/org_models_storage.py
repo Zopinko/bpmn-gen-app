@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
+
+from services.storage_io import atomic_write_json
+logger = logging.getLogger(__name__)
 
 
 def _base_models_dir() -> Path:
@@ -36,8 +40,7 @@ def save_org_model_copy(org_id: str, model: Dict[str, Any], name_override: str |
     stored["created_at"] = now
     stored["updated_at"] = now
     path = org_model_path(org_id, new_id)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(stored, f, ensure_ascii=False)
+    atomic_write_json(path, stored, ensure_ascii=False)
     return new_id
 
 
@@ -57,6 +60,7 @@ def list_org_models(org_id: str) -> List[Dict[str, Any]]:
                 }
             )
         except Exception:
+            logger.warning("Failed to read org model file while listing: path=%s", file)
             continue
     items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
     return items
@@ -78,13 +82,12 @@ def save_org_model(org_id: str, org_model_id: str, model: Dict[str, Any]) -> Dic
             with path.open("r", encoding="utf-8") as f:
                 existing = json.load(f)
             created_at = existing.get("created_at", created_at)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read existing org model before save: path=%s error=%s", path, exc)
     now = _now_iso()
     stored = dict(model)
     stored["id"] = org_model_id
     stored["created_at"] = created_at or now
     stored["updated_at"] = now
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(stored, f, ensure_ascii=False)
+    atomic_write_json(path, stored, ensure_ascii=False)
     return stored

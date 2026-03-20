@@ -1,9 +1,13 @@
 import json
+import logging
 import os
 from pathlib import Path
 from typing import List
 
+from services.storage_io import atomic_write_json
+
 _default_path = Path("data/project_notes.json")
+logger = logging.getLogger(__name__)
 
 
 def _resolve_legacy_notes_path() -> Path:
@@ -49,7 +53,8 @@ def _load_notes_from_path(path: Path) -> List[dict]:
             data = json.load(f)
         if isinstance(data, list):
             return data
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to read project notes file: path=%s error=%s", path, exc)
         return []
     return []
 
@@ -69,8 +74,7 @@ def save_project_notes(org_id: str, notes: List[dict]) -> List[dict]:
     for item in notes:
         if isinstance(item, dict):
             sanitized.append(item)
-    with file_path.open("w", encoding="utf-8") as f:
-        json.dump(sanitized, f, ensure_ascii=False)
+    atomic_write_json(file_path, sanitized, ensure_ascii=False)
     return sanitized
 
 

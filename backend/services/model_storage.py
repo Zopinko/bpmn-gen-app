@@ -1,13 +1,17 @@
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from services.storage_io import atomic_write_json
+
 # Storage root: defaults to repo-local data/models; override via BPMN_MODELS_DIR for persistent disk (Render).
 raw_dir = os.getenv("BPMN_MODELS_DIR")
 _base_dir = Path(raw_dir) if raw_dir else Path("data/models")
+logger = logging.getLogger(__name__)
 
 
 def set_base_dir(path: str | Path) -> None:
@@ -79,8 +83,8 @@ def save_model(
             created_at = existing.get("created_at", created_at)
             existing_generator_input = existing.get("generator_input")
             existing_process_meta = existing.get("process_meta")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to read existing model file before save: path=%s error=%s", path, exc)
     final_generator_input = existing_generator_input if generator_input is None else generator_input
     final_process_meta = existing_process_meta if process_meta is None else process_meta
     model = {
@@ -95,8 +99,7 @@ def save_model(
         model["generator_input"] = final_generator_input
     if final_process_meta is not None:
         model["process_meta"] = final_process_meta
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(model, f, ensure_ascii=False)
+    atomic_write_json(path, model, ensure_ascii=False)
     return model
 
 
@@ -131,6 +134,7 @@ def list_models(search: str | None = None, user_id: Optional[str] = None) -> Lis
                 }
             )
         except Exception:
+            logger.warning("Failed to read model file while listing: path=%s", file)
             continue
     if search:
         s = search.lower()

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 
@@ -19,6 +20,8 @@ except ModuleNotFoundError:  # pragma: no cover - depends on runtime env
 
 
 _PBKDF2_ITERATIONS = 210_000
+logger = logging.getLogger(__name__)
+_ORG_INVITE_SECRET_WARNING_EMITTED = False
 
 
 def utcnow() -> datetime:
@@ -81,9 +84,16 @@ def expires_in(seconds: int) -> str:
 
 
 def _org_invite_signing_secret() -> bytes:
+    global _ORG_INVITE_SECRET_WARNING_EMITTED
     raw = os.getenv("ORG_INVITE_TOKEN_SECRET")
     if isinstance(raw, str) and raw.strip():
         return raw.strip().encode("utf-8")
+    app_env = (os.getenv("APP_ENV") or "development").strip().lower()
+    if app_env in {"prod", "production"} and not _ORG_INVITE_SECRET_WARNING_EMITTED:
+        logger.warning(
+            "ORG_INVITE_TOKEN_SECRET is not configured in production; using a dev-safe fallback secret."
+        )
+        _ORG_INVITE_SECRET_WARNING_EMITTED = True
     # Dev-safe fallback to avoid breaking existing deployments; set ORG_INVITE_TOKEN_SECRET in production.
     fallback = f"{os.getenv('AUTH_DB_PATH', 'data/auth.db')}|{os.getenv('SESSION_COOKIE_NAME', 'bpmngen_session')}|org-invite"
     return fallback.encode("utf-8")

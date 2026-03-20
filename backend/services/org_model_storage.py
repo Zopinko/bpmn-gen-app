@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from services.org_models_storage import load_org_model, save_org_model_copy
+from services.storage_io import atomic_write_json, atomic_write_text
 
 
 def _models_dir() -> Path:
@@ -37,7 +38,7 @@ def _ensure_storage(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         return
-    path.write_text(json.dumps(_default_root(), ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, _default_root(), ensure_ascii=False, indent=2)
 
 
 def _read_tree(org_id: str) -> dict[str, Any]:
@@ -46,7 +47,7 @@ def _read_tree(org_id: str) -> dict[str, Any]:
         legacy = _legacy_tree_path()
         legacy_org_id = os.getenv("BPMN_LEGACY_ORG_ID")
         if legacy_org_id and str(org_id) == legacy_org_id and legacy.exists():
-            path.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+            atomic_write_text(path, legacy.read_text(encoding="utf-8"), encoding="utf-8")
         else:
             _ensure_storage(path)
     return json.loads(path.read_text(encoding="utf-8"))
@@ -55,7 +56,7 @@ def _read_tree(org_id: str) -> dict[str, Any]:
 def _write_tree(org_id: str, tree: dict[str, Any]) -> None:
     path = org_tree_path(org_id)
     _ensure_storage(path)
-    path.write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, tree, ensure_ascii=False, indent=2)
 
 
 def get_tree(org_id: str) -> dict[str, Any]:
