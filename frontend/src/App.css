@@ -2138,6 +2138,27 @@ body {
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 120ms ease;
 }
 
+.process-card-toggle__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+.process-card-toggle.is-pulse {
+  animation: orgPulse 900ms ease-out 1;
+}
+
 .process-card-toggle:hover {
   border-color: rgba(148, 163, 184, 0.45);
   background: linear-gradient(180deg, rgba(51, 65, 85, 0.92), rgba(15, 23, 42, 0.95));
@@ -2955,6 +2976,78 @@ body {
   gap: 12px;
 }
 
+.project-activity-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.project-activity-section.is-pulse {
+  animation: orgPulse 1100ms ease-out 1;
+}
+
+.project-activity-section + .project-activity-section {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+
+.project-activity-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-activity-section__title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.project-activity-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.project-activity-filter {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.project-activity-filter:hover {
+  border-color: rgba(96, 165, 250, 0.42);
+  color: #f8fafc;
+}
+
+.project-activity-filter.is-active {
+  border-color: rgba(59, 130, 246, 0.52);
+  background: rgba(30, 64, 175, 0.26);
+  color: #eff6ff;
+}
+
+.project-activity-reason {
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
 .project-notes-empty {
   color: var(--text-muted);
   font-size: 0.95rem;
@@ -2969,6 +3062,85 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.project-activity-item {
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.project-activity-item__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-activity-item--pending {
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.15) inset;
+  background: rgba(120, 53, 15, 0.18);
+}
+
+.project-activity-item--approved {
+  border-color: rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.12) inset;
+  background: rgba(20, 83, 45, 0.18);
+}
+
+.project-activity-item--rejected {
+  border-color: rgba(239, 68, 68, 0.42);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.12) inset;
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.project-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.project-activity-badge--count {
+  margin-left: 8px;
+}
+
+.project-activity-badge.is-pending {
+  color: #fef3c7;
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.project-activity-badge.is-approved {
+  color: #dcfce7;
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.38);
+}
+
+.project-activity-badge.is-rejected,
+.project-activity-badge.is-danger {
+  color: #fee2e2;
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.38);
+}
+
+.project-activity-badge.is-info {
+  color: #dbeafe;
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.38);
+}
+
+.project-activity-badge.is-muted {
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
 }
 
 .project-note-item--new {

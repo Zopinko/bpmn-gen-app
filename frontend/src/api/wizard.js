@@ -413,6 +413,73 @@ export async function getOrgInviteLink(orgId, options = {}) {
   return response.json();
 }
 
+export async function listOrgActivity(orgId, limit = 50) {
+  const query = new URLSearchParams();
+  if (orgId) query.set("org_id", orgId);
+  if (limit) query.set("limit", String(limit));
+  const response = await fetch(`${API_BASE}/api/orgs/activity?${query.toString()}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function approveOrgDeleteRequest(requestId, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/activity/delete-request/${encodeURIComponent(requestId)}/approve${query}`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function rejectOrgDeleteRequest(requestId, orgId) {
+  const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
+  const response = await fetch(`${API_BASE}/api/orgs/activity/delete-request/${encodeURIComponent(requestId)}/reject${query}`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 export async function acceptOrgInvite(token) {
   const response = await fetch(`${API_BASE}/api/orgs/invite/${encodeURIComponent(token)}/accept`, {
     method: "POST",

@@ -87,6 +87,12 @@ def get_process_model_ref(org_id: str, node_id: str) -> str | None:
     return str(model_id) if model_id else None
 
 
+def get_node(org_id: str, node_id: str) -> dict[str, Any] | None:
+    tree = _read_tree(org_id)
+    node, _ = _find_node_and_parent(tree, node_id)
+    return node
+
+
 def _assert_folder(node: dict[str, Any] | None, message: str) -> dict[str, Any]:
     if not node or node.get("type") != "folder":
         raise ValueError(message)

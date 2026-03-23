@@ -76,6 +76,17 @@ export function deleteOrgNode(nodeId, orgId) {
   });
 }
 
+export function requestOrgProcessDelete(nodeId, orgId, reason = "") {
+  return request("/api/orgs/activity/delete-request", {
+    method: "POST",
+    body: JSON.stringify({
+      node_id: nodeId,
+      ...(orgId ? { org_id: orgId } : {}),
+      ...(String(reason || "").trim() ? { reason: String(reason).trim() } : {}),
+    }),
+  });
+}
+
 export function updateOrgProcessModelRef(nodeId, modelId, orgId) {
   const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
   return request(`/api/org-model/process/${nodeId}/model-ref${query}`, {

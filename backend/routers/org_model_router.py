@@ -3,12 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from auth.deps import require_user
-from auth.service import AuthUser, resolve_accessible_org_id
+from auth.service import AuthUser, get_user_org_role, resolve_accessible_org_id
+from services.org_activity_log import record_org_event
 from services.org_model_storage import (
     create_folder,
     create_process,
     create_process_from_org_model,
     delete_node,
+    get_node,
     get_tree,
     move_node,
     rename_node,
@@ -96,6 +98,16 @@ def create_org_process(
     try:
         org_id = _resolve_org_id(current_user, org_id)
         node = create_process(org_id=org_id, parent_id=parent_id.strip(), name=name.strip())
+        record_org_event(
+            org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="process_created",
+            entity_type="process",
+            entity_id=str(node.get("id") or ""),
+            entity_name=str(node.get("name") or ""),
+            metadata={"parent_id": parent_id.strip()},
+        )
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -124,6 +136,16 @@ def create_org_process_from_org_model(
             name=name.strip(),
             org_model_id=model_id.strip(),
         )
+        record_org_event(
+            org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="process_created",
+            entity_type="process",
+            entity_id=str(node.get("id") or ""),
+            entity_name=str(node.get("name") or ""),
+            metadata={"source_model_id": model_id.strip(), "parent_id": parent_id.strip()},
+        )
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -142,6 +164,16 @@ def rename_org_node(
     try:
         org_id = _resolve_org_id(current_user, org_id)
         node = rename_node(org_id=org_id, node_id=node_id, name=name.strip())
+        record_org_event(
+            org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="process_renamed" if node.get("type") == "process" else "folder_renamed",
+            entity_type=str(node.get("type") or "node"),
+            entity_id=str(node.get("id") or node_id),
+            entity_name=str(node.get("name") or ""),
+            metadata={},
+        )
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -162,6 +194,16 @@ def move_org_node(payload: dict = Body(...), org_id: str | None = None, current_
             node_id=node_id.strip(),
             new_parent_id=target_parent_id.strip(),
         )
+        record_org_event(
+            org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="process_moved" if node.get("type") == "process" else "folder_moved",
+            entity_type=str(node.get("type") or "node"),
+            entity_id=str(node.get("id") or node_id),
+            entity_name=str(node.get("name") or ""),
+            metadata={"target_parent_id": target_parent_id.strip()},
+        )
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -171,7 +213,23 @@ def move_org_node(payload: dict = Body(...), org_id: str | None = None, current_
 def delete_org_node(node_id: str, org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        role = get_user_org_role(current_user.id, org_id)
+        if role != "owner":
+            raise HTTPException(status_code=403, detail="Proces môže odstrániť len owner organizácie.")
+        node = get_node(org_id, node_id)
+        if not node:
+            raise ValueError("Polozka neexistuje.")
         delete_node(org_id=org_id, node_id=node_id)
+        record_org_event(
+            org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="process_deleted" if node.get("type") == "process" else "folder_deleted",
+            entity_type=str(node.get("type") or "node"),
+            entity_id=str(node.get("id") or node_id),
+            entity_name=str(node.get("name") or ""),
+            metadata={},
+        )
         return {"ok": True, "tree": get_tree(org_id)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

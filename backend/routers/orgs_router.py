@@ -22,6 +22,8 @@ from auth.service import (
     resolve_accessible_org_id,
 )
 from auth.security import to_iso_z, utcnow
+from services.org_activity_log import get_org_event, get_org_request_resolution, list_org_events, record_org_event
+from services.org_model_storage import delete_node, get_node
 from services.model_storage import load_model, save_model
 from services.org_model_storage import get_process_model_ref
 from services.org_models_storage import list_org_models, load_org_model, save_org_model, save_org_model_copy
@@ -65,6 +67,12 @@ class AcceptOrgInviteResponse(BaseModel):
 class RemoveOrgMemberRequest(BaseModel):
     email: str
     org_id: str | None = None
+
+
+class DeleteRequestPayload(BaseModel):
+    node_id: str
+    org_id: str | None = None
+    reason: str | None = None
 
 
 @router.post("", status_code=201)
@@ -116,6 +124,16 @@ def add_org_member_endpoint(payload: AddOrgMemberRequest, current_user: AuthUser
     if is_user_member_of_org(user_id, org_id):
         return {"ok": True, "already_member": True}
     add_org_member(user_id=user_id, org_id=org_id, role=role)
+    record_org_event(
+        org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="member_added",
+        entity_type="member",
+        entity_id=user_id,
+        entity_name=email,
+        metadata={"role": role},
+    )
     return {"ok": True, "already_member": False}
 
 
@@ -137,6 +155,16 @@ def remove_org_member_endpoint(payload: RemoveOrgMemberRequest, current_user: Au
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    record_org_event(
+        org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="member_removed",
+        entity_type="member",
+        entity_id="",
+        entity_name=str(result.get("email") or payload.email or ""),
+        metadata={},
+    )
     return {"ok": True, **result}
 
 
@@ -153,8 +181,30 @@ def get_org_invite_link(
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
     if regenerate:
         invite = regenerate_org_invite(resolved_org_id, current_user.id)
+        record_org_event(
+            resolved_org_id,
+            actor_user_id=current_user.id,
+            actor_email=current_user.email,
+            event_type="invite_link_regenerated",
+            entity_type="invite",
+            entity_id=str(invite.get("id") or ""),
+            entity_name="organization invite",
+            metadata={"expires_at": invite.get("expires_at")},
+        )
     elif create_if_missing:
+        latest_before = get_latest_org_invite(resolved_org_id)
         invite = get_or_create_org_invite(resolved_org_id, current_user.id)
+        if invite and str(invite.get("id") or "") != str((latest_before or {}).get("id") or ""):
+            record_org_event(
+                resolved_org_id,
+                actor_user_id=current_user.id,
+                actor_email=current_user.email,
+                event_type="invite_link_created",
+                entity_type="invite",
+                entity_id=str(invite.get("id") or ""),
+                entity_name="organization invite",
+                metadata={"expires_at": invite.get("expires_at")},
+            )
     else:
         invite = get_latest_org_invite(resolved_org_id)
     return {
@@ -225,7 +275,127 @@ def push_model(payload: PushOrgModelRequest, current_user: AuthUser = Depends(re
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Nepodarilo sa aktualizovat metadata modelu.") from exc
+    record_org_event(
+        org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="model_pushed_to_org",
+        entity_type="model",
+        entity_id=str(org_model_id),
+        entity_name=str(name_override or model.get("name") or payload.model_id),
+        metadata={"source_model_id": payload.model_id},
+    )
     return {"org_model_id": org_model_id, "org_id": org_id}
+
+
+@router.get("/activity")
+def get_org_activity(
+    org_id: str | None = None,
+    limit: int = 50,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    return {"items": list_org_events(resolved_org_id, limit=limit), "org_id": resolved_org_id}
+
+
+@router.post("/activity/delete-request")
+def request_org_process_delete(payload: DeleteRequestPayload, current_user: AuthUser = Depends(require_user)):
+    resolved_org_id = _resolve_org_id(current_user, payload.org_id)
+    role = get_user_org_role(current_user.id, resolved_org_id)
+    node = get_node(resolved_org_id, payload.node_id)
+    reason = payload.reason.strip() if isinstance(payload.reason, str) else ""
+    if not node:
+        raise HTTPException(status_code=404, detail="Proces neexistuje.")
+    if node.get("type") != "process":
+        raise HTTPException(status_code=400, detail="Ziadost sa da vytvorit iba pre proces.")
+    if role == "owner":
+        raise HTTPException(status_code=400, detail="Owner môže proces odstrániť priamo.")
+    record_org_event(
+        resolved_org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="delete_requested",
+        entity_type="process",
+        entity_id=str(node.get("id") or payload.node_id),
+        entity_name=str(node.get("name") or ""),
+        metadata={"reason": reason[:500]} if reason else {},
+    )
+    return {"ok": True, "requested": True}
+
+
+def _require_owner_role(user: AuthUser, org_id: str) -> None:
+    role = get_user_org_role(user.id, org_id)
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo schvalovat ziadosti.")
+
+
+def _get_pending_delete_request(org_id: str, request_id: str) -> dict:
+    request_event = get_org_event(org_id, request_id)
+    if not request_event or str(request_event.get("event_type") or "") != "delete_requested":
+        raise HTTPException(status_code=404, detail="Ziadost o odstranenie neexistuje.")
+    if get_org_request_resolution(org_id, request_id):
+        raise HTTPException(status_code=409, detail="Ziadost uz bola vybavena.")
+    return request_event
+
+
+@router.post("/activity/delete-request/{request_id}/approve")
+def approve_org_process_delete_request(
+    request_id: str,
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    _require_owner_role(current_user, resolved_org_id)
+    request_event = _get_pending_delete_request(resolved_org_id, request_id)
+    node_id = str(request_event.get("entity_id") or "").strip()
+    node = get_node(resolved_org_id, node_id)
+    if not node or node.get("type") != "process":
+        raise HTTPException(status_code=404, detail="Proces uz neexistuje.")
+    delete_node(resolved_org_id, node_id)
+    record_org_event(
+        resolved_org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="process_deleted",
+        entity_type="process",
+        entity_id=node_id,
+        entity_name=str(node.get("name") or ""),
+        metadata={"request_id": request_id},
+    )
+    record_org_event(
+        resolved_org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="delete_request_approved",
+        entity_type="request",
+        entity_id=request_id,
+        entity_name=str(node.get("name") or ""),
+        metadata={"request_id": request_id, "target_node_id": node_id},
+    )
+    return {"ok": True, "approved": True, "deleted": True}
+
+
+@router.post("/activity/delete-request/{request_id}/reject")
+def reject_org_process_delete_request(
+    request_id: str,
+    org_id: str | None = None,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    _require_owner_role(current_user, resolved_org_id)
+    request_event = _get_pending_delete_request(resolved_org_id, request_id)
+    node_id = str(request_event.get("entity_id") or "").strip()
+    record_org_event(
+        resolved_org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="delete_request_rejected",
+        entity_type="request",
+        entity_id=request_id,
+        entity_name=str(request_event.get("entity_name") or ""),
+        metadata={"request_id": request_id, "target_node_id": node_id},
+    )
+    return {"ok": True, "rejected": True}
 
 
 @router.get("/models")

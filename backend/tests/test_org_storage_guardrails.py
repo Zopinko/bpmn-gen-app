@@ -234,3 +234,36 @@ def test_org_presence_lists_active_editor_for_process_node(tmp_path):
         assert any((row.get("email") or "").lower() == "owner@example.com" for row in items[node_id])
     finally:
         _restore_env(previous)
+
+
+def test_member_cannot_delete_org_process(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("member@example.com", "password123")
+        owner_client = _authed_client("owner@example.com")
+        member_client = _authed_client("member@example.com")
+        org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+        owner_client.post(
+            "/api/orgs/members",
+            json={"email": "member@example.com", "org_id": org_id, "role": "member"},
+        )
+
+        created = owner_client.post(
+            f"/api/org-model/process?org_id={org_id}",
+            json={"parentId": "root", "name": "Protected process"},
+        )
+        assert created.status_code == 200
+        node_id = created.json()["node"]["id"]
+
+        member_delete = member_client.delete(f"/api/org-model/node/{node_id}?org_id={org_id}")
+        assert member_delete.status_code == 403
+        assert "owner" in (member_delete.json().get("detail") or "").lower()
+
+        tree = owner_client.get(f"/api/org-model?org_id={org_id}")
+        assert tree.status_code == 200
+        children = tree.json().get("children") or []
+        assert any(child.get("id") == node_id for child in children)
+    finally:
+        _restore_env(previous)
