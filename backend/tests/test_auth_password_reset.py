@@ -148,3 +148,31 @@ def test_password_reset_expired_token_fails(tmp_path, caplog):
             auth_service.secrets.token_urlsafe = original_token_factory
     finally:
         _restore_auth_env(old_db, old_provider, old_reset_base)
+
+
+def test_password_reset_rejects_reusing_current_password(tmp_path):
+    old_db, old_provider, old_reset_base = _set_auth_env(tmp_path)
+    try:
+        import auth.service as auth_service
+
+        run_auth_migrations()
+        register_user("reuse@example.com", "oldpassword123")
+        client = _make_client()
+        reset_link_value = "same-password-token"
+        original_token_factory = auth_service.secrets.token_urlsafe
+        auth_service.secrets.token_urlsafe = lambda _: reset_link_value
+
+        try:
+            request_resp = client.post("/api/auth/forgot-password", json={"email": "reuse@example.com"})
+            assert request_resp.status_code == 200
+
+            reset_resp = client.post(
+                "/api/auth/reset-password",
+                json={"token": reset_link_value, "new_password": "oldpassword123"},
+            )
+            assert reset_resp.status_code == 400
+            assert reset_resp.json()["detail"] == "Nove heslo sa musi lisit od povodneho."
+        finally:
+            auth_service.secrets.token_urlsafe = original_token_factory
+    finally:
+        _restore_auth_env(old_db, old_provider, old_reset_base)

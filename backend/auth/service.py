@@ -172,7 +172,7 @@ def confirm_password_reset(token: str, new_password: str) -> None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, password_reset_expires_at
+            SELECT id, password_hash, password_reset_expires_at
             FROM users
             WHERE password_reset_token_hash = ?
             LIMIT 1
@@ -194,6 +194,9 @@ def confirm_password_reset(token: str, new_password: str) -> None:
             )
             conn.commit()
             raise ValueError("Reset link je neplatny alebo expirovany.")
+
+        if verify_password(row["password_hash"], new_password):
+            raise ValueError("Nove heslo sa musi lisit od povodneho.")
 
         password_hash = hash_password(new_password)
         now_iso = to_iso_z(now)

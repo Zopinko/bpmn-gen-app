@@ -4734,6 +4734,22 @@ body {
   color: #86efac;
 }
 
+.auth-success-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 12px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 10px;
+  background: rgba(20, 83, 45, 0.32);
+}
+
+.auth-success-hint {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #d1fae5;
+}
+
 .auth-footer {
   margin: 4px 0 0;
   color: #9ca3af;
