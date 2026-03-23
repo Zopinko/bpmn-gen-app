@@ -1344,6 +1344,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const activityPulseTimerRef = useRef(null);
   const activityRequestsPulseTimerRef = useRef(null);
   const activityPollingStartedRef = useRef(false);
+  const pendingRequestCountRef = useRef(0);
   const [noteDraft, setNoteDraft] = useState("");
   const [replyDrafts, setReplyDrafts] = useState({});
   const [replyOpenById, setReplyOpenById] = useState({});
@@ -4353,6 +4354,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return [];
   }, [pendingDeleteRequests, projectActivityFilter]);
 
+  useEffect(() => {
+    const previousCount = pendingRequestCountRef.current;
+    const nextCount = pendingDeleteRequests.length;
+    if (
+      activeOrgCapabilities.canApproveDeleteRequests &&
+      nextCount > previousCount &&
+      !railSections.project
+    ) {
+      setRailSections((prev) => ({ ...prev, project: true }));
+    }
+    pendingRequestCountRef.current = nextCount;
+  }, [activeOrgCapabilities.canApproveDeleteRequests, pendingDeleteRequests.length, railSections.project]);
+
   const filteredNonRequestActivityItems = useMemo(() => {
     if (projectActivityFilter === "all") {
       return nonRequestActivityItems;
@@ -7175,11 +7189,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           </div>
         ) : (
           <>
-        <div className={`process-card-rail-group ${railSections.org ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("org")}>
-            <span>ORGANIZÁCIA</span>
+        <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
+            <span>Tvorba</span>
           </button>
-          {railSections.org ? (
+          {railSections.process ? (
             <div className="process-card-rail-content">
               <button
                 type="button"
@@ -7198,19 +7212,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               >
                 {orgOpen ? "Skryť model organizacie" : "Model organizacie"}
               </button>
-              <button type="button" className="process-card-toggle" onClick={openOrgsModal}>
-                Sprava organizacie
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
-            <span>Proces</span>
-          </button>
-          {railSections.process ? (
-            <div className="process-card-rail-content">
               <button
                 type="button"
                 className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
@@ -7276,7 +7277,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
         <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
-            <span>Modely pieskovisko</span>
+            <span>Modely</span>
           </button>
           {railSections.save ? (
             <div className="process-card-rail-content">
@@ -7312,26 +7313,44 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           ) : null}
         </div>
 
-        <div className="process-card-rail-content">
-          <button
-            type="button"
-            className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
-            onClick={() => setNotesOpen(true)}
-          >
-            Poznámky
-          </button>
-          <button
-            type="button"
-            className={`process-card-toggle process-card-toggle--notes ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
-            onClick={() => setActivityOpen(true)}
-          >
-            Aktivita
+        <div className={`process-card-rail-group process-card-rail-group--team ${railSections.project ? "is-open" : ""}`}>
+          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
+            <span>Tím</span>
             {pendingDeleteRequests.length > 0 ? (
-              <span className="process-card-toggle__badge" aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek`}>
+              <span
+                className="process-card-rail-header__badge"
+                aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek v time`}
+              >
                 {pendingDeleteRequests.length}
               </span>
             ) : null}
           </button>
+          {railSections.project ? (
+            <div className="process-card-rail-content process-card-rail-content--team">
+              <button
+                type="button"
+                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""}`}
+                onClick={() => setNotesOpen(true)}
+              >
+                Poznámky
+              </button>
+              <button
+                type="button"
+                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-activity ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
+                onClick={() => setActivityOpen(true)}
+              >
+                Aktivita
+                {pendingDeleteRequests.length > 0 ? (
+                  <span className="process-card-toggle__badge" aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek`}>
+                    {pendingDeleteRequests.length}
+                  </span>
+                ) : null}
+              </button>
+              <button type="button" className="process-card-toggle process-card-toggle--team" onClick={openOrgsModal}>
+                Sprava organizacie
+              </button>
+            </div>
+          ) : null}
         </div>
           </>
         )}

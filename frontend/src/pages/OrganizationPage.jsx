@@ -394,14 +394,33 @@ function OrganizationPage() {
     if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
     if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
     if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
+    if (type === "delete_request_approved") return `${actor} schvalil odstranenie procesu "${name}".`;
+    if (type === "delete_request_rejected") return `${actor} zamietol odstranenie procesu "${name}".`;
     return `${actor} vykonal akciu "${type || "unknown"}".`;
   };
 
+  const resolvedDeleteRequestIds = useMemo(() => {
+    const ids = new Set();
+    activityItems.forEach((item) => {
+      const type = String(item?.event_type || "").toLowerCase();
+      const requestId = item?.metadata?.request_id;
+      if ((type === "delete_request_approved" || type === "delete_request_rejected") && requestId) {
+        ids.add(String(requestId));
+      }
+    });
+    return ids;
+  }, [activityItems]);
+
   const pendingDeleteRequestCount = useMemo(
     () =>
-      activityItems.filter((item) => String(item?.event_type || "").toLowerCase() === "delete_requested").length,
-    [activityItems],
+      activityItems.filter((item) => {
+        const type = String(item?.event_type || "").toLowerCase();
+        return type === "delete_requested" && item?.id && !resolvedDeleteRequestIds.has(String(item.id));
+      }).length,
+    [activityItems, resolvedDeleteRequestIds],
   );
+  const memberCount = members.length;
+  const activeOrgStatusLabel = activeOrgCapabilities.canManageMembers ? "Owner workspace" : "Clensky workspace";
 
   const getMemberActionMeta = () => {
     const action = String(memberActionModal.action || "");
@@ -435,9 +454,7 @@ function OrganizationPage() {
         <div className="account-card-head">
           <div>
             <h1>Organizácie</h1>
-            <p className="organization-intro">
-              Tu spravuješ aktívnu organizáciu, členov a pozvánky. V modeli procesu sa vždy používa práve aktívna organizácia.
-            </p>
+            <p className="organization-intro">Tu spravuješ aktívnu organizáciu, členov, pozvánky a tímovú aktivitu.</p>
           </div>
           <div className="account-card-head__actions">
             <Link to="/" className="btn app-nav__link-btn">
@@ -449,36 +466,56 @@ function OrganizationPage() {
         {error ? <p className="auth-message auth-message--error">{error}</p> : null}
       </div>
 
-      <div className="auth-card organization-card organization-active-card">
-        <div className="organization-section-head">
-          <h2>Aktívna organizácia</h2>
-          <span className="organization-active-badge">Aktívna</span>
-        </div>
-        {!loading && !orgs.length ? (
-          <p className="organization-hint">Zatiaľ nemáš žiadnu organizáciu. Nižšie si môžeš vytvoriť svoju prvú organizáciu.</p>
-        ) : (
-          <div className="organization-active-grid">
-            <div className="account-info-row">
-              <span>Názov organizácie</span>
-              <strong>{activeOrg?.name || "Nezvolená organizácia"}</strong>
+      <div className="auth-card organization-card organization-summary-card">
+        <div className="organization-summary-head">
+          <div className="organization-summary-head__copy">
+            <div className="organization-section-head">
+              <h2>Aktívna organizácia</h2>
+              <span className="organization-active-badge">Aktívna</span>
             </div>
-            <div className="account-info-row">
-              <span>Tvoja rola</span>
-              <strong>{getOrgRoleLabel(activeOrg?.role)}</strong>
+            <div className="organization-summary-title-row">
+              <h3>{activeOrg?.name || "Nezvolená organizácia"}</h3>
+              <span className="organization-summary-role">{getOrgRoleLabel(activeOrg?.role) || "-"}</span>
+            </div>
+            <p className="organization-hint">
+              {!loading && !orgs.length
+                ? "Zatiaľ nemáš žiadnu organizáciu. Nižšie si môžeš vytvoriť svoju prvú."
+                : "Rýchly prehľad tímu, rolí a otvorených požiadaviek v aktívnej organizácii."}
+            </p>
+          </div>
+          <div className="organization-summary-status">{activeOrgStatusLabel}</div>
+        </div>
+        {!loading && orgs.length ? (
+          <div className="organization-summary-grid">
+            <div className="organization-summary-stat">
+              <span className="organization-summary-stat__label">Moja rola</span>
+              <strong className="organization-summary-stat__value">{getOrgRoleLabel(activeOrg?.role)}</strong>
+            </div>
+            <div className="organization-summary-stat">
+              <span className="organization-summary-stat__label">Členovia</span>
+              <strong className="organization-summary-stat__value">{memberCount}</strong>
+            </div>
+            <div className="organization-summary-stat">
+              <span className="organization-summary-stat__label">Čakajúce požiadavky</span>
+              <strong className="organization-summary-stat__value">{pendingDeleteRequestCount}</strong>
+            </div>
+            <div className="organization-summary-stat">
+              <span className="organization-summary-stat__label">Moje organizácie</span>
+              <strong className="organization-summary-stat__value">{orgs.length}</strong>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
-      <div className="auth-card organization-card">
+      <div className="auth-card organization-card organization-card--directory">
         <div className="organization-section-head">
           <h2>Moje organizácie</h2>
           <span className="organization-section-subtle">
-            {orgs.length > 1 ? "Vyber, v ktorej organizácii chceš aktuálne pracovať." : "Máš iba jednu organizáciu."}
+            {orgs.length > 1 ? "Vyber aktívny pracovný priestor." : "Máš jednu organizáciu."}
           </span>
         </div>
         {orgs.length ? (
-          <div style={{ overflow: "auto" }}>
+          <div className="organization-table-wrap">
             <table className="wizard-models-table">
               <thead>
                 <tr>
@@ -534,20 +571,20 @@ function OrganizationPage() {
         ) : null}
       </div>
 
-      <div className="auth-card organization-card">
+      <div className="auth-card organization-card organization-card--members">
         <div className="organization-section-head">
           <h2>Členovia aktívnej organizácie</h2>
           <span className="organization-section-subtle">
             {activeOrgCapabilities.canManageMembers
-              ? "Ako owner môžeš pridávať a odoberať členov."
-              : "Zoznam členov je len na zobrazenie. Správu členov rieši owner."}
+              ? "Ako owner spravuješ prístupy a roly."
+              : "Zoznam členov je len na čítanie. Správu členov rieši owner."}
           </span>
         </div>
         {!activeOrgId ? <p className="organization-hint">Najprv si vyber aktívnu organizáciu.</p> : null}
         {membersLoading ? <p className="organization-hint">Načítavam členov...</p> : null}
         {membersError ? <p className="auth-message auth-message--error">{membersError}</p> : null}
         {!membersLoading && !membersError && activeOrgId ? (
-          <div style={{ overflow: "auto" }}>
+          <div className="organization-table-wrap">
             <table className="wizard-models-table">
               <thead>
                 <tr>
@@ -626,15 +663,15 @@ function OrganizationPage() {
         ) : null}
       </div>
 
-      <div className="auth-card organization-card">
+      <div className="auth-card organization-card organization-card--invites">
         <div className="organization-section-head">
           <h2>Pozvánky do organizácie</h2>
-          <span className="organization-section-subtle">Vygeneruj link, ktorý pošleš novému členovi.</span>
+          <span className="organization-section-subtle">Vytvor link pre nového člena tímu.</span>
         </div>
         {activeOrgCapabilities.canManageInvites ? (
-          <>
+          <div className="organization-invite-panel">
             <p className="organization-hint">
-              Pozvánka je naviazaná na aktuálne aktívnu organizáciu. Pri regenerovaní sa vygeneruje nový link.
+              Pozvánka patrí k aktívnej organizácii. Pri regenerovaní vznikne nový link.
             </p>
             <div className="organization-invite-status">
               <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>{inviteStatusLabel(inviteStatus)}</span>
@@ -664,7 +701,7 @@ function OrganizationPage() {
             <div className="organization-inline-actions">
               <input
                 type="text"
-                className="wizard-models-search"
+                className="wizard-models-search organization-invite-link-input"
                 value={inviteLink}
                 readOnly
                 placeholder="Pozývací link sa zobrazí tu..."
@@ -679,13 +716,13 @@ function OrganizationPage() {
               </button>
             </div>
             {inviteError ? <p className="auth-message auth-message--error">{inviteError}</p> : null}
-          </>
+          </div>
         ) : (
           <p className="organization-hint">Pozvánky môže spravovať iba owner aktívnej organizácie.</p>
         )}
       </div>
 
-      <div className="auth-card organization-card">
+      <div className="auth-card organization-card organization-card--activity">
         <div className="organization-section-head">
           <h2>
             Aktivita organizacie
@@ -695,7 +732,7 @@ function OrganizationPage() {
               </span>
             ) : null}
           </h2>
-          <span className="organization-section-subtle">Posledne zmeny v organizacii a modeloch.</span>
+          <span className="organization-section-subtle">Posledné zmeny v tíme a modeloch.</span>
         </div>
         {!activityLoading && !activityError && pendingDeleteRequestCount === 0 ? (
           <p className="organization-hint">Ziadne poziadavky na odstranenie.</p>
@@ -703,20 +740,12 @@ function OrganizationPage() {
         {activityLoading ? <p className="organization-hint">Nacitavam aktivitu...</p> : null}
         {activityError ? <p className="auth-message auth-message--error">{activityError}</p> : null}
         {!activityLoading && !activityError ? (
-          <div className="organization-info-box">
+          <div className="organization-info-box organization-info-box--activity">
             {activityItems.length ? (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div className="organization-activity-list">
                 {activityItems.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: "grid",
-                      gap: 4,
-                      paddingBottom: 10,
-                      borderBottom: "1px solid rgba(51, 65, 85, 0.45)",
-                    }}
-                  >
-                    <strong style={{ color: "#e5e7eb", fontSize: "0.92rem" }}>{describeActivity(item)}</strong>
+                  <div key={item.id} className="organization-activity-item">
+                    <strong className="organization-activity-item__title">{describeActivity(item)}</strong>
                     <span className="organization-hint">{formatDateTime(item.created_at)}</span>
                   </div>
                 ))}
@@ -728,7 +757,7 @@ function OrganizationPage() {
         ) : null}
       </div>
 
-      <div className="auth-card organization-card">
+      <div className="auth-card organization-card organization-card--create">
         <div className="organization-section-head">
           <h2>Vytvorenie organizácie</h2>
           <span className="organization-section-subtle">Každý používateľ môže vlastniť jednu organizáciu.</span>
@@ -736,12 +765,12 @@ function OrganizationPage() {
         {ownsAnyOrg ? (
           <div className="organization-info-box">
             <p className="organization-hint">
-              Už máš vytvorenú vlastnú organizáciu. Do ďalších organizácií sa môžeš pridať cez pozývací link.
+              Vlastnú organizáciu už máš vytvorenú. Do ďalších sa môžeš pridať cez pozývací link.
             </p>
           </div>
         ) : (
           <form className="organization-form" onSubmit={handleCreateOrg}>
-            <p className="organization-hint">Vytvor si vlastnú organizáciu pre tímovú prácu na procesoch.</p>
+            <p className="organization-hint">Vytvor si organizáciu pre tímovú prácu na procesoch.</p>
             <input
               type="text"
               className="wizard-models-search"
