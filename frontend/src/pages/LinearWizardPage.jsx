@@ -1333,16 +1333,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [projectNotesLoading, setProjectNotesLoading] = useState(false);
   const [projectNotesSaving, setProjectNotesSaving] = useState(false);
   const [projectNotesError, setProjectNotesError] = useState(null);
+  const [projectNotesLastSeenAt, setProjectNotesLastSeenAt] = useState("");
   const [projectActivityItems, setProjectActivityItems] = useState([]);
   const [projectActivityLoading, setProjectActivityLoading] = useState(false);
   const [projectActivityError, setProjectActivityError] = useState(null);
   const [projectActivityActionId, setProjectActivityActionId] = useState(null);
   const [projectActivityFilter, setProjectActivityFilter] = useState("all");
+  const [notesBadgePulse, setNotesBadgePulse] = useState(false);
   const [activityBadgePulse, setActivityBadgePulse] = useState(false);
   const [activityRequestsPulse, setActivityRequestsPulse] = useState(false);
   const activityPendingIdsRef = useRef(new Set());
+  const notesUnreadIdsRef = useRef(new Set());
+  const notesPulseTimerRef = useRef(null);
   const activityPulseTimerRef = useRef(null);
   const activityRequestsPulseTimerRef = useRef(null);
+  const notesPollingStartedRef = useRef(false);
   const activityPollingStartedRef = useRef(false);
   const pendingRequestCountRef = useRef(0);
   const [noteDraft, setNoteDraft] = useState("");
@@ -3141,16 +3146,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, [selectedLane]);
 
   useEffect(() => {
-    if (notesOpen) {
-      void fetchProjectNotes();
-    }
-  }, [notesOpen, activeOrgId]);
-
-  useEffect(() => {
     if (activityOpen) {
       void fetchProjectActivity();
     }
   }, [activityOpen, activeOrgId]);
+
+  useEffect(() => () => {
+    if (notesPulseTimerRef.current) {
+      window.clearTimeout(notesPulseTimerRef.current);
+      notesPulseTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!activeOrgCapabilities.canApproveDeleteRequests) {
@@ -3816,31 +3822,122 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return parts.join(" · ");
   };
 
-  const fetchProjectNotes = async () => {
+  const getProjectNotesSeenStorageKey = (orgId) => `PROJECT_NOTES_LAST_SEEN:${String(orgId || "").trim()}`;
+
+  const readProjectNotesLastSeen = useCallback((orgId) => {
+    const scopedOrgId = String(orgId || "").trim();
+    if (!scopedOrgId || typeof window === "undefined") return "";
+    return window.localStorage.getItem(getProjectNotesSeenStorageKey(scopedOrgId)) || "";
+  }, []);
+
+  const markProjectNotesSeen = useCallback((orgId, seenAt = new Date().toISOString()) => {
+    const scopedOrgId = String(orgId || "").trim();
+    if (!scopedOrgId || typeof window === "undefined") return;
+    window.localStorage.setItem(getProjectNotesSeenStorageKey(scopedOrgId), seenAt);
+    setProjectNotesLastSeenAt(seenAt);
+    notesUnreadIdsRef.current = new Set();
+    notesPollingStartedRef.current = true;
+    setNotesBadgePulse(false);
+    if (notesPulseTimerRef.current) {
+      window.clearTimeout(notesPulseTimerRef.current);
+      notesPulseTimerRef.current = null;
+    }
+  }, []);
+
+  const fetchProjectNotes = async ({ silent = false } = {}) => {
     const scopedOrgId = String(activeOrgId || "").trim();
     if (!scopedOrgId) {
       setProjectNotes([]);
       setProjectNotesError(null);
-      setProjectNotesLoading(false);
+      if (!silent) {
+        setProjectNotesLoading(false);
+      }
       setEditingNoteId(null);
       setEditingNoteText("");
+      notesUnreadIdsRef.current = new Set();
+      notesPollingStartedRef.current = false;
       return;
     }
-    setProjectNotesLoading(true);
-    setProjectNotesError(null);
+    if (!silent) {
+      setProjectNotesLoading(true);
+      setProjectNotesError(null);
+    }
     try {
       const resp = await getProjectNotes(scopedOrgId);
       const incoming = Array.isArray(resp?.notes) ? resp.notes.map(normalizeNote) : [];
       setProjectNotes(incoming);
-      setEditingNoteId(null);
-      setEditingNoteText("");
+      if (!silent) {
+        setEditingNoteId(null);
+        setEditingNoteText("");
+      }
+      const selfEmail = String(currentUser?.email || "").trim().toLowerCase();
+      const resolvedSeenAt = readProjectNotesLastSeen(scopedOrgId);
+      if (resolvedSeenAt !== projectNotesLastSeenAt) {
+        setProjectNotesLastSeenAt(resolvedSeenAt);
+      }
+      const seenAtMs = resolvedSeenAt ? Date.parse(resolvedSeenAt) : Number.NaN;
+      const nextUnreadIds = new Set();
+      incoming.forEach((note) => {
+        const noteActorEmail = String(note?.createdByEmail || note?.created_by_email || "").trim().toLowerCase();
+        const noteCreatedAt = Date.parse(note?.createdAt || note?.created_at || "");
+        if ((!selfEmail || noteActorEmail !== selfEmail) && Number.isFinite(noteCreatedAt) && Number.isFinite(seenAtMs) && noteCreatedAt > seenAtMs) {
+          nextUnreadIds.add(`note:${note.id}`);
+        }
+        (note?.replies || []).forEach((reply) => {
+          const replyActorEmail = String(reply?.createdByEmail || reply?.created_by_email || "").trim().toLowerCase();
+          const replyCreatedAt = Date.parse(reply?.createdAt || reply?.created_at || "");
+          if ((!selfEmail || replyActorEmail !== selfEmail) && Number.isFinite(replyCreatedAt) && Number.isFinite(seenAtMs) && replyCreatedAt > seenAtMs) {
+            nextUnreadIds.add(`reply:${note.id}:${reply.id}`);
+          }
+        });
+      });
+      const hasNewUnread =
+        notesPollingStartedRef.current &&
+        Array.from(nextUnreadIds).some((id) => !notesUnreadIdsRef.current.has(id));
+      notesUnreadIdsRef.current = nextUnreadIds;
+      notesPollingStartedRef.current = true;
+      if (hasNewUnread && !notesOpen) {
+        setNotesBadgePulse(true);
+        if (notesPulseTimerRef.current) {
+          window.clearTimeout(notesPulseTimerRef.current);
+        }
+        notesPulseTimerRef.current = window.setTimeout(() => {
+          setNotesBadgePulse(false);
+          notesPulseTimerRef.current = null;
+        }, 1600);
+      }
     } catch (e) {
       const message = e?.message || "Nepodarilo sa nacitat poznamky.";
       setProjectNotesError(message);
     } finally {
-      setProjectNotesLoading(false);
+      if (!silent) {
+        setProjectNotesLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    setProjectNotesLastSeenAt(readProjectNotesLastSeen(activeOrgId));
+    notesUnreadIdsRef.current = new Set();
+    notesPollingStartedRef.current = false;
+    setNotesBadgePulse(false);
+  }, [activeOrgId, readProjectNotesLastSeen]);
+
+  useEffect(() => {
+    if (notesOpen) {
+      void fetchProjectNotes();
+      markProjectNotesSeen(activeOrgId);
+    }
+  }, [notesOpen, activeOrgId, markProjectNotesSeen]);
+
+  useEffect(() => {
+    const scopedOrgId = String(activeOrgId || "").trim();
+    if (!scopedOrgId) return undefined;
+    const timerId = window.setInterval(() => {
+      void fetchProjectNotes({ silent: true });
+    }, 10000);
+    return () => window.clearInterval(timerId);
+  }, [activeOrgId]);
 
   const persistProjectNotes = async (nextNotes) => {
     const scopedOrgId = String(activeOrgId || "").trim();
@@ -4337,6 +4434,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     () => projectActivityItems.filter((item) => isPendingDeleteRequest(item)),
     [projectActivityItems, isPendingDeleteRequest],
   );
+
+  const unreadProjectNotesCount = useMemo(() => notesUnreadIdsRef.current.size, [projectNotes, projectNotesLastSeenAt]);
 
   const nonRequestActivityItems = useMemo(
     () =>
@@ -7329,10 +7428,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-rail-content process-card-rail-content--team">
               <button
                 type="button"
-                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""}`}
+                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
                 onClick={() => setNotesOpen(true)}
               >
                 Poznámky
+                {unreadProjectNotesCount > 0 ? (
+                  <span className="process-card-toggle__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
+                    {unreadProjectNotesCount}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
