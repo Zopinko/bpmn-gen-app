@@ -3844,6 +3844,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   }, []);
 
+  const ensureProjectNotesSeenBaseline = useCallback((orgId) => {
+    const scopedOrgId = String(orgId || "").trim();
+    if (!scopedOrgId || typeof window === "undefined") return "";
+    const existing = readProjectNotesLastSeen(scopedOrgId);
+    if (existing) return existing;
+    const baseline = new Date().toISOString();
+    window.localStorage.setItem(getProjectNotesSeenStorageKey(scopedOrgId), baseline);
+    return baseline;
+  }, [readProjectNotesLastSeen]);
+
   const fetchProjectNotes = async ({ silent = false } = {}) => {
     const scopedOrgId = String(activeOrgId || "").trim();
     if (!scopedOrgId) {
@@ -3871,7 +3881,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEditingNoteText("");
       }
       const selfEmail = String(currentUser?.email || "").trim().toLowerCase();
-      const resolvedSeenAt = readProjectNotesLastSeen(scopedOrgId);
+      const resolvedSeenAt = ensureProjectNotesSeenBaseline(scopedOrgId);
       if (resolvedSeenAt !== projectNotesLastSeenAt) {
         setProjectNotesLastSeenAt(resolvedSeenAt);
       }
@@ -3917,11 +3927,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   useEffect(() => {
-    setProjectNotesLastSeenAt(readProjectNotesLastSeen(activeOrgId));
+    setProjectNotesLastSeenAt(ensureProjectNotesSeenBaseline(activeOrgId));
     notesUnreadIdsRef.current = new Set();
     notesPollingStartedRef.current = false;
     setNotesBadgePulse(false);
-  }, [activeOrgId, readProjectNotesLastSeen]);
+  }, [activeOrgId, ensureProjectNotesSeenBaseline]);
 
   useEffect(() => {
     if (notesOpen) {
@@ -4436,7 +4446,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   );
 
   const unreadProjectNotesCount = useMemo(() => notesUnreadIdsRef.current.size, [projectNotes, projectNotesLastSeenAt]);
-  const totalTeamUnreadCount = unreadProjectNotesCount + pendingDeleteRequests.length;
+  const visibleActivityPendingCount = activeOrgCapabilities.canApproveDeleteRequests ? pendingDeleteRequests.length : 0;
+  const totalTeamUnreadCount = unreadProjectNotesCount + visibleActivityPendingCount;
 
   const nonRequestActivityItems = useMemo(
     () =>
@@ -7445,9 +7456,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 onClick={() => setActivityOpen(true)}
               >
                 Aktivita
-                {pendingDeleteRequests.length > 0 ? (
-                  <span className="process-card-toggle__badge" aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek`}>
-                    {pendingDeleteRequests.length}
+                {visibleActivityPendingCount > 0 ? (
+                  <span className="process-card-toggle__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
+                    {visibleActivityPendingCount}
                   </span>
                 ) : null}
               </button>
