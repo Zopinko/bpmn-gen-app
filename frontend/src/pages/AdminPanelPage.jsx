@@ -68,7 +68,7 @@ function AdminPanelPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab]);
+  }, [activeTab, tabState]);
 
   const current = tabState[activeTab];
   const visibleModels = useMemo(() => {

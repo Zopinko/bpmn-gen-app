@@ -11,7 +11,7 @@ export function applyIncrementalAppend({
   modeler,
   xml,
   standardTaskSize,
-  getLaneCenterMidY,
+  getLaneCenterMidY: _getLaneCenterMidY,
   attachNodeToLane,
 }) {
   const fail = (reason, details = null) => ({ ok: false, reason, details });
@@ -383,9 +383,6 @@ export function applyIncrementalAppend({
     const srcLane = getElementLane(source);
     const tgtLane = getElementLane(target);
     const sameLane = srcLane && tgtLane ? srcLane.id === tgtLane.id : false;
-    const srcBaseline = srcAttrs["data-branch"] !== "alt";
-    const tgtBaseline = tgtAttrs["data-branch"] !== "alt";
-
     const srcIsGateway = srcType.includes("Gateway");
     const tgtType = String(target?.businessObject?.$type || target?.type || "");
     const tgtIsGateway = tgtType.includes("Gateway");
@@ -1387,7 +1384,6 @@ export function applyIncrementalAppend({
   });
 
   if (typeof modeling.updateWaypoints === "function" && typeof routeFlow === "function") {
-    const newElementIds = createdElementIds;
     const movedNodeIds = new Set([...extraRerouteNodeIds]);
     const rerouted = new Set();
     createdConnections.forEach((conn) => {

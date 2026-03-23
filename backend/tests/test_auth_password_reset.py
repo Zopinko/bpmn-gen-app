@@ -1,6 +1,5 @@
 import logging
 import os
-from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -45,21 +44,6 @@ def _make_client():
     return TestClient(app)
 
 
-def _extract_reset_token(caplog, target_email):
-    for record in caplog.records:
-        if "PASSWORD_RESET_EMAIL" not in record.getMessage():
-            continue
-        if f"to={target_email}" not in record.getMessage():
-            continue
-        link = str(getattr(record, "args", [None, None, None])[-1] or "")
-        if not link:
-            continue
-        token = parse_qs(urlparse(link).query).get("token", [""])[0]
-        if token:
-            return token
-    return ""
-
-
 def test_forgot_password_generic_response(tmp_path, caplog):
     old_db, old_provider, old_reset_base = _set_auth_env(tmp_path)
     try:
@@ -82,41 +66,47 @@ def test_forgot_password_generic_response(tmp_path, caplog):
 def test_password_reset_end_to_end_and_one_time_use(tmp_path, caplog):
     old_db, old_provider, old_reset_base = _set_auth_env(tmp_path)
     try:
+        import auth.service as auth_service
+
         run_auth_migrations()
         register_user("user@example.com", "oldpassword123")
         client = _make_client()
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.INFO)
+        token = "known-reset-token"
+        original_token_factory = auth_service.secrets.token_urlsafe
+        auth_service.secrets.token_urlsafe = lambda _: token
 
-        request_resp = client.post("/api/auth/forgot-password", json={"email": "user@example.com"})
-        assert request_resp.status_code == 200
-        assert request_resp.json().get("message") == GENERIC_SUCCESS
+        try:
+            request_resp = client.post("/api/auth/forgot-password", json={"email": "user@example.com"})
+            assert request_resp.status_code == 200
+            assert request_resp.json().get("message") == GENERIC_SUCCESS
+            assert all(token not in record.getMessage() for record in caplog.records)
 
-        token = _extract_reset_token(caplog, "user@example.com")
-        assert token
+            reset_resp = client.post(
+                "/api/auth/reset-password",
+                json={"token": token, "new_password": "newpassword123"},
+            )
+            assert reset_resp.status_code == 200
 
-        reset_resp = client.post(
-            "/api/auth/reset-password",
-            json={"token": token, "new_password": "newpassword123"},
-        )
-        assert reset_resp.status_code == 200
+            old_login = client.post(
+                "/api/auth/login",
+                json={"email": "user@example.com", "password": "oldpassword123"},
+            )
+            assert old_login.status_code == 401
 
-        old_login = client.post(
-            "/api/auth/login",
-            json={"email": "user@example.com", "password": "oldpassword123"},
-        )
-        assert old_login.status_code == 401
+            new_login = client.post(
+                "/api/auth/login",
+                json={"email": "user@example.com", "password": "newpassword123"},
+            )
+            assert new_login.status_code == 200
 
-        new_login = client.post(
-            "/api/auth/login",
-            json={"email": "user@example.com", "password": "newpassword123"},
-        )
-        assert new_login.status_code == 200
-
-        reuse_resp = client.post(
-            "/api/auth/reset-password",
-            json={"token": token, "new_password": "anotherpass123"},
-        )
-        assert reuse_resp.status_code == 400
+            reuse_resp = client.post(
+                "/api/auth/reset-password",
+                json={"token": token, "new_password": "anotherpass123"},
+            )
+            assert reuse_resp.status_code == 400
+        finally:
+            auth_service.secrets.token_urlsafe = original_token_factory
     finally:
         _restore_auth_env(old_db, old_provider, old_reset_base)
 
@@ -124,31 +114,37 @@ def test_password_reset_end_to_end_and_one_time_use(tmp_path, caplog):
 def test_password_reset_expired_token_fails(tmp_path, caplog):
     old_db, old_provider, old_reset_base = _set_auth_env(tmp_path)
     try:
+        import auth.service as auth_service
+
         run_auth_migrations()
         register_user("expiry@example.com", "oldpassword123")
         client = _make_client()
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.INFO)
+        token = "expired-reset-token"
+        original_token_factory = auth_service.secrets.token_urlsafe
+        auth_service.secrets.token_urlsafe = lambda _: token
 
-        request_resp = client.post("/api/auth/forgot-password", json={"email": "expiry@example.com"})
-        assert request_resp.status_code == 200
+        try:
+            request_resp = client.post("/api/auth/forgot-password", json={"email": "expiry@example.com"})
+            assert request_resp.status_code == 200
+            assert all(token not in record.getMessage() for record in caplog.records)
 
-        token = _extract_reset_token(caplog, "expiry@example.com")
-        assert token
+            with get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET password_reset_expires_at = '2000-01-01T00:00:00Z'
+                    WHERE email = 'expiry@example.com'
+                    """
+                )
+                conn.commit()
 
-        with get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE users
-                SET password_reset_expires_at = '2000-01-01T00:00:00Z'
-                WHERE email = 'expiry@example.com'
-                """
+            expired_resp = client.post(
+                "/api/auth/reset-password",
+                json={"token": token, "new_password": "newpassword123"},
             )
-            conn.commit()
-
-        expired_resp = client.post(
-            "/api/auth/reset-password",
-            json={"token": token, "new_password": "newpassword123"},
-        )
-        assert expired_resp.status_code == 400
+            assert expired_resp.status_code == 400
+        finally:
+            auth_service.secrets.token_urlsafe = original_token_factory
     finally:
         _restore_auth_env(old_db, old_provider, old_reset_base)

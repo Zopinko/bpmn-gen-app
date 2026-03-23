@@ -45,15 +45,9 @@ def _user_model_path(user_id: str, model_id: str) -> Path:
     return _user_models_dir(user_id) / f"{model_id}.json"
 
 
-def _resolve_model_path(user_id: Optional[str], model_id: str) -> Path:
+def _scoped_model_path(model_id: str, user_id: Optional[str] = None) -> Path:
     if user_id:
-        user_path = _user_model_path(user_id, model_id)
-        if user_path.exists():
-            return user_path
-        global_path = _model_path(model_id)
-        if global_path.exists():
-            return global_path
-        return user_path
+        return _user_model_path(user_id, model_id)
     return _model_path(model_id)
 
 
@@ -104,7 +98,7 @@ def save_model(
 
 
 def load_model(model_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
-    path = _resolve_model_path(user_id, model_id)
+    path = _scoped_model_path(model_id, user_id=user_id)
     if not path.exists():
         raise FileNotFoundError(model_id)
     with path.open("r", encoding="utf-8") as f:
@@ -112,7 +106,7 @@ def load_model(model_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 def delete_model(model_id: str, user_id: Optional[str] = None) -> None:
-    path = _resolve_model_path(user_id, model_id)
+    path = _scoped_model_path(model_id, user_id=user_id)
     if path.exists():
         path.unlink()
 

@@ -32,6 +32,17 @@ def _is_production() -> bool:
     return _env("APP_ENV", "development").lower() in {"prod", "production"}
 
 
+def _required_env_in_production(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is not None:
+        value = raw.strip()
+        if value:
+            return value
+    if _is_production():
+        raise RuntimeError(f"{name} must be configured when APP_ENV is production.")
+    return None
+
+
 @dataclass(frozen=True)
 class AuthConfig:
     app_env: str
@@ -73,7 +84,7 @@ def get_auth_config() -> AuthConfig:
         "https://bpmngen.com",
         "https://bpmn-gen-frontend.onrender.com",
     ]
-    allowed_origins = _split_csv(os.getenv("CORS_ALLOW_ORIGINS"))
+    allowed_origins = _split_csv(_required_env_in_production("CORS_ALLOW_ORIGINS"))
     if not allowed_origins:
         allowed_origins = prod_default_origins if is_prod else dev_origins
 
@@ -89,10 +100,11 @@ def get_auth_config() -> AuthConfig:
     cookie_domain = os.getenv("SESSION_COOKIE_DOMAIN")
     if cookie_domain is not None:
         cookie_domain = cookie_domain.strip() or None
-    password_reset_url_base = _env(
+    password_reset_url_base = _required_env_in_production("PASSWORD_RESET_URL_BASE") or _env(
         "PASSWORD_RESET_URL_BASE",
-        "https://app.bpmngen.com/reset-password" if is_prod else "http://localhost:5173/reset-password",
+        "http://localhost:5173/reset-password",
     )
+    auth_db_path = _required_env_in_production("AUTH_DB_PATH") or _env("AUTH_DB_PATH", "data/auth.db")
 
     return AuthConfig(
         app_env=env,
@@ -106,7 +118,7 @@ def get_auth_config() -> AuthConfig:
         cookie_httponly=True,
         session_ttl_seconds=_env_int("SESSION_TTL_SECONDS", 60 * 60 * 24 * 7),
         require_verified_email=_env("AUTH_REQUIRE_VERIFIED_EMAIL", "false").lower() == "true",
-        auth_db_path=_env("AUTH_DB_PATH", "data/auth.db"),
+        auth_db_path=auth_db_path,
         password_reset_ttl_seconds=_env_int("PASSWORD_RESET_TTL_SECONDS", 60 * 30),
         password_reset_url_base=password_reset_url_base,
         org_invite_ttl_seconds=max(60, _env_int("ORG_INVITE_TTL_HOURS", 24 * 7) * 60 * 60),

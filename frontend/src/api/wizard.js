@@ -244,7 +244,7 @@ export async function pushSandboxModelToOrg(modelId, name, orgId) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -304,7 +304,7 @@ export async function addOrgMember(email, orgId, role) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -329,7 +329,7 @@ export async function removeOrgMember(email, orgId) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -350,7 +350,7 @@ export async function listOrgMembers(orgId) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -373,7 +373,7 @@ export async function createOrg(name) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -402,7 +402,7 @@ export async function getOrgInviteLink(orgId, options = {}) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -423,7 +423,7 @@ export async function acceptOrgInvite(token) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -475,7 +475,7 @@ export async function createOrgModelVersion(orgId, payload) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;
@@ -500,7 +500,7 @@ export async function saveOrgModel(modelId, orgId, payload) {
     try {
       const data = await response.json();
       detail = data?.detail || null;
-    } catch (e) {
+    } catch (_e) {
       // ignore parse errors
     }
     const message = detail || `HTTP ${response.status} ${response.statusText}`;

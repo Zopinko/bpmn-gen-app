@@ -1202,7 +1202,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [selectedLane, setSelectedLane] = useState(null);
   const [laneDescription, setLaneDescription] = useState("");
   const [laneInsertOpen, setLaneInsertOpen] = useState(false);
-  const [laneInsertType, setLaneInsertType] = useState("task");
+  const [laneInsertType, _setLaneInsertType] = useState("task");
   const [laneInsertInputs, setLaneInsertInputs] = useState(() => createLaneInsertInputs());
   const modelerRef = useRef(null);
   const engineJsonRef = useRef(null);
@@ -1297,7 +1297,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [processStatusByModelId, setProcessStatusByModelId] = useState(() => new Map());
   const [orgSearchQuery, setOrgSearchQuery] = useState("");
   const [helpInsertTarget, setHelpInsertTarget] = useState({ type: "process" }); // 'process' or {type:'lane', laneId, laneName}
-  const [sidebarWidth, setSidebarWidth] = useState(640);
+  const [_sidebarWidth, setSidebarWidth] = useState(640);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [processPanelHeight, setProcessPanelHeight] = useState(620);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
@@ -1377,8 +1377,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return acc;
     }, {}),
   );
-  const [helpActiveRuleId, setHelpActiveRuleId] = useState(null);
-  const [helpMode, setHelpMode] = useState("inline");
+  const [_helpActiveRuleId, _setHelpActiveRuleId] = useState(null);
+  const [_helpMode, _setHelpMode] = useState("inline");
   const [helpAccordionOpen, setHelpAccordionOpen] = useState(() => ({
     task: false,
     xor: false,
@@ -1410,7 +1410,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const laneTemplateFlashTimerRef = useRef(null);
   const logRenderMode = (mode, reason) => {
     if (!window.__BPMNGEN_DEBUG_RENDER) return;
-    // eslint-disable-next-line no-console
     console.log("[render]", mode, reason || "");
   };
 
@@ -1420,10 +1419,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setXml(nextXml);
   };
 
-  const markIncremental = (reason = "") => {
-    renderModeRef.current = "incremental";
-    logRenderMode("incremental", reason);
-  };
   const bumpModelVersion = useCallback(() => {
     setModelVersion((v) => v + 1);
   }, []);
@@ -1551,8 +1546,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const normalizeNodeId = (node) => node?.id || node?.nodeId || node?.refId || null;
-  const normalizeFlowSource = (flow) => flow?.source || flow?.sourceRef || flow?.from || null;
-  const normalizeFlowTarget = (flow) => flow?.target || flow?.targetRef || flow?.to || null;
 
   const guideRequestIdRef = useRef(0);
   const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
@@ -1679,7 +1672,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       lanesDisconnected,
       engine: {
         ...(engineJson || {}),
-        lanes: lanes.map(({ _el, ...lane }) => lane),
+        lanes: lanes.map(({ _el: _ignoredEl, ...lane }) => lane),
         nodes,
         flows,
       },
@@ -1737,7 +1730,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const areaRatio =
       (contentWidth * contentHeight) / Math.max(1, laneWidth * laneHeight);
     if (window.__BPMNGEN_DEBUG_GUIDE) {
-      // eslint-disable-next-line no-console
       console.log("[guide:oversize]", {
         laneWidth,
         laneHeight,
@@ -1759,7 +1751,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       (widthRatio > 1.2 || heightRatio > 1.2 || areaRatio < 0.7);
     if (!isOversized) {
       if (window.__BPMNGEN_DEBUG_GUIDE) {
-        // eslint-disable-next-line no-console
         console.log("[guide:oversize] not triggered");
       }
       return null;
@@ -1887,7 +1878,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         if (!wasGuideDismissedRecently(oversizeCard.key)) {
           setGuideState(oversizeCard);
         } else if (window.__BPMNGEN_DEBUG_GUIDE) {
-          // eslint-disable-next-line no-console
           console.log("[guide:oversize] skipped (dismissed)");
         }
       }
@@ -2157,7 +2147,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const elementRegistry = modeler.get("elementRegistry");
       const modeling = modeler.get("modeling");
       const elementFactory = modeler.get("elementFactory");
-      const selection = modeler.get("selection");
       if (!elementRegistry || !modeling || !elementFactory) return;
       const nodes = engineJson?.nodes || [];
       const tasks = nodes.filter((n) => /task/i.test(String(n?.type || "")));
@@ -2475,7 +2464,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           const sourceY = sourceShape.y || 0;
           const sourceW = sourceShape.width || 0;
           const sourceH = sourceShape.height || 0;
-          const endW = endShape.width || 0;
+          const _endW = endShape.width || 0;
           const endH = endShape.height || 0;
           const targetX = sourceX + sourceW + 60;
           const targetY = sourceY + sourceH / 2 - endH / 2;
@@ -2622,7 +2611,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const nodesCount = Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0;
     const flowsCount = Array.isArray(engineJson?.flows) ? engineJson.flows.length : 0;
     const lanesCount = Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0;
-    // eslint-disable-next-line no-console
     console.log(
       "[guide] state=%s reason=%s details=%o",
       guideState?.key || "none",
@@ -2853,7 +2841,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return raw;
   };
 
-  const buildBranchParagraph = (branch) => {
+  const _buildBranchParagraph = (branch) => {
     const label = String(branch?.label || "").trim() || "moznost";
     const steps = (branch?.steps || [])
       .map((step) => formatDecisionStepText(step?.text))
@@ -2876,7 +2864,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       } else {
         window.prompt("Skopiruj text:", text);
       }
-    } catch (err) {
+    } catch (_err) {
       window.prompt("Skopiruj text:", text);
     }
   };
@@ -2916,7 +2904,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setHasUnsavedChanges(true);
   };
 
-  const appendLine = (current, text) => {
+  const _appendLine = (current, text) => {
     const base = (current || "").trimEnd();
     return base ? `${base}\n${text}` : text;
   };
@@ -2991,7 +2979,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return output;
   };
 
-  const buildHelpTemplateSegments = (rule) => {
+  const _buildHelpTemplateSegments = (rule) => {
     const template = rule?.template || "";
     const segments = [];
     const tokenRegex = /<([^>]+)>/g;
@@ -3106,7 +3094,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }));
   };
 
-  const clearHelpInputs = (rule) => {
+  const _clearHelpInputs = (rule) => {
     setHelpInputs((prev) => ({
       ...prev,
       [rule.id]: (rule.fields || []).reduce((acc, field) => {
@@ -3116,8 +3104,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }));
   };
 
-  const activateHelpRule = (rule) => {
-    setHelpActiveRuleId(rule.id);
+  const _activateHelpRule = (rule) => {
+    _setHelpActiveRuleId(rule.id);
   };
 
   useEffect(() => {
@@ -3631,7 +3619,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return -1;
   };
 
-  const moveLane = async (laneId, direction) => {
+  const _moveLane = async (laneId, direction) => {
     if (!engineJson?.lanes?.length) return;
     const currentIndex = findLaneIndex(laneId, engineJson.lanes);
     if (currentIndex < 0) return;
@@ -4123,7 +4111,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
     const laneX = Number(lane.x || 0);
     const laneW = Number(lane.width || 0);
-    const laneY = Number(lane.y || 0);
+    const _laneY = Number(lane.y || 0);
     const laneH = Number(lane.height || 0);
     if (!(laneW > 0 && laneH > 0)) return;
 
@@ -4184,7 +4172,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const isReadOnlyMode = modelSource?.kind === "org" && orgReadOnly;
 
-  const handleEnableOrgEdit_unused2 = () => {
+  const _handleEnableOrgEdit_unused2 = () => {
     if (modelSource?.kind !== "org") return;
     if (activeOrgRole !== "owner") {
       setInfo("Nemáš právo upravovať org model.");
@@ -4199,12 +4187,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     [laneInsertType, laneShapeOptions],
   );
   const laneInsertName = laneInsertInputs[laneInsertType] || "";
-  const canCreateLaneShape =
+  const _canCreateLaneShape =
     Boolean(selectedLane) &&
     activeLaneShape &&
     (!activeLaneShape.nameRequired || laneInsertName.trim());
 
-  const updateLaneInsertName = (value) => {
+  const _updateLaneInsertName = (value) => {
     setLaneInsertInputs((prev) => ({ ...prev, [laneInsertType]: value }));
   };
 
@@ -4276,7 +4264,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return null;
   };
 
-  const computeGlobalRightmost = (elementRegistry) => {
+  const _computeGlobalRightmost = (elementRegistry) => {
     if (!elementRegistry) return null;
     const allNodes = elementRegistry.getAll().filter((el) => {
       if (!el || el.type === "label") return false;
@@ -4379,14 +4367,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     lanePreviewOverlayIdsRef.current = [];
   };
 
-  const getPreviewShapeSize = (type) => {
+  const _getPreviewShapeSize = (type) => {
     if (type === "xor" || type === "and") {
       return { width: 220, height: 110 };
     }
     return { width: 160, height: 68 };
   };
 
-  const createPreviewNode = (item, size) => {
+  const _createPreviewNode = (item, size) => {
     const container = document.createElement("div");
     const isGateway = item.type === "xor" || item.type === "and";
     container.className = `lane-preview-shape lane-preview-shape--${isGateway ? "gateway" : "task"}`;
@@ -4431,7 +4419,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return container;
   };
 
-  const handleLaneShapeCreate = () => {
+  const _handleLaneShapeCreate = () => {
     if (!activeLaneShape) return;
     if (!selectedLane) {
       setError("Vyber lane.");
@@ -4516,90 +4504,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     // Lane typing preview overlay is deprecated; always keep it disabled.
     clearLanePreviewOverlays();
     return undefined;
-
-    if (!selectedLane || !laneDescription.trim()) {
-      clearLanePreviewOverlays();
-      return undefined;
-    }
-
-    lanePreviewTimerRef.current = window.setTimeout(() => {
-      const modeler = modelerRef.current;
-      if (!modeler) return;
-      const overlays = modeler.get("overlays");
-      const elementRegistry = modeler.get("elementRegistry");
-      if (!overlays || !elementRegistry) return;
-      const laneElement = elementRegistry.get(selectedLane.id);
-      if (!laneElement) {
-        clearLanePreviewOverlays();
-        return;
-      }
-
-      clearLanePreviewOverlays();
-
-      const previewItems = analyzeLaneLines(laneDescription).slice(0, 6);
-      if (!previewItems.length) return;
-
-      const laneNodes = collectLaneFlowNodes(laneElement, elementRegistry);
-      const orderedNodes = [...laneNodes].sort((a, b) => (a.x || 0) - (b.x || 0));
-      const firstNode = orderedNodes[0] || null;
-      const lastNode = orderedNodes[orderedNodes.length - 1] || null;
-      const globalRightmost = computeCrossLaneAnchorX(laneElement, elementRegistry, engineJson);
-
-      const spacing = 36;
-      let cursorX = null;
-      let cursorY = null;
-      let previousWidth = 0;
-
-      let previewRightmost = null;
-      previewItems.forEach((item) => {
-        const size = getPreviewShapeSize(item.type);
-        const base = computeLaneInsertPosition(
-          laneElement,
-          size,
-          "end",
-          firstNode,
-          lastNode,
-          globalRightmost,
-        );
-        if (cursorX === null) {
-          cursorX = base.x;
-          cursorY = base.y;
-        } else {
-          cursorX += previousWidth + spacing;
-        }
-        const x = cursorX;
-        const y = cursorY ?? base.y;
-        const html = createPreviewNode(item, size);
-        const overlayId = overlays.add(laneElement, {
-          position: { top: y - laneElement.y, left: x - laneElement.x },
-          html,
-        });
-        lanePreviewOverlayIdsRef.current.push(overlayId);
-        previousWidth = size.width;
-        const rightEdge = x + size.width;
-        previewRightmost = previewRightmost === null ? rightEdge : Math.max(previewRightmost, rightEdge);
-      });
-
-      if (previewRightmost !== null) {
-        const canvas = modeler.get("canvas");
-        const viewbox = canvas?.viewbox?.();
-        if (viewbox) {
-          const padding = 120;
-          const visibleRight = viewbox.x + viewbox.width - padding;
-          if (previewRightmost > visibleRight) {
-            const next = { ...viewbox, x: previewRightmost - viewbox.width + padding };
-            canvas.viewbox(next);
-          }
-        }
-      }
-    }, 350);
-
-    return () => {
-      if (lanePreviewTimerRef.current) {
-        window.clearTimeout(lanePreviewTimerRef.current);
-        lanePreviewTimerRef.current = null;
-      }
-    };
   }, [laneDescription, selectedLane, engineJson]);
 
   useEffect(() => () => clearLanePreviewOverlays(), []);
@@ -4907,9 +4811,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setSaveLoading(true);
     try {
       if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_LAYOUT_STABILITY) {
-        // eslint-disable-next-line no-console
         console.log("[layout-stability] save source", { source: "modeler.saveXML" });
-        // eslint-disable-next-line no-console
         console.log(
           "[layout-stability] before save samples",
           sampleSequenceFlowWaypoints(modelerRef.current),
@@ -4985,7 +4887,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   };
 
-  const insertLaneTemplate = useCallback((templateType) => {
+  const _insertLaneTemplate = useCallback((templateType) => {
     const templates = {
       decision: "Ak <podmienka> tak <krok>, inak <krok/koniec>",
       parallel: "Zároveň <krok>, <krok> a <krok>",
@@ -6346,7 +6248,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     } else {
       setLaneOpen(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLane]);
 
   useEffect(() => {
@@ -6372,7 +6273,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   useEffect(() => {
     if (isDemoMode) return;
     void refreshMyOrgs(activeOrgId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDemoMode]);
 
   const fetchModels = async () => {
@@ -6587,7 +6487,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const orgs = await listMyOrgs();
       setMyOrgs(orgs || []);
       applyActiveOrgFromList(orgs || [], preferredId);
-    } catch (e) {
+    } catch (_e) {
       setMyOrgs([]);
       setMyOrgsEmpty(null);
     }

@@ -1,6 +1,22 @@
 # Ignore persisted wizard models (stored locally only)
 backend/data/models/
 backend/data/auth.db
+backend/backend/data/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Python caches / envs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+backend/venv/
+frontend/venv/
+
 # Node
 node_modules/
 

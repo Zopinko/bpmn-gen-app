@@ -44,7 +44,6 @@ export default function MapViewer({
   onModelerReady,
   onXmlImported,
   overlayMessage,
-  onInsertBlock,
   guideHighlight = null,
   readOnly = false,
 }) {
@@ -566,11 +565,8 @@ export default function MapViewer({
         wps ? { waypoints: wps } : undefined,
       );
       if (window.__BPMNGEN_DEBUG_ROUTE) {
-        // eslint-disable-next-line no-console
         console.log("[route] created conn id=", conn?.id);
-        // eslint-disable-next-line no-console
         console.log("[route] before waypoints=", conn?.waypoints);
-        // eslint-disable-next-line no-console
         console.log("[route] input waypoints=", wps);
       }
       if (conn && wps && typeof modeling.updateWaypoints === "function") {
@@ -584,7 +580,6 @@ export default function MapViewer({
         });
       }
       if (window.__BPMNGEN_DEBUG_ROUTE) {
-        // eslint-disable-next-line no-console
         console.log("[route] after waypoints=", conn?.waypoints);
       }
       return conn;
@@ -811,7 +806,6 @@ export default function MapViewer({
       };
 
       if (isLane) {
-        const laneName = element.businessObject?.name || element.businessObject?.id || "";
         const startLaneDrag = laneDragStartMapRef.current.get(element.id);
         const addLaneWithPrompt = (position) => {
           const created = modeling.addLane(element, position);
@@ -821,33 +815,6 @@ export default function MapViewer({
           if (typeof name === "string" && name.trim()) {
             modeling.updateProperties(created, { name: name.trim() });
           }
-        };
-
-        const moveLane = (delta) => {
-          if (!elementRegistry || !laneName) return;
-          const handler = laneOrderChangeRef.current;
-          if (typeof handler !== "function") return;
-          const lanes = elementRegistry
-            .getAll()
-            .filter((el) => el.businessObject?.$type === "bpmn:Lane");
-          if (!lanes.length) return;
-          const ordered = lanes
-            .map((lane) => ({
-              name: lane.businessObject?.name || lane.businessObject?.id || "",
-              y: typeof lane.y === "number" ? lane.y : 0,
-            }))
-            .filter((entry) => entry.name)
-            .sort((a, b) => a.y - b.y);
-          const names = ordered.map((entry) => entry.name);
-          const index = names.findIndex((name) => name === laneName);
-          const nextIndex = index + delta;
-          if (index < 0 || nextIndex < 0 || nextIndex >= names.length) return;
-          const next = [...names];
-          [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-          const key = next.join("|");
-          if (key === lastLaneOrderRef.current) return;
-          lastLaneOrderRef.current = key;
-          handler(next);
         };
 
         container.appendChild(
@@ -910,7 +877,6 @@ export default function MapViewer({
             shape.width = width;
             shape.height = height;
           }
-          const shapeWidth = shape.width || width || 0;
           const shapeHeight = shape.height || height || 0;
           if (autoPlace && typeof autoPlace.append === "function") {
             const created = autoPlace.append(element, shape);
@@ -1064,6 +1030,8 @@ export default function MapViewer({
         hideLaneHandles();
       }
     };
+
+    const canvas = modeler.get("canvas");
 
     const handleElementHover = (event) => {
       const { element } = event;
@@ -1594,13 +1562,11 @@ export default function MapViewer({
         const shouldRerouteOnImport =
           typeof window !== "undefined" && Boolean(window.__BPMNGEN_REROUTE_ON_IMPORT);
         if (debugLayoutStability) {
-          // eslint-disable-next-line no-console
           console.log("[layout-stability] importXML loaded samples", sampleSequenceFlowWaypoints(elementRegistry));
         }
 
         // Keep import geometry stable by default. Enable reroute explicitly only when needed.
         if (shouldRerouteOnImport) {
-          // eslint-disable-next-line no-console
           console.warn("[layout] reroute on import enabled; will modify saved geometry");
           const rerouteConnection = modeler.__rerouteConnection;
           elementRegistry
@@ -1612,7 +1578,6 @@ export default function MapViewer({
               }
             });
           if (debugLayoutStability) {
-            // eslint-disable-next-line no-console
             console.log("[layout-stability] importXML after reroute samples", sampleSequenceFlowWaypoints(elementRegistry));
           }
         }
@@ -1650,6 +1615,8 @@ export default function MapViewer({
           isImportingRef.current = false;
           return;
         }
+
+        const canvas = modeler.get("canvas");
 
         const getLaneMetrics = () => {
           const lanes = elementRegistry

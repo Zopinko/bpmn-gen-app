@@ -150,7 +150,7 @@ export function useDualMap() {
   );
 
   const fetchProposals = useCallback(
-    async ({ text, locale, runIdValue, engine }) => {
+    async ({ text, locale: _locale, runIdValue, engine }) => {
       if (!engine) {
         setProposals([]);
         setMentorMeta(null);
@@ -263,7 +263,7 @@ export function useDualMap() {
         setLoadingMap(false);
       }
     },
-    [fetchProposals, makePreviewRequest, telemetry]
+    [makePreviewRequest, telemetry]
   );
 
   const generateWithAI = useCallback(
@@ -480,9 +480,9 @@ export function useDualMap() {
               const conflictPayload = JSON.parse(rawText || "{}");
               const conflicts = conflictPayload?.conflicts || conflictPayload?.error || rawText;
               throw new Error(`Conflicts: ${JSON.stringify(conflicts)}`);
-            } catch (parseErr) {
-              throw new Error(rawText || `HTTP ${response.status}`);
-            }
+          } catch (_parseErr) {
+            throw new Error(rawText || `HTTP ${response.status}`);
+          }
           }
           throw new Error(rawText || `HTTP ${response.status}`);
         }

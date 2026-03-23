@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException, Request
 import os
 from pathlib import Path
+import logging
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from auth.db import get_connection, run_auth_migrations
 from auth.deps import is_admin_panel_available, is_super_admin_user, require_user
+from auth.security import ensure_org_invite_secret_configured
 from core.auth_config import get_auth_config
 from core.config import apply_cors
 from routers.auth_router import router as auth_router
@@ -17,25 +19,37 @@ from routers.mentor_router import router as mentor_router
 from routers.telemetry_router import router as telemetry_router
 from routers.controller_router import router as controller_router
 
+logger = logging.getLogger(__name__)
+
+
+def mount_playground(app: FastAPI, playground_dir: Path | None = None) -> None:
+    directory = playground_dir or (Path(__file__).resolve().parent / "playground")
+    if not directory.exists():
+        logger.warning("Skipping playground mount because directory does not exist: %s", directory)
+        return
+    app.mount("/playground", StaticFiles(directory=str(directory), html=True), name="playground")
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="BPMN.GEN")
-    auth_db_path = get_auth_config().auth_db_path
-    abs_path = Path(auth_db_path).expanduser().resolve()
-    print(f"AUTH_DB_PATH={auth_db_path} | abs={abs_path}")
+    cfg = get_auth_config()
+    abs_path = Path(cfg.auth_db_path).expanduser().resolve()
     run_auth_migrations()
     if abs_path.exists():
-        size = abs_path.stat().st_size
-        print(f"Auth DB exists: true | size: {size}")
+        logger.info("Auth DB is configured and present; size_bytes=%s", abs_path.stat().st_size)
     else:
-        print("Auth DB exists: false | size: 0")
+        logger.warning("Auth DB path is configured but file does not exist yet.")
     with get_connection() as conn:
         legacy_org_admin_count = conn.execute(
             "SELECT COUNT(*) AS c FROM organization_members WHERE LOWER(role) NOT IN ('owner', 'member')"
         ).fetchone()["c"]
     if legacy_org_admin_count:
-        print(f"WARNING: legacy organization_members rows with unsupported role: {legacy_org_admin_count}")
+        logger.warning(
+            "Found legacy organization_members rows with unsupported role count=%s",
+            legacy_org_admin_count,
+        )
 
+    ensure_org_invite_secret_configured()
     apply_cors(app)
 
     @app.middleware("http")
@@ -52,6 +66,10 @@ def create_app() -> FastAPI:
                 return JSONResponse(status_code=404, content={"detail": "Not found"})
         return await call_next(request)
 
+    @app.get("/healthz")
+    async def healthz():
+        return {"status": "ok"}
+
     # Routry
     app.include_router(auth_router)
     app.include_router(admin_router)
@@ -62,9 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(mentor_router)
     app.include_router(telemetry_router)
     app.include_router(controller_router)
-    app.mount(
-        "/playground", StaticFiles(directory="playground", html=True), name="playground"
-    )
+    mount_playground(app)
 
     return app
 

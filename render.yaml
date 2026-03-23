@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: bpmngen-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: ORG_INVITE_TOKEN_SECRET
+        sync: false
+      - key: AUTH_EMAIL_PROVIDER
+        value: smtp
+      - key: AUTH_EMAIL_FROM
+        sync: false
+      - key: AUTH_EMAIL_SMTP_HOST
+        sync: false
+      - key: AUTH_EMAIL_SMTP_PORT
+        sync: false
+      - key: AUTH_EMAIL_SMTP_SECURITY
+        value: starttls
+      - key: AUTH_EMAIL_SMTP_USERNAME
+        sync: false
+      - key: AUTH_EMAIL_SMTP_PASSWORD
+        sync: false
+      - key: AUTH_EMAIL_ALLOWLIST
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+      - key: PASSWORD_RESET_URL_BASE
+        sync: false
+      - key: SESSION_COOKIE_DOMAIN
+        sync: false
+      - key: AUTH_DB_PATH
+        value: /var/data/auth.db
+    disk:
+      name: bpmngen-api-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: static
+    name: bpmngen-web
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    publishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        sync: false

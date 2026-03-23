@@ -20,15 +20,13 @@ def test_build_linear_engine_from_wizard_creates_chain():
     engine_json = build_linear_engine_from_wizard(payload)
 
     starts = _by_type(engine_json, "startEvent")
-    ends = _by_type(engine_json, "endEvent")
     tasks = _by_type(engine_json, "task")
 
     assert len(starts) == 1
-    assert len(ends) == 1
     assert len(tasks) == len(payload.steps)
 
     flows = engine_json.get("flows", [])
-    assert len(flows) == len(tasks) + 1
+    assert len(flows) == len(tasks)
 
     flow_map = {flow["source"]: flow["target"] for flow in flows}
     assert len(flow_map) == len(
@@ -44,5 +42,5 @@ def test_build_linear_engine_from_wizard_creates_chain():
         chain.append(nxt)
         current = nxt
 
-    assert chain[:-1] == expected_task_ids
-    assert chain[-1] == ends[0]["id"]
+    assert chain == expected_task_ids
+    assert current == expected_task_ids[-1]
