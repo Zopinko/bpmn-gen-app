@@ -5,3 +5,4 @@ lxml==6.0.1
 pyyaml
 python-multipart>=0.0.9
 argon2-cffi>=23.1.0
+httpx>=0.27,<1
