@@ -4436,6 +4436,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   );
 
   const unreadProjectNotesCount = useMemo(() => notesUnreadIdsRef.current.size, [projectNotes, projectNotesLastSeenAt]);
+  const totalTeamUnreadCount = unreadProjectNotesCount + pendingDeleteRequests.length;
 
   const nonRequestActivityItems = useMemo(
     () =>
@@ -7415,12 +7416,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         <div className={`process-card-rail-group process-card-rail-group--team ${railSections.project ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
             <span>Tím</span>
-            {pendingDeleteRequests.length > 0 ? (
+            {totalTeamUnreadCount > 0 ? (
               <span
                 className="process-card-rail-header__badge"
-                aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek v time`}
+                aria-label={`${totalTeamUnreadCount} noviniek v time`}
               >
-                {pendingDeleteRequests.length}
+                {totalTeamUnreadCount}
               </span>
             ) : null}
           </button>
