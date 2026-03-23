@@ -21,6 +21,9 @@ import {
   saveOrgModel,
   getProjectNotes,
   saveProjectNotes,
+  listOrgActivity,
+  approveOrgDeleteRequest,
+  rejectOrgDeleteRequest,
   mentorReview,
   mentorApply,
 } from "../api/wizard";
@@ -34,9 +37,11 @@ import {
   heartbeatOrgModelPresence,
   moveOrgNode,
   renameOrgNode,
+  requestOrgProcessDelete,
   updateOrgProcessModelRef,
 } from "../api/orgModel";
 import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
+import { getOrgCapabilities } from "../permissions/orgCapabilities";
 import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
 import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
 
@@ -1224,6 +1229,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   });
   const [activeOrgName, setActiveOrgName] = useState("");
   const [activeOrgRole, setActiveOrgRole] = useState("");
+  const activeOrgCapabilities = useMemo(() => getOrgCapabilities(activeOrgRole), [activeOrgRole]);
   const [railSections, setRailSections] = useState({
     org: false,
     process: false,
@@ -1251,6 +1257,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [storyStale, setStoryStale] = useState(false);
   const [storyGeneratedAt, setStoryGeneratedAt] = useState(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [orgOpen, setOrgOpen] = useState(false);
   const [orgTree, setOrgTree] = useState(null);
   const [orgLoading, setOrgLoading] = useState(false);
@@ -1277,6 +1284,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [orgDeleteNode, setOrgDeleteNode] = useState(null);
   const [orgDeleteLoading, setOrgDeleteLoading] = useState(false);
   const [orgDeleteError, setOrgDeleteError] = useState(null);
+  const [orgDeleteRequestReason, setOrgDeleteRequestReason] = useState("");
   const [orgPushModalOpen, setOrgPushModalOpen] = useState(false);
   const [orgPushModel, setOrgPushModel] = useState(null);
   const [orgPushTargetFolderId, setOrgPushTargetFolderId] = useState("root");
@@ -1325,6 +1333,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [projectNotesLoading, setProjectNotesLoading] = useState(false);
   const [projectNotesSaving, setProjectNotesSaving] = useState(false);
   const [projectNotesError, setProjectNotesError] = useState(null);
+  const [projectActivityItems, setProjectActivityItems] = useState([]);
+  const [projectActivityLoading, setProjectActivityLoading] = useState(false);
+  const [projectActivityError, setProjectActivityError] = useState(null);
+  const [projectActivityActionId, setProjectActivityActionId] = useState(null);
+  const [projectActivityFilter, setProjectActivityFilter] = useState("all");
+  const [activityBadgePulse, setActivityBadgePulse] = useState(false);
+  const [activityRequestsPulse, setActivityRequestsPulse] = useState(false);
+  const activityPendingIdsRef = useRef(new Set());
+  const activityPulseTimerRef = useRef(null);
+  const activityRequestsPulseTimerRef = useRef(null);
+  const activityPollingStartedRef = useRef(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [replyDrafts, setReplyDrafts] = useState({});
   const [replyOpenById, setReplyOpenById] = useState({});
@@ -3127,6 +3146,44 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, [notesOpen, activeOrgId]);
 
   useEffect(() => {
+    if (activityOpen) {
+      void fetchProjectActivity();
+    }
+  }, [activityOpen, activeOrgId]);
+
+  useEffect(() => {
+    if (!activeOrgCapabilities.canApproveDeleteRequests) {
+      activityPendingIdsRef.current = new Set();
+      activityPollingStartedRef.current = false;
+      setActivityBadgePulse(false);
+      setActivityRequestsPulse(false);
+      return undefined;
+    }
+    if (!String(activeOrgId || "").trim()) {
+      return undefined;
+    }
+    void fetchProjectActivity({ silent: true });
+    const intervalId = window.setInterval(() => {
+      void fetchProjectActivity({ silent: true });
+    }, 10000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeOrgCapabilities.canApproveDeleteRequests, activeOrgId]);
+
+  useEffect(
+    () => () => {
+      if (activityPulseTimerRef.current) {
+        window.clearTimeout(activityPulseTimerRef.current);
+      }
+      if (activityRequestsPulseTimerRef.current) {
+        window.clearTimeout(activityRequestsPulseTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
     if (!isResizingSidebar) return;
     const onMove = (e) => {
       const rect = layoutRef.current?.getBoundingClientRect();
@@ -4097,6 +4154,212 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   };
 
+  const fetchProjectActivity = async ({ silent = false } = {}) => {
+    const scopedOrgId = String(activeOrgId || "").trim();
+    if (!scopedOrgId) {
+      setProjectActivityItems([]);
+      setProjectActivityError(null);
+      setProjectActivityLoading(false);
+      activityPendingIdsRef.current = new Set();
+      activityPollingStartedRef.current = false;
+      return;
+    }
+    if (!silent) {
+      setProjectActivityLoading(true);
+      setProjectActivityError(null);
+    }
+    try {
+      const resp = await listOrgActivity(scopedOrgId, 20);
+      const items = Array.isArray(resp?.items) ? resp.items : [];
+      setProjectActivityItems(items);
+      const resolvedRequestIds = new Set();
+      items.forEach((item) => {
+        const type = String(item?.event_type || "").toLowerCase();
+        const requestId = item?.metadata?.request_id;
+        if ((type === "delete_request_approved" || type === "delete_request_rejected") && requestId) {
+          resolvedRequestIds.add(String(requestId));
+        }
+      });
+      const nextPendingIds = new Set(
+        items
+          .filter((item) => {
+            const type = String(item?.event_type || "").toLowerCase();
+            return type === "delete_requested" && item?.id && !resolvedRequestIds.has(String(item.id));
+          })
+          .map((item) => String(item.id)),
+      );
+      const previousPendingIds = activityPendingIdsRef.current;
+      const hasNewPending =
+        activityPollingStartedRef.current &&
+        Array.from(nextPendingIds).some((id) => !previousPendingIds.has(id));
+      activityPendingIdsRef.current = nextPendingIds;
+      activityPollingStartedRef.current = true;
+      if (hasNewPending) {
+        setActivityBadgePulse(true);
+        setActivityRequestsPulse(true);
+        if (activityPulseTimerRef.current) {
+          window.clearTimeout(activityPulseTimerRef.current);
+        }
+        if (activityRequestsPulseTimerRef.current) {
+          window.clearTimeout(activityRequestsPulseTimerRef.current);
+        }
+        activityPulseTimerRef.current = window.setTimeout(() => {
+          setActivityBadgePulse(false);
+          activityPulseTimerRef.current = null;
+        }, 1600);
+        activityRequestsPulseTimerRef.current = window.setTimeout(() => {
+          setActivityRequestsPulse(false);
+          activityRequestsPulseTimerRef.current = null;
+        }, 2200);
+      }
+    } catch (e) {
+      setProjectActivityItems([]);
+      setProjectActivityError(e?.message || "Nepodarilo sa nacitat aktivitu.");
+    } finally {
+      if (!silent) {
+        setProjectActivityLoading(false);
+      }
+    }
+  };
+
+  const describeProjectActivity = (item) => {
+    const actor = item?.actor_email || "Neznamy pouzivatel";
+    const name = item?.entity_name || item?.entity_id || "polozka";
+    const type = String(item?.event_type || "").toLowerCase();
+    if (type === "process_created") return `${actor} vytvoril proces "${name}".`;
+    if (type === "process_renamed") return `${actor} premenoval proces na "${name}".`;
+    if (type === "process_moved") return `${actor} presunul proces "${name}".`;
+    if (type === "process_deleted") return `${actor} odstranil proces "${name}".`;
+    if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizacie.`;
+    if (type === "member_added") return `${actor} pridal clena "${name}".`;
+    if (type === "member_removed") return `${actor} odstranil clena "${name}".`;
+    if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
+    if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
+    if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
+    if (type === "delete_request_approved") return `${actor} schvalil odstranenie procesu "${name}".`;
+    if (type === "delete_request_rejected") return `${actor} zamietol odstranenie procesu "${name}".`;
+    return `${actor} vykonal akciu "${type || "unknown"}".`;
+  };
+
+  const getProjectActivityCategory = useCallback((item) => {
+    const type = String(item?.event_type || "").toLowerCase();
+    if (type.startsWith("delete_request") || type === "delete_requested") return "requests";
+    if (type.startsWith("process_") || type === "model_pushed_to_org" || type.startsWith("folder_")) return "models";
+    if (type.startsWith("member_") || type.startsWith("invite_")) return "members";
+    return "other";
+  }, []);
+
+  const resolvedDeleteRequestIds = useMemo(() => {
+    const ids = new Set();
+    projectActivityItems.forEach((item) => {
+      const type = String(item?.event_type || "").toLowerCase();
+      const requestId = item?.metadata?.request_id;
+      if ((type === "delete_request_approved" || type === "delete_request_rejected") && requestId) {
+        ids.add(String(requestId));
+      }
+    });
+    return ids;
+  }, [projectActivityItems]);
+
+  const isPendingDeleteRequest = useCallback(
+    (item) =>
+      String(item?.event_type || "").toLowerCase() === "delete_requested" &&
+      item?.id &&
+      !resolvedDeleteRequestIds.has(String(item.id)),
+    [resolvedDeleteRequestIds],
+  );
+
+  const getProjectActivityStatus = useCallback(
+    (item) => {
+      const type = String(item?.event_type || "").toLowerCase();
+      if (type === "delete_requested") {
+        return isPendingDeleteRequest(item)
+          ? { label: "Caka na rozhodnutie", tone: "pending" }
+          : { label: "Vybavene", tone: "muted" };
+      }
+      if (type === "delete_request_approved") {
+        return { label: "Schvalene", tone: "approved" };
+      }
+      if (type === "delete_request_rejected") {
+        return { label: "Zamietnute", tone: "rejected" };
+      }
+      if (type === "process_deleted") {
+        return { label: "Odstranene", tone: "danger" };
+      }
+      if (type === "model_pushed_to_org") {
+        return { label: "Push do org", tone: "info" };
+      }
+      return null;
+    },
+    [isPendingDeleteRequest],
+  );
+
+  const getProjectActivityCardClass = useCallback(
+    (item) => {
+      const type = String(item?.event_type || "").toLowerCase();
+      if (type === "delete_requested" && isPendingDeleteRequest(item)) {
+        return "project-activity-item--pending";
+      }
+      if (type === "delete_request_approved") {
+        return "project-activity-item--approved";
+      }
+      if (type === "delete_request_rejected") {
+        return "project-activity-item--rejected";
+      }
+      return "";
+    },
+    [isPendingDeleteRequest],
+  );
+
+  const handleOrgDeleteRequestDecision = async (item, decision) => {
+    if (!activeOrgId || !item?.id) return;
+    setProjectActivityActionId(`${decision}:${item.id}`);
+    setProjectActivityError(null);
+    try {
+      if (decision === "approve") {
+        await approveOrgDeleteRequest(item.id, activeOrgId);
+        await refreshOrgTree(activeOrgId);
+        setInfo(`Odstranenie procesu "${item.entity_name || "proces"}" bolo schvalene.`);
+      } else {
+        await rejectOrgDeleteRequest(item.id, activeOrgId);
+        setInfo(`Ziadost o odstranenie procesu "${item.entity_name || "proces"}" bola zamietnuta.`);
+      }
+      await fetchProjectActivity();
+    } catch (e) {
+      setProjectActivityError(e?.message || "Nepodarilo sa spracovat ziadost.");
+    } finally {
+      setProjectActivityActionId(null);
+    }
+  };
+
+  const pendingDeleteRequests = useMemo(
+    () => projectActivityItems.filter((item) => isPendingDeleteRequest(item)),
+    [projectActivityItems, isPendingDeleteRequest],
+  );
+
+  const nonRequestActivityItems = useMemo(
+    () =>
+      projectActivityItems.filter((item) => {
+        const type = String(item?.event_type || "").toLowerCase();
+        return !(type === "delete_requested" && isPendingDeleteRequest(item));
+      }),
+    [projectActivityItems, isPendingDeleteRequest],
+  );
+
+  const filteredPendingDeleteRequests = useMemo(() => {
+    if (projectActivityFilter === "all" || projectActivityFilter === "requests") {
+      return pendingDeleteRequests;
+    }
+    return [];
+  }, [pendingDeleteRequests, projectActivityFilter]);
+
+  const filteredNonRequestActivityItems = useMemo(() => {
+    if (projectActivityFilter === "all") {
+      return nonRequestActivityItems;
+    }
+    return nonRequestActivityItems.filter((item) => getProjectActivityCategory(item) === projectActivityFilter);
+  }, [getProjectActivityCategory, nonRequestActivityItems, projectActivityFilter]);
+
   const ensureLaneRightPaddingAfterInsert = (laneElement, anchorElement, modeler, modeling) => {
     if (!laneElement?.id || !modeler || !modeling) return;
     const elementRegistry = modeler.get("elementRegistry");
@@ -4174,7 +4437,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const _handleEnableOrgEdit_unused2 = () => {
     if (modelSource?.kind !== "org") return;
-    if (activeOrgRole !== "owner") {
+    if (!activeOrgCapabilities.canToggleOrgEdit) {
       setInfo("Nemáš právo upravovať org model.");
       return;
     }
@@ -4796,8 +5059,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setError("Nie je čo uložiť – vygeneruj alebo naimportuj diagram.");
       return;
     }
-    const normalizedOrgRole = String(activeOrgRole || "").toLowerCase();
-    const canEditOrg = modelSource?.kind !== "org" || ["owner", "member"].includes(normalizedOrgRole);
+    const canEditOrg = modelSource?.kind !== "org" || activeOrgCapabilities.canEditOrgModels;
     if (modelSource?.kind === "org" && !canEditOrg) {
       setInfo("Nemáš právo upravovať org model.");
       return;
@@ -5262,7 +5524,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!node || node.type !== "process") return;
     setOrgMenuNodeId(null);
     setOrgDeleteNode(node);
-    setOrgDeleteError(null);
+    setOrgDeleteRequestReason("");
+    setOrgDeleteError(
+      activeOrgCapabilities.canDirectDeleteOrgProcess
+        ? null
+        : "Ako člen organizácie nemôžeš proces odstrániť priamo. Pošli túto požiadavku ownerovi.",
+    );
     setOrgDeleteConfirmOpen(true);
     setOrgDeleteFinalConfirmOpen(false);
   };
@@ -5272,10 +5539,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgDeleteConfirmOpen(false);
     setOrgDeleteFinalConfirmOpen(false);
     setOrgDeleteNode(null);
+    setOrgDeleteRequestReason("");
     setOrgDeleteError(null);
   };
 
   const openFinalDeleteConfirmModal = () => {
+    if (!activeOrgCapabilities.canDirectDeleteOrgProcess) {
+      return;
+    }
     setOrgDeleteConfirmOpen(false);
     setOrgDeleteFinalConfirmOpen(true);
   };
@@ -5698,16 +5969,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgDeleteLoading(true);
     setOrgDeleteError(null);
     try {
-      const response = await deleteOrgNode(orgDeleteNode.id, activeOrgId);
-      if (response?.tree) {
-        setOrgTree(response.tree);
+      if (activeOrgCapabilities.canDirectDeleteOrgProcess) {
+        const response = await deleteOrgNode(orgDeleteNode.id, activeOrgId);
+        if (response?.tree) {
+          setOrgTree(response.tree);
+        } else {
+          await refreshOrgTree(activeOrgId);
+        }
+        setInfo("Proces bol odstránený.");
       } else {
-        await refreshOrgTree(activeOrgId);
+        await requestOrgProcessDelete(orgDeleteNode.id, activeOrgId, orgDeleteRequestReason);
+        setInfo("Žiadosť o odstránenie procesu bola odoslaná ownerovi.");
       }
       setOrgDeleteConfirmOpen(false);
       setOrgDeleteFinalConfirmOpen(false);
       setOrgDeleteNode(null);
-      setInfo("Proces bol odstránený.");
     } catch (e) {
       setOrgDeleteError(e?.message || "Nepodarilo sa odstranit proces.");
     } finally {
@@ -6503,8 +6779,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleEnableOrgEdit = () => {
     if (modelSource?.kind !== "org") return;
-    const normalizedOrgRole = String(activeOrgRole || "").toLowerCase();
-    if (!["owner", "member"].includes(normalizedOrgRole)) {
+    if (!activeOrgCapabilities.canToggleOrgEdit) {
       setInfo("Nemáš právo upravovať org model.");
       return;
     }
@@ -7037,21 +7312,26 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           ) : null}
         </div>
 
-        <div className={`process-card-rail-group ${railSections.project ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
-            <span>Projekt</span>
+        <div className="process-card-rail-content">
+          <button
+            type="button"
+            className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
+            onClick={() => setNotesOpen(true)}
+          >
+            Poznámky
           </button>
-          {railSections.project ? (
-            <div className="process-card-rail-content">
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--notes ${notesOpen ? "is-active" : ""}`}
-                onClick={() => setNotesOpen(true)}
-              >
-                Poznámky
-              </button>
-            </div>
-          ) : null}
+          <button
+            type="button"
+            className={`process-card-toggle process-card-toggle--notes ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
+            onClick={() => setActivityOpen(true)}
+          >
+            Aktivita
+            {pendingDeleteRequests.length > 0 ? (
+              <span className="process-card-toggle__badge" aria-label={`${pendingDeleteRequests.length} cakajucich poziadaviek`}>
+                {pendingDeleteRequests.length}
+              </span>
+            ) : null}
+          </button>
         </div>
           </>
         )}
@@ -7984,13 +8264,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div>
                 <div style={{ fontWeight: 600 }}>READ-ONLY režim</div>
                 <div style={{ fontSize: 12, opacity: 0.8 }}>
-                  {String(activeOrgRole || "").toLowerCase() === "owner"
+                  {activeOrgCapabilities.canToggleOrgEdit
                     ? "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."
                     : "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."}
                 </div>
               </div>
-              {String(activeOrgRole || "").toLowerCase() === "owner" ||
-              String(activeOrgRole || "").toLowerCase() === "member" ? (
+              {activeOrgCapabilities.canToggleOrgEdit ? (
                 <button className="btn btn--small" type="button" onClick={handleEnableOrgEdit}>
                   Upraviť
                 </button>
@@ -8753,19 +9032,45 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </button>
               </div>
               <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
-                Proces "{orgDeleteNode?.name || "-"}" bude odstránený zo stromu organizácie.
+                {activeOrgCapabilities.canDirectDeleteOrgProcess
+                  ? `Proces "${orgDeleteNode?.name || "-"}" bude odstránený zo stromu organizácie.`
+                  : `Proces "${orgDeleteNode?.name || "-"}" nemôžeš odstrániť priamo.`}
               </div>
               <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
-                Táto akcia sa nedá vrátiť späť.
+                {activeOrgCapabilities.canDirectDeleteOrgProcess
+                  ? "Táto akcia sa nedá vrátiť späť."
+                  : "Posli ownerovi kratky dovod, preco ma byt proces odstraneny."}
               </div>
+              {!activeOrgCapabilities.canDirectDeleteOrgProcess ? (
+                <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+                  <label htmlFor="org-delete-request-reason" style={{ fontSize: 12, opacity: 0.82 }}>
+                    Dovod ziadosti
+                  </label>
+                  <textarea
+                    id="org-delete-request-reason"
+                    className="project-notes-textarea"
+                    style={{ minHeight: 100 }}
+                    value={orgDeleteRequestReason}
+                    onChange={(e) => setOrgDeleteRequestReason(e.target.value)}
+                    placeholder="Strucne napis, preco ma byt proces odstraneny..."
+                    maxLength={500}
+                  />
+                </div>
+              ) : null}
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                 <button className="btn" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
-                  Zrušiť
+                  {activeOrgCapabilities.canDirectDeleteOrgProcess ? "Zrušiť" : "Zavrieť"}
                 </button>
-                <button className="btn btn-danger" type="button" onClick={openFinalDeleteConfirmModal} disabled={orgDeleteLoading}>
-                  Odstrániť
-                </button>
+                {activeOrgCapabilities.canDirectDeleteOrgProcess ? (
+                  <button className="btn btn-danger" type="button" onClick={openFinalDeleteConfirmModal} disabled={orgDeleteLoading}>
+                    Odstrániť
+                  </button>
+                ) : (
+                  <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
+                    {orgDeleteLoading ? "Odosielam..." : "Požiadať o odstránenie"}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -9057,6 +9362,154 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     ))
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activityOpen ? (
+          <div className="wizard-models-modal" onClick={() => setActivityOpen(false)}>
+            <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <h3 style={{ margin: 0 }}>Aktivita organizacie</h3>
+                <button className="btn btn--small" type="button" onClick={() => setActivityOpen(false)}>
+                  Zavrieť
+                </button>
+              </div>
+              <div className="project-notes-body">
+                <div className="project-note-meta" style={{ marginBottom: 8 }}>
+                  Organizácia: {activeOrgName || "Nezvolená"}
+                </div>
+                <div className="project-activity-filters">
+                  <button
+                    type="button"
+                    className={`project-activity-filter ${projectActivityFilter === "all" ? "is-active" : ""}`}
+                    onClick={() => setProjectActivityFilter("all")}
+                  >
+                    Vsetko
+                  </button>
+                  <button
+                    type="button"
+                    className={`project-activity-filter ${projectActivityFilter === "requests" ? "is-active" : ""}`}
+                    onClick={() => setProjectActivityFilter("requests")}
+                  >
+                    Poziadavky
+                  </button>
+                  <button
+                    type="button"
+                    className={`project-activity-filter ${projectActivityFilter === "models" ? "is-active" : ""}`}
+                    onClick={() => setProjectActivityFilter("models")}
+                  >
+                    Modely
+                  </button>
+                  <button
+                    type="button"
+                    className={`project-activity-filter ${projectActivityFilter === "members" ? "is-active" : ""}`}
+                    onClick={() => setProjectActivityFilter("members")}
+                  >
+                    Clenovia
+                  </button>
+                </div>
+                {projectActivityError ? <div className="wizard-error">{projectActivityError}</div> : null}
+                {projectActivityLoading ? (
+                  <div className="project-notes-empty">Načítavam aktivitu...</div>
+                ) : !activeOrgId ? (
+                  <div className="project-notes-empty">Po výbere organizácie sa zobrazí aktivita tímu.</div>
+                ) : projectActivityItems.length === 0 ? (
+                  <div className="project-notes-empty">Zatiaľ tu nie sú žiadne zaznamenané udalosti.</div>
+                ) : (
+                  <div className="project-notes-list">
+                    {activeOrgCapabilities.canApproveDeleteRequests ? (
+                      <div className={`project-activity-section ${activityRequestsPulse ? "is-pulse" : ""}`}>
+                        <div className="project-activity-section__header">
+                          <h4 className="project-activity-section__title">
+                            Poziadavky na odstranenie
+                            {filteredPendingDeleteRequests.length > 0 ? (
+                              <span className="project-activity-badge is-pending project-activity-badge--count">
+                                {filteredPendingDeleteRequests.length}
+                              </span>
+                            ) : null}
+                          </h4>
+                        </div>
+                        {filteredPendingDeleteRequests.length === 0 ? (
+                          <div className="project-notes-empty">Ziadne poziadavky na odstranenie.</div>
+                        ) : (
+                          <div className="project-notes-list">
+                            {filteredPendingDeleteRequests.map((item) => {
+                              const status = getProjectActivityStatus(item);
+                              const itemClass = getProjectActivityCardClass(item);
+                              return (
+                                <div key={item.id} className={`project-note-item project-activity-item ${itemClass}`.trim()}>
+                                  <div className="project-activity-item__header">
+                                    <div style={{ color: "#e5e7eb", fontWeight: 600 }}>{describeProjectActivity(item)}</div>
+                                    {status ? (
+                                      <span className={`project-activity-badge is-${status.tone}`}>
+                                        {status.label}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="project-note-meta">{formatDateTime(item.created_at)}</div>
+                                  {item?.metadata?.reason ? (
+                                    <div className="project-activity-reason">
+                                      Dovod: {item.metadata.reason}
+                                    </div>
+                                  ) : null}
+                                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                    <button
+                                      type="button"
+                                      className="btn btn--small"
+                                      disabled={projectActivityActionId === `approve:${item.id}` || projectActivityActionId === `reject:${item.id}`}
+                                      onClick={() => void handleOrgDeleteRequestDecision(item, "approve")}
+                                    >
+                                      {projectActivityActionId === `approve:${item.id}` ? "Schvalujem..." : "Schvalit odstranenie"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn--small"
+                                      disabled={projectActivityActionId === `approve:${item.id}` || projectActivityActionId === `reject:${item.id}`}
+                                      onClick={() => void handleOrgDeleteRequestDecision(item, "reject")}
+                                    >
+                                      {projectActivityActionId === `reject:${item.id}` ? "Zamietam..." : "Zamietnut"}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+
+                    <div className="project-activity-section">
+                      <div className="project-activity-section__header">
+                        <h4 className="project-activity-section__title">Ostatna aktivita</h4>
+                      </div>
+                      {filteredNonRequestActivityItems.length === 0 ? (
+                        <div className="project-notes-empty">Zatial tu nie je dalsia aktivita.</div>
+                      ) : (
+                        <div className="project-notes-list">
+                          {filteredNonRequestActivityItems.map((item) => {
+                            const status = getProjectActivityStatus(item);
+                            const itemClass = getProjectActivityCardClass(item);
+                            return (
+                              <div key={item.id} className={`project-note-item project-activity-item ${itemClass}`.trim()}>
+                                <div className="project-activity-item__header">
+                                  <div style={{ color: "#e5e7eb", fontWeight: 600 }}>{describeProjectActivity(item)}</div>
+                                  {status ? (
+                                    <span className={`project-activity-badge is-${status.tone}`}>
+                                      {status.label}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="project-note-meta">{formatDateTime(item.created_at)}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

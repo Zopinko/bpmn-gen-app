@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { addOrgMember, createOrg, getOrgInviteLink, listMyOrgs, listOrgMembers, removeOrgMember } from "../api/wizard";
+import { addOrgMember, createOrg, getOrgInviteLink, listMyOrgs, listOrgActivity, listOrgMembers, removeOrgMember } from "../api/wizard";
+import { getOrgCapabilities, getOrgRoleLabel, normalizeOrgRole } from "../permissions/orgCapabilities";
 
 function OrganizationPage() {
   const [orgs, setOrgs] = useState([]);
@@ -23,6 +24,9 @@ function OrganizationPage() {
   const [inviteError, setInviteError] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteMeta, setInviteMeta] = useState(null);
+  const [activityItems, setActivityItems] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState("");
 
   const [newOrgName, setNewOrgName] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
@@ -87,18 +91,18 @@ function OrganizationPage() {
     [orgs, activeOrgId],
   );
   const ownsAnyOrg = useMemo(
-    () => orgs.some((org) => String(org?.role || "").toLowerCase() === "owner"),
+    () => orgs.some((org) => normalizeOrgRole(org?.role) === "owner"),
     [orgs],
   );
   const ownedOrganizations = useMemo(
-    () => orgs.filter((org) => String(org?.role || "").toLowerCase() === "owner"),
+    () => orgs.filter((org) => normalizeOrgRole(org?.role) === "owner"),
     [orgs],
   );
   const joinedOrganizations = useMemo(
-    () => orgs.filter((org) => String(org?.role || "").toLowerCase() !== "owner"),
+    () => orgs.filter((org) => normalizeOrgRole(org?.role) !== "owner"),
     [orgs],
   );
-  const isActiveOrgOwner = String(activeOrg?.role || "").toLowerCase() === "owner";
+  const activeOrgCapabilities = useMemo(() => getOrgCapabilities(activeOrg?.role), [activeOrg?.role]);
   const inviteStatus = String(inviteMeta?.status || "missing").toLowerCase();
 
   const formatDateTime = (value) => {
@@ -148,7 +152,7 @@ function OrganizationPage() {
   }, [activeOrgId]);
 
   const refreshInviteStatus = useCallback(async () => {
-    if (!activeOrgId || !isActiveOrgOwner) {
+    if (!activeOrgId || !activeOrgCapabilities.canManageInvites) {
       setInviteMeta(null);
       setInviteLink("");
       return;
@@ -171,7 +175,26 @@ function OrganizationPage() {
     } finally {
       setInviteLoading(false);
     }
-  }, [activeOrgId, isActiveOrgOwner]);
+  }, [activeOrgCapabilities.canManageInvites, activeOrgId]);
+
+  const refreshActivity = useCallback(async () => {
+    if (!activeOrgId) {
+      setActivityItems([]);
+      setActivityError("");
+      return;
+    }
+    setActivityLoading(true);
+    setActivityError("");
+    try {
+      const response = await listOrgActivity(activeOrgId, 25);
+      setActivityItems(Array.isArray(response?.items) ? response.items : []);
+    } catch (e) {
+      setActivityItems([]);
+      setActivityError(e?.message || "Nepodarilo sa nacitat aktivitu.");
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [activeOrgId]);
 
   useEffect(() => {
     void refreshOrgs();
@@ -191,6 +214,10 @@ function OrganizationPage() {
   useEffect(() => {
     void refreshInviteStatus();
   }, [refreshInviteStatus]);
+
+  useEffect(() => {
+    void refreshActivity();
+  }, [refreshActivity]);
 
   const handleSelectActiveOrg = (org) => {
     if (!org?.id) return;
@@ -327,7 +354,28 @@ function OrganizationPage() {
     }
   };
 
-  const roleLabel = (role) => (String(role || "").toLowerCase() === "owner" ? "Owner" : "Člen");
+  const describeActivity = (item) => {
+    const actor = item?.actor_email || "Neznamy pouzivatel";
+    const name = item?.entity_name || item?.entity_id || "polozka";
+    const type = String(item?.event_type || "").toLowerCase();
+    if (type === "process_created") return `${actor} vytvoril proces "${name}".`;
+    if (type === "process_renamed") return `${actor} premenoval proces na "${name}".`;
+    if (type === "process_moved") return `${actor} presunul proces "${name}".`;
+    if (type === "process_deleted") return `${actor} odstranil proces "${name}".`;
+    if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizacie.`;
+    if (type === "member_added") return `${actor} pridal clena "${name}".`;
+    if (type === "member_removed") return `${actor} odstranil clena "${name}".`;
+    if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
+    if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
+    if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
+    return `${actor} vykonal akciu "${type || "unknown"}".`;
+  };
+
+  const pendingDeleteRequestCount = useMemo(
+    () =>
+      activityItems.filter((item) => String(item?.event_type || "").toLowerCase() === "delete_requested").length,
+    [activityItems],
+  );
 
   return (
     <section className="organization-page">
@@ -364,7 +412,7 @@ function OrganizationPage() {
             </div>
             <div className="account-info-row">
               <span>Tvoja rola</span>
-              <strong>{roleLabel(activeOrg?.role)}</strong>
+              <strong>{getOrgRoleLabel(activeOrg?.role)}</strong>
             </div>
           </div>
         )}
@@ -392,16 +440,16 @@ function OrganizationPage() {
               <tbody>
                 {orgs.map((org) => {
                   const isActive = String(org.id) === String(activeOrgId);
-                  const isOwner = String(org.role || "").toLowerCase() === "owner";
+                  const orgCapabilities = getOrgCapabilities(org.role);
                   return (
                     <tr key={org.id}>
                       <td>{org.name || org.id}</td>
                       <td>
-                        <span className={`organization-chip ${isOwner ? "is-owned" : "is-joined"}`}>
-                          {isOwner ? "Moja organizácia" : "Pozvaná organizácia"}
+                        <span className={`organization-chip ${orgCapabilities.isOwner ? "is-owned" : "is-joined"}`}>
+                          {orgCapabilities.isOwner ? "Moja organizácia" : "Pozvaná organizácia"}
                         </span>
                       </td>
-                      <td>{roleLabel(org.role)}</td>
+                      <td>{getOrgRoleLabel(org.role)}</td>
                       <td>{isActive ? "Aktívna" : "-"}</td>
                       <td>
                         <button
@@ -438,7 +486,7 @@ function OrganizationPage() {
         <div className="organization-section-head">
           <h2>Členovia aktívnej organizácie</h2>
           <span className="organization-section-subtle">
-            {isActiveOrgOwner
+            {activeOrgCapabilities.canManageMembers
               ? "Ako owner môžeš pridávať a odoberať členov."
               : "Zoznam členov je len na zobrazenie. Správu členov rieši owner."}
           </span>
@@ -453,7 +501,7 @@ function OrganizationPage() {
                 <tr>
                   <th>Email</th>
                   <th>Rola</th>
-                  {isActiveOrgOwner ? <th>Akcia</th> : null}
+                  {activeOrgCapabilities.canManageMembers ? <th>Akcia</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -461,10 +509,10 @@ function OrganizationPage() {
                   members.map((member) => (
                     <tr key={`${member.email}-${member.role}`}>
                       <td>{member.email}</td>
-                      <td>{roleLabel(member.role)}</td>
-                      {isActiveOrgOwner ? (
+                      <td>{getOrgRoleLabel(member.role)}</td>
+                      {activeOrgCapabilities.canManageMembers ? (
                         <td>
-                          {String(member.role || "").toLowerCase() === "member" ? (
+                          {normalizeOrgRole(member.role) === "member" ? (
                             <button
                               type="button"
                               className="btn btn--small btn-danger organization-remove-member-btn"
@@ -481,14 +529,14 @@ function OrganizationPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={isActiveOrgOwner ? 3 : 2}>V tejto organizácii zatiaľ nie sú žiadni členovia.</td>
+                    <td colSpan={activeOrgCapabilities.canManageMembers ? 3 : 2}>V tejto organizácii zatiaľ nie sú žiadni členovia.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         ) : null}
-        {isActiveOrgOwner ? (
+        {activeOrgCapabilities.canManageMembers ? (
           <form className="organization-form organization-owner-tools" onSubmit={handleAddMember}>
             <h3>Pridať člena</h3>
             <p className="organization-hint">Zadaj email existujúceho používateľa BPMN.Gen.</p>
@@ -513,7 +561,7 @@ function OrganizationPage() {
           <h2>Pozvánky do organizácie</h2>
           <span className="organization-section-subtle">Vygeneruj link, ktorý pošleš novému členovi.</span>
         </div>
-        {isActiveOrgOwner ? (
+        {activeOrgCapabilities.canManageInvites ? (
           <>
             <p className="organization-hint">
               Pozvánka je naviazaná na aktuálne aktívnu organizáciu. Pri regenerovaní sa vygeneruje nový link.
@@ -565,6 +613,49 @@ function OrganizationPage() {
         ) : (
           <p className="organization-hint">Pozvánky môže spravovať iba owner aktívnej organizácie.</p>
         )}
+      </div>
+
+      <div className="auth-card organization-card">
+        <div className="organization-section-head">
+          <h2>
+            Aktivita organizacie
+            {pendingDeleteRequestCount > 0 ? (
+              <span className="project-activity-badge is-pending project-activity-badge--count">
+                {pendingDeleteRequestCount}
+              </span>
+            ) : null}
+          </h2>
+          <span className="organization-section-subtle">Posledne zmeny v organizacii a modeloch.</span>
+        </div>
+        {!activityLoading && !activityError && pendingDeleteRequestCount === 0 ? (
+          <p className="organization-hint">Ziadne poziadavky na odstranenie.</p>
+        ) : null}
+        {activityLoading ? <p className="organization-hint">Nacitavam aktivitu...</p> : null}
+        {activityError ? <p className="auth-message auth-message--error">{activityError}</p> : null}
+        {!activityLoading && !activityError ? (
+          <div className="organization-info-box">
+            {activityItems.length ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                {activityItems.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      paddingBottom: 10,
+                      borderBottom: "1px solid rgba(51, 65, 85, 0.45)",
+                    }}
+                  >
+                    <strong style={{ color: "#e5e7eb", fontSize: "0.92rem" }}>{describeActivity(item)}</strong>
+                    <span className="organization-hint">{formatDateTime(item.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="organization-hint">Zatial tu nie su ziadne zaznamenane udalosti.</p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="auth-card organization-card">
