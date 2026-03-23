@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { addOrgMember, createOrg, getOrgInviteLink, listMyOrgs, listOrgActivity, listOrgMembers, removeOrgMember } from "../api/wizard";
+import {
+  addOrgMember,
+  createOrg,
+  getOrgInviteLink,
+  listMyOrgs,
+  listOrgActivity,
+  listOrgMembers,
+  removeOrgMember,
+  updateOrgMemberRole,
+} from "../api/wizard";
 import { getOrgCapabilities, getOrgRoleLabel, normalizeOrgRole } from "../permissions/orgCapabilities";
 
 function OrganizationPage() {
@@ -32,9 +41,11 @@ function OrganizationPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createInfo, setCreateInfo] = useState("");
-  const [removeModal, setRemoveModal] = useState({
+  const [memberActionModal, setMemberActionModal] = useState({
     open: false,
+    action: "",
     targetEmail: "",
+    targetRole: "",
     typedEmail: "",
     loading: false,
     error: "",
@@ -311,46 +322,60 @@ function OrganizationPage() {
     }
   };
 
-  const openRemoveModal = (email) => {
-    setRemoveModal({
+  const openMemberActionModal = (action, email, role = "") => {
+    setMemberActionModal({
       open: true,
+      action,
       targetEmail: email || "",
+      targetRole: normalizeOrgRole(role),
       typedEmail: "",
       loading: false,
       error: "",
     });
   };
 
-  const closeRemoveModal = () => {
-    if (removeModal.loading) return;
-    setRemoveModal({
+  const closeMemberActionModal = () => {
+    if (memberActionModal.loading) return;
+    setMemberActionModal({
       open: false,
+      action: "",
       targetEmail: "",
+      targetRole: "",
       typedEmail: "",
       loading: false,
       error: "",
     });
   };
 
-  const handleConfirmRemoveMember = async () => {
-    const targetEmail = String(removeModal.targetEmail || "").trim().toLowerCase();
-    const typedEmail = String(removeModal.typedEmail || "").trim().toLowerCase();
+  const handleConfirmMemberAction = async () => {
+    const targetEmail = String(memberActionModal.targetEmail || "").trim().toLowerCase();
+    const typedEmail = String(memberActionModal.typedEmail || "").trim().toLowerCase();
+    const action = String(memberActionModal.action || "");
     if (!targetEmail || !typedEmail || typedEmail !== targetEmail) {
-      setRemoveModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš presnú emailovú adresu." }));
+      setMemberActionModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš presnú emailovú adresu." }));
       return;
     }
     if (!activeOrgId) {
-      setRemoveModal((prev) => ({ ...prev, error: "Najprv vyber aktívnu organizáciu." }));
+      setMemberActionModal((prev) => ({ ...prev, error: "Najprv vyber aktívnu organizáciu." }));
       return;
     }
-    setRemoveModal((prev) => ({ ...prev, loading: true, error: "" }));
+    setMemberActionModal((prev) => ({ ...prev, loading: true, error: "" }));
     try {
-      await removeOrgMember(targetEmail, activeOrgId);
+      if (action === "promote") {
+        await updateOrgMemberRole(targetEmail, activeOrgId, "owner");
+        setAddMemberInfo(`Používateľ ${targetEmail} bol povýšený na ownera.`);
+      } else if (action === "demote") {
+        await updateOrgMemberRole(targetEmail, activeOrgId, "member");
+        setAddMemberInfo(`Používateľ ${targetEmail} bol zmenený na člena.`);
+      } else {
+        await removeOrgMember(targetEmail, activeOrgId);
+        setAddMemberInfo(`Používateľ ${targetEmail} bol odstránený z organizácie.`);
+      }
+      await refreshOrgs(activeOrgId);
       await refreshMembers();
-      setAddMemberInfo(`Používateľ ${targetEmail} bol odstránený z organizácie.`);
-      closeRemoveModal();
+      closeMemberActionModal();
     } catch (e) {
-      setRemoveModal((prev) => ({ ...prev, loading: false, error: e?.message || "Odstránenie člena zlyhalo." }));
+      setMemberActionModal((prev) => ({ ...prev, loading: false, error: e?.message || "Zmena člena zlyhala." }));
     }
   };
 
@@ -365,6 +390,7 @@ function OrganizationPage() {
     if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizacie.`;
     if (type === "member_added") return `${actor} pridal clena "${name}".`;
     if (type === "member_removed") return `${actor} odstranil clena "${name}".`;
+    if (type === "member_role_updated") return `${actor} zmenil rolu clena "${name}".`;
     if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
     if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
     if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
@@ -376,6 +402,32 @@ function OrganizationPage() {
       activityItems.filter((item) => String(item?.event_type || "").toLowerCase() === "delete_requested").length,
     [activityItems],
   );
+
+  const getMemberActionMeta = () => {
+    const action = String(memberActionModal.action || "");
+    if (action === "promote") {
+      return {
+        title: "Potvrdenie povysenia na ownera",
+        hint: "Pre potvrdenie povysenia prepíš presný email používateľa:",
+        submitLabel: memberActionModal.loading ? "Povysujem..." : "Povysit na ownera",
+        submitClass: "btn btn-primary",
+      };
+    }
+    if (action === "demote") {
+      return {
+        title: "Potvrdenie zmeny na clena",
+        hint: "Pre potvrdenie zmeny roly prepíš presný email používateľa:",
+        submitLabel: memberActionModal.loading ? "Menim rolu..." : "Zmenit na clena",
+        submitClass: "btn btn-danger",
+      };
+    }
+    return {
+      title: "Potvrdenie vyhodenia clena",
+      hint: "Pre potvrdenie odstránenia člena prepíš presný email:",
+      submitLabel: memberActionModal.loading ? "Odstraňujem..." : "Vyhodit z organizacie",
+      submitClass: "btn btn-danger",
+    };
+  };
 
   return (
     <section className="organization-page">
@@ -506,27 +558,45 @@ function OrganizationPage() {
               </thead>
               <tbody>
                 {members.length ? (
-                  members.map((member) => (
-                    <tr key={`${member.email}-${member.role}`}>
-                      <td>{member.email}</td>
-                      <td>{getOrgRoleLabel(member.role)}</td>
-                      {activeOrgCapabilities.canManageMembers ? (
-                        <td>
-                          {normalizeOrgRole(member.role) === "member" ? (
-                            <button
-                              type="button"
-                              className="btn btn--small btn-danger organization-remove-member-btn"
-                              onClick={() => openRemoveModal(member.email)}
-                            >
-                              Vyhodiť člena
-                            </button>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))
+                  members.map((member) => {
+                    const memberRole = normalizeOrgRole(member.role);
+                    return (
+                      <tr key={`${member.email}-${member.role}`}>
+                        <td>{member.email}</td>
+                        <td>{getOrgRoleLabel(member.role)}</td>
+                        {activeOrgCapabilities.canManageMembers ? (
+                          <td>
+                            <div className="organization-inline-actions">
+                              {memberRole === "member" ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--small"
+                                  onClick={() => openMemberActionModal("promote", member.email, member.role)}
+                                >
+                                  Povyšit na ownera
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn--small"
+                                  onClick={() => openMemberActionModal("demote", member.email, member.role)}
+                                >
+                                  Zmenit na clena
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn--small btn-danger organization-remove-member-btn"
+                                onClick={() => openMemberActionModal("remove", member.email, member.role)}
+                              >
+                                {memberRole === "owner" ? "Vyhodit ownera" : "Vyhodit clena"}
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={activeOrgCapabilities.canManageMembers ? 3 : 2}>V tejto organizácii zatiaľ nie sú žiadni členovia.</td>
@@ -688,31 +758,36 @@ function OrganizationPage() {
         )}
       </div>
 
-      {removeModal.open ? (
-        <div className="wizard-models-modal" onClick={closeRemoveModal}>
+      {memberActionModal.open ? (
+        <div className="wizard-models-modal" onClick={closeMemberActionModal}>
           <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(event) => event.stopPropagation()}>
             <div className="wizard-models-header">
-              <h3 style={{ margin: 0 }}>Potvrdenie vyhodenia člena</h3>
+              <h3 style={{ margin: 0 }}>{getMemberActionMeta().title}</h3>
             </div>
             <p className="organization-hint" style={{ marginBottom: 10 }}>
-              Pre potvrdenie odstránenia člena prepíš presný email:
+              {getMemberActionMeta().hint}
             </p>
-            <p style={{ marginTop: 0, marginBottom: 10, color: "#e5e7eb", fontWeight: 600 }}>{removeModal.targetEmail}</p>
+            <p style={{ marginTop: 0, marginBottom: 10, color: "#e5e7eb", fontWeight: 600 }}>{memberActionModal.targetEmail}</p>
             <input
               type="email"
               className="wizard-models-search"
               placeholder="Zadaj email člena"
-              value={removeModal.typedEmail}
-              onChange={(event) => setRemoveModal((prev) => ({ ...prev, typedEmail: event.target.value, error: "" }))}
+              value={memberActionModal.typedEmail}
+              onChange={(event) => setMemberActionModal((prev) => ({ ...prev, typedEmail: event.target.value, error: "" }))}
               autoFocus
             />
-            {removeModal.error ? <p className="auth-message auth-message--error">{removeModal.error}</p> : null}
+            {memberActionModal.error ? <p className="auth-message auth-message--error">{memberActionModal.error}</p> : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-              <button type="button" className="btn" onClick={closeRemoveModal} disabled={removeModal.loading}>
+              <button type="button" className="btn" onClick={closeMemberActionModal} disabled={memberActionModal.loading}>
                 Zrušiť
               </button>
-              <button type="button" className="btn btn-danger" onClick={handleConfirmRemoveMember} disabled={removeModal.loading}>
-                {removeModal.loading ? "Odstraňujem..." : "Vyhodiť člena"}
+              <button
+                type="button"
+                className={getMemberActionMeta().submitClass}
+                onClick={handleConfirmMemberAction}
+                disabled={memberActionModal.loading}
+              >
+                {getMemberActionMeta().submitLabel}
               </button>
             </div>
           </div>

@@ -465,6 +465,19 @@ def add_org_member(user_id: str, org_id: str, role: str) -> None:
         conn.commit()
 
 
+def count_org_owners(org_id: str) -> int:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS owner_count
+            FROM organization_members
+            WHERE organization_id = ? AND LOWER(role) IN ('owner', 'admin')
+            """,
+            (org_id,),
+        ).fetchone()
+    return int(row["owner_count"] or 0) if row else 0
+
+
 def list_org_members(org_id: str) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -478,6 +491,39 @@ def list_org_members(org_id: str) -> list[dict]:
             (org_id,),
         ).fetchall()
     return [{"email": row["email"], "role": normalize_org_role(row["role"])} for row in rows]
+
+
+def update_org_member_role_by_email(org_id: str, email: str, role: str) -> dict:
+    normalized_email = normalize_email(email)
+    normalized_role = normalize_org_role(role)
+    if not normalized_email:
+        raise ValueError("Email je povinny.")
+    if normalized_role not in {"owner", "member"}:
+        raise ValueError("Neplatna rola clena organizacie.")
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT m.id AS membership_id, m.role AS role, u.email AS email
+            FROM organization_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.organization_id = ? AND u.email = ?
+            LIMIT 1
+            """,
+            (org_id, normalized_email),
+        ).fetchone()
+        if not row:
+            raise LookupError("Pouzivatel nie je clenom organizacie.")
+        current_role = normalize_org_role(row["role"])
+        if current_role == normalized_role:
+            return {"email": row["email"], "role": current_role, "updated": False}
+        if current_role == "owner" and normalized_role != "owner" and count_org_owners(org_id) <= 1:
+            raise ValueError("V organizacii musi vzdy ostat aspon jeden owner.")
+        conn.execute(
+            "UPDATE organization_members SET role = ? WHERE id = ?",
+            (normalized_role, row["membership_id"]),
+        )
+        conn.commit()
+    return {"email": row["email"], "role": normalized_role, "updated": True}
 
 
 def remove_org_member_by_email(org_id: str, email: str) -> dict:
@@ -498,8 +544,8 @@ def remove_org_member_by_email(org_id: str, email: str) -> dict:
         if not row:
             raise LookupError("Pouzivatel nie je clenom organizacie.")
         role = normalize_org_role(row["role"])
-        if role == "owner":
-            raise ValueError("Ownera organizacie nie je mozne odstranit.")
+        if role == "owner" and count_org_owners(org_id) <= 1:
+            raise ValueError("Posledneho ownera organizacie nie je mozne odstranit.")
         conn.execute(
             "DELETE FROM organization_members WHERE id = ?",
             (row["membership_id"],),

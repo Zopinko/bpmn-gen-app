@@ -132,12 +132,6 @@ def test_owner_member_permissions_and_member_can_work_with_models(tmp_path):
         )
         assert add_member.status_code == 200
 
-        add_owner_forbidden = owner_client.post(
-            "/api/orgs/members",
-            json={"email": "member@example.com", "org_id": org_id, "role": "owner"},
-        )
-        assert add_owner_forbidden.status_code == 400
-
         remove_member = owner_client.post(
             "/api/orgs/members/remove",
             json={"email": "member@example.com", "org_id": org_id},
@@ -186,6 +180,74 @@ def test_owner_member_permissions_and_member_can_work_with_models(tmp_path):
 
         member_invite_forbidden = member_client.get(f"/api/orgs/{org_id}/invite-link")
         assert member_invite_forbidden.status_code == 403
+    finally:
+        _restore_env(previous)
+
+
+def test_owner_can_manage_other_owners_but_last_owner_is_protected(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("second@example.com", "password123")
+        register_user("third@example.com", "password123")
+
+        owner_client = _authed_client("owner@example.com")
+        created = owner_client.post("/api/orgs", json={"name": "Org Main"})
+        assert created.status_code == 201
+        org_id = created.json()["id"]
+
+        add_second = owner_client.post(
+            "/api/orgs/members",
+            json={"email": "second@example.com", "org_id": org_id, "role": "member"},
+        )
+        assert add_second.status_code == 200
+
+        promote_second = owner_client.post(
+            "/api/orgs/members/role",
+            json={"email": "second@example.com", "org_id": org_id, "role": "owner"},
+        )
+        assert promote_second.status_code == 200
+        assert promote_second.json()["role"] == "owner"
+
+        remove_original_owner = owner_client.post(
+            "/api/orgs/members/remove",
+            json={"email": "owner@example.com", "org_id": org_id},
+        )
+        assert remove_original_owner.status_code == 200
+
+        second_client = _authed_client("second@example.com")
+
+        demote_last_owner = second_client.post(
+            "/api/orgs/members/role",
+            json={"email": "second@example.com", "org_id": org_id, "role": "member"},
+        )
+        assert demote_last_owner.status_code == 400
+
+        remove_last_owner = second_client.post(
+            "/api/orgs/members/remove",
+            json={"email": "second@example.com", "org_id": org_id},
+        )
+        assert remove_last_owner.status_code == 400
+
+        add_third = second_client.post(
+            "/api/orgs/members",
+            json={"email": "third@example.com", "org_id": org_id, "role": "member"},
+        )
+        assert add_third.status_code == 200
+
+        promote_third = second_client.post(
+            "/api/orgs/members/role",
+            json={"email": "third@example.com", "org_id": org_id, "role": "owner"},
+        )
+        assert promote_third.status_code == 200
+
+        demote_second = second_client.post(
+            "/api/orgs/members/role",
+            json={"email": "second@example.com", "org_id": org_id, "role": "member"},
+        )
+        assert demote_second.status_code == 200
+        assert demote_second.json()["role"] == "member"
     finally:
         _restore_env(previous)
 

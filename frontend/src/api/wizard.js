@@ -340,6 +340,31 @@ export async function removeOrgMember(email, orgId) {
   return response.json();
 }
 
+export async function updateOrgMemberRole(email, orgId, role) {
+  const payload = { email, role };
+  if (orgId) payload.org_id = orgId;
+  const response = await fetch(`${API_BASE}/api/orgs/members/role`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 export async function listOrgMembers(orgId) {
   const query = orgId ? `?org_id=${encodeURIComponent(orgId)}` : "";
   const response = await fetch(`${API_BASE}/api/orgs/members${query}`, {

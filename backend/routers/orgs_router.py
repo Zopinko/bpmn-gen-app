@@ -19,6 +19,7 @@ from auth.service import (
     list_org_members,
     regenerate_org_invite,
     remove_org_member_by_email,
+    update_org_member_role_by_email,
     resolve_accessible_org_id,
 )
 from auth.security import to_iso_z, utcnow
@@ -73,6 +74,12 @@ class DeleteRequestPayload(BaseModel):
     node_id: str
     org_id: str | None = None
     reason: str | None = None
+
+
+class UpdateOrgMemberRoleRequest(BaseModel):
+    email: str
+    org_id: str | None = None
+    role: str
 
 
 @router.post("", status_code=201)
@@ -164,6 +171,31 @@ def remove_org_member_endpoint(payload: RemoveOrgMemberRequest, current_user: Au
         entity_id="",
         entity_name=str(result.get("email") or payload.email or ""),
         metadata={},
+    )
+    return {"ok": True, **result}
+
+
+@router.post("/members/role")
+def update_org_member_role_endpoint(payload: UpdateOrgMemberRoleRequest, current_user: AuthUser = Depends(require_user)):
+    org_id = _resolve_org_id(current_user, payload.org_id)
+    role = get_user_org_role(current_user.id, org_id)
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
+    try:
+        result = update_org_member_role_by_email(org_id=org_id, email=payload.email, role=payload.role)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_org_event(
+        org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="member_role_updated",
+        entity_type="member",
+        entity_id="",
+        entity_name=str(result.get("email") or payload.email or ""),
+        metadata={"role": result.get("role"), "updated": bool(result.get("updated"))},
     )
     return {"ok": True, **result}
 
