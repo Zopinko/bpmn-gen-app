@@ -9367,7 +9367,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
                         Pridať poznámku
                       </button>
-                      {projectNotesSaving ? <div style={{ fontSize: 12, opacity: 0.7 }}>Ukladám...</div> : null}
+                      {projectNotesSaving ? <div className="project-notes-saving">Ukladám...</div> : null}
                     </div>
                   </>
                 ) : (
@@ -9638,7 +9638,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               return (
                                 <div key={item.id} className={`project-note-item project-activity-item ${itemClass}`.trim()}>
                                   <div className="project-activity-item__header">
-                                    <div style={{ color: "#e5e7eb", fontWeight: 600 }}>{describeProjectActivity(item)}</div>
+                                    <div className="project-activity-item__text">{describeProjectActivity(item)}</div>
                                     {status ? (
                                       <span className={`project-activity-badge is-${status.tone}`}>
                                         {status.label}
@@ -9651,7 +9651,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       Dovod: {item.metadata.reason}
                                     </div>
                                   ) : null}
-                                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                  <div className="project-activity-item__actions">
                                     <button
                                       type="button"
                                       className="btn btn--small"
@@ -9691,7 +9691,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             return (
                               <div key={item.id} className={`project-note-item project-activity-item ${itemClass}`.trim()}>
                                 <div className="project-activity-item__header">
-                                  <div style={{ color: "#e5e7eb", fontWeight: 600 }}>{describeProjectActivity(item)}</div>
+                                  <div className="project-activity-item__text">{describeProjectActivity(item)}</div>
                                   {status ? (
                                     <span className={`project-activity-badge is-${status.tone}`}>
                                       {status.label}
