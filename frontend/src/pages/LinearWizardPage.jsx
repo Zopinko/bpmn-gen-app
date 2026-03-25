@@ -1286,7 +1286,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [guideFindings, setGuideFindings] = useState([]);
   const [guideHighlight, setGuideHighlight] = useState(null);
   const [homeGuideMessageIndex, setHomeGuideMessageIndex] = useState(0);
-  const [laneDraftDirty, setLaneDraftDirty] = useState(false);
   const [activeLaneId, setActiveLaneId] = useState(null);
   const [modelVersion, setModelVersion] = useState(0);
   const [lastEditedLaneId, setLastEditedLaneId] = useState(null);
@@ -2973,7 +2972,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setLaneTemplateChoice("");
     setLaneHelpTipDismissed(false);
-    setLaneDraftDirty(false);
   }, [selectedLane?.id]);
 
   useEffect(() => {
@@ -3169,7 +3167,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       value = lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     }
     setLaneDescription(value);
-    setLaneDraftDirty(Boolean(String(value || "").trim()));
   };
 
   const _appendLine = (current, text) => {
@@ -3191,7 +3188,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       return lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     });
-    setLaneDraftDirty(true);
     const roleName = helpInsertTarget?.laneName || helpInsertTarget?.laneId || "rola";
     setInfo(`Vložené do roly: ${roleName}`);
     if (helpInsertTarget?.type === "lane") {
@@ -5338,7 +5334,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
               setHasUnsavedChanges(true);
               setLaneDescription("");
-              setLaneDraftDirty(false);
               clearLanePreviewOverlays();
               setInfo("Kroky boli pridané (fallback render).");
               setLaneOpen(false);
@@ -5354,7 +5349,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        setLaneDraftDirty(false);
         clearLanePreviewOverlays();
         setLaneOpen(false);
         if (isDemoMode) {
@@ -5402,7 +5396,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setXmlFull(fullXml, "appendLane:fallback_full_rerender");
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        setLaneDraftDirty(false);
         clearLanePreviewOverlays();
         setInfo("Kroky boli pridané (fallback render).");
         setLaneOpen(false);
