@@ -8572,7 +8572,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setLaneInsertOpen(false)}>
             <div className="wizard-models-panel wizard-help-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Pomocník</h3>
+                <h3>Pomocník</h3>
                 <button className="btn btn--small" type="button" onClick={() => setLaneInsertOpen(false)}>
                   Zavriet
                 </button>
