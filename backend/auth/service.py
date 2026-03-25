@@ -453,7 +453,7 @@ def find_user_id_by_email(email: str) -> str | None:
 
 def add_org_member(user_id: str, org_id: str, role: str) -> None:
     normalized_role = normalize_org_role(role)
-    if normalized_role not in {"owner", "member"}:
+    if normalized_role not in {"owner", "member", "viewer"}:
         raise ValueError("Neplatna rola clena organizacie.")
     now = to_iso_z(utcnow())
     with get_connection() as conn:
@@ -500,7 +500,7 @@ def update_org_member_role_by_email(org_id: str, email: str, role: str) -> dict:
     normalized_role = normalize_org_role(role)
     if not normalized_email:
         raise ValueError("Email je povinny.")
-    if normalized_role not in {"owner", "member"}:
+    if normalized_role not in {"owner", "member", "viewer"}:
         raise ValueError("Neplatna rola clena organizacie.")
     with get_connection() as conn:
         row = conn.execute(

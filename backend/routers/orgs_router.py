@@ -477,6 +477,10 @@ def create_org_model_version(
         "engine_json": payload.engine_json,
         "diagram_xml": payload.diagram_xml,
     }
+    if isinstance(payload.tree_node_id, str) and payload.tree_node_id.strip():
+        model["tree_node_id"] = payload.tree_node_id.strip()
+    if isinstance(payload.base_model_id, str) and payload.base_model_id.strip():
+        model["base_model_id"] = payload.base_model_id.strip()
     if isinstance(payload.generator_input, dict):
         model["generator_input"] = payload.generator_input
     if isinstance(payload.process_meta, dict):

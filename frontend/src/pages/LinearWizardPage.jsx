@@ -40,7 +40,7 @@ import {
   requestOrgProcessDelete,
   updateOrgProcessModelRef,
 } from "../api/orgModel";
-import { createDefaultProcessStoryOptions, generateProcessStory } from "../processStory/generateProcessStory";
+import { generateProcessStory } from "../processStory/generateProcessStory";
 import { getOrgCapabilities } from "../permissions/orgCapabilities";
 import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
 import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
@@ -518,6 +518,27 @@ const buildFlowAdjacency = (index) => {
   return { incoming, outgoing };
 };
 
+const determineGuidePhase = ({
+  hardFindings,
+  hasTasks,
+  hasAnyEmptyLane,
+  missingIncomingTask,
+  missingOutgoingTask,
+  hasEndEvent,
+  hasDisconnectedLanes,
+  placeholderNamedNodes,
+  renamableNodes,
+  isFullyConsistent,
+}) => {
+  if (hardFindings.length) return "repair";
+  if (!hasTasks) return "skeleton";
+  if (hasAnyEmptyLane) return "lane_fill";
+  if (missingIncomingTask || missingOutgoingTask || !hasEndEvent || hasDisconnectedLanes) return "connections";
+  if (placeholderNamedNodes.length || renamableNodes.length) return "refinement";
+  if (isFullyConsistent) return "ready";
+  return "progress";
+};
+
 const pickGuideCard = ({
   engineJson,
   findings,
@@ -532,55 +553,175 @@ const pickGuideCard = ({
   const ctxLane = ctxLaneId
     ? index.lanes.find((l) => l?.id === ctxLaneId) || null
     : null;
+  const getLaneTaskCount = (laneId) => {
+    if (modelSnapshot?.tasksPerLane instanceof Map) {
+      return modelSnapshot.tasksPerLane.get(String(laneId || "")) || 0;
+    }
+    return getLaneTasks(engineJson, laneId).length;
+  };
+  const { incoming, outgoing } = buildFlowAdjacency(index);
+  const taskNodes = index.nodes.filter((n) => isTaskLike(n));
+  const hasTasks = taskNodes.length > 0;
   const hardFindings = findings.filter((f) => f?.severity === "HARD");
-  if (hardFindings.length) {
+  const hasEndEvent = index.nodes.some((n) =>
+    String(n?.type || "").toLowerCase().includes("end"),
+  );
+  const hasAnyEmptyLane = index.lanes.some((lane) => getLaneTaskCount(lane.id) === 0);
+  const pickTask = (predicate) => {
+    if (!taskNodes.length) return null;
+    if (ctxLaneId) {
+      const inCtx = taskNodes.find(
+        (node) => String(node?.laneId || "") === String(ctxLaneId) && predicate(node),
+      );
+      if (inCtx) return inCtx;
+    }
+    return taskNodes.find(predicate) || null;
+  };
+  const missingOutgoingTask = pickTask((node) => {
+    const id = node?.id ? String(node.id) : "";
+    return id && (outgoing.get(id) || 0) === 0;
+  });
+  const missingIncomingTask = pickTask((node) => {
+    const id = node?.id ? String(node.id) : "";
+    return id && (incoming.get(id) || 0) === 0;
+  });
+  const hasDanglingTask = Boolean(missingIncomingTask || missingOutgoingTask);
+  const hasDisconnectedLanes =
+    typeof modelSnapshot?.lanesDisconnected === "boolean"
+      ? modelSnapshot.lanesDisconnected
+      : findings.some((f) => normalizeGuideRuleId(f) === "lane_is_disconnected");
+  const placeholderNamedNodes = index.nodes.filter((node) => {
+    const type = String(node?.type || "").toLowerCase();
+    if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
+      return false;
+    }
+    return hasAnglePlaceholderToken(node?.name || node?.label || "");
+  });
+  const renamableNodes = index.nodes.filter((node) => {
+    const type = String(node?.type || "").toLowerCase();
+    if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
+      return false;
+    }
+    return isPlaceholderNodeName(node?.name || "");
+  });
+  const isFullyConsistent =
+    !hardFindings.length &&
+    hasEndEvent &&
+    !hasDanglingTask &&
+    !hasAnyEmptyLane &&
+    !hasDisconnectedLanes;
+  const phase = determineGuidePhase({
+    hardFindings,
+    hasTasks,
+    hasAnyEmptyLane,
+    missingIncomingTask,
+    missingOutgoingTask,
+    hasEndEvent,
+    hasDisconnectedLanes,
+    placeholderNamedNodes,
+    renamableNodes,
+    isFullyConsistent,
+  });
+
+  if (phase === "repair") {
     const hardInCtx = ctxLaneId
-      ? hardFindings.find(
-          (f) => getLaneIdForFinding(f, index) === ctxLaneId,
-        )
+      ? hardFindings.find((f) => getLaneIdForFinding(f, index) === ctxLaneId)
       : null;
     const chosen = hardInCtx || hardFindings[0];
     const laneIdForHard = getLaneIdForFinding(chosen, index);
-    const hardMessage = (() => {
-      const ruleId = normalizeGuideRuleId(chosen);
-      const rawMessage = String(chosen?.message || "");
-      const rawProposal = String(chosen?.proposal || "");
-      const combined = `${rawMessage} ${rawProposal}`.toLowerCase();
-      const isGatewaySingleOutgoing =
-        ruleId === "gateway_diverging_needs_two_outgoing" ||
-        (combined.includes("diverging gateway") && combined.includes("outgoing"));
-      if (isGatewaySingleOutgoing) {
-        return (
-          "Rozhodovací krok sa musí rozdeliť. " +
-          "Z tohto bodu zatiaľ vedie len jedna šípka. " +
-          "Pridaj ešte jednu možnosť (napr. „Áno / Nie“), " +
-          "alebo tento krok odstráň, ak sa proces nerozdeľuje."
-        );
-      }
-      return `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Mrkni na túto rolu a uprav to priamo tam.`;
-    })();
+    const ruleId = normalizeGuideRuleId(chosen);
+    const rawMessage = String(chosen?.message || "");
+    const rawProposal = String(chosen?.proposal || "");
+    const combined = `${rawMessage} ${rawProposal}`.toLowerCase();
+    const isGatewaySingleOutgoing =
+      ruleId === "gateway_diverging_needs_two_outgoing" ||
+      (combined.includes("diverging gateway") && combined.includes("outgoing"));
     return {
       key: `hard:${chosen.id}`,
+      phase,
       scope: laneIdForHard ? "lane" : "global",
       laneId: laneIdForHard || null,
-      title: "Poďme to doladiť",
-      message: hardMessage,
+      title: "Poďme opraviť tento bod",
+      message: isGatewaySingleOutgoing
+        ? "Toto rozhodnutie ešte nie je dokončené. Zatiaľ z neho vedie len jedna možnosť. Otvor toto miesto a doplň druhú vetvu, aby bolo jasné, čo sa stane pri inom výsledku."
+        : `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Poďme to upraviť skôr, než pôjdeme ďalej.`,
       primary: laneIdForHard
-        ? { label: "Do roly", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
+        ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
         : null,
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
     };
   }
 
-  const hasEmptyLane = index.lanes.some(
-    (lane) => getLaneTasks(engineJson, lane.id).length === 0,
-  );
-  if (!hasEmptyLane) {
-    const { incoming, outgoing } = buildFlowAdjacency(index);
-    const taskNodes = index.nodes.filter((n) => isTaskLike(n));
-    const hasEndEvent = index.nodes.some((n) =>
-      String(n?.type || "").toLowerCase().includes("end"),
+  if (phase === "skeleton" && index.lanes.length) {
+    const firstEmptyLane = index.lanes.find((lane) => getLaneTaskCount(lane.id) === 0) || null;
+    if (!firstEmptyLane) return null;
+    return {
+      key: "process_empty",
+      phase,
+      scope: "global",
+      title: "Kostra je hotová",
+      message:
+        `Super, kostra procesu je pripravená. Začni rolou „${firstEmptyLane.name || firstEmptyLane.id}“ a doplň do nej aspoň 2 až 3 konkrétne kroky. Rolu si otvoríš kliknutím na ňu v mape alebo tlačidlom vpravo. Píš krátko a slovesom, napríklad Overím..., Skontrolujem..., Odošlem....`,
+      primary: firstEmptyLane
+        ? { label: "Otvoriť prvú rolu", action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
+        : null,
+    };
+  }
+
+  if (phase === "lane_fill" && ctxLaneId && ctxLane) {
+    const laneFindings = findings.filter(
+      (f) => getLaneIdForFinding(f, index) === ctxLaneId,
     );
+    const laneDone = isLaneDone(engineJson, ctxLaneId, laneFindings);
+    const currentLaneTaskCount = getLaneTaskCount(ctxLaneId);
+    const nextLane =
+      index.lanes.find((lane) => lane.id !== ctxLaneId && getLaneTaskCount(lane.id) === 0) ||
+      pickNextLane(engineJson, findings);
+    if (!laneDone && currentLaneTaskCount > 0 && currentLaneTaskCount < GUIDE_MIN_TASKS_PER_LANE) {
+      return {
+        key: `lane_progress:${ctxLaneId}`,
+        phase,
+        scope: "lane",
+        laneId: ctxLaneId,
+        title: "Ešte chvíľu zostaň v tejto role",
+        message: `Rola „${ctxLane.name || ctxLane.id}“ už má základ. Doplň do nej ešte aspoň jeden krok, aby bolo jasné, čo sa tu deje od začiatku po odovzdanie ďalej.`,
+        primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLaneId } },
+      };
+    }
+    if (laneDone && nextLane && nextLane.id !== ctxLaneId) {
+      return {
+        key: `lane_done:${ctxLaneId}->${nextLane.id}`,
+        phase,
+        scope: "lane",
+        laneId: ctxLaneId,
+        title: "Poďme na ďalšiu rolu",
+        message: `Rola „${ctxLane.name || ctxLane.id}“ už vyzerá dobre. Teraz bude najlepšie otvoriť rolu „${nextLane.name || nextLane.id}“ a doplniť jej hlavné kroky, aby bol proces kompletný naprieč všetkými účastníkmi.`,
+        primary: { label: "Otvoriť ďalšiu rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
+      };
+    }
+  }
+
+  if (phase === "lane_fill") {
+    const emptyLaneFinding = findings.find(
+      (f) => normalizeGuideRuleId(f) === "lane_is_empty",
+    );
+    if (emptyLaneFinding) {
+      const laneId = emptyLaneFinding?.target?.id;
+      const lane = index.lanes.find((l) => l?.id === laneId);
+      if (lane) {
+        return {
+          key: `lane_empty:${lane.id}`,
+          phase,
+          scope: "lane",
+          laneId: lane.id,
+          title: "Táto rola ešte čaká na kroky",
+          message: `V role „${lane.name || lane.id}“ ešte nemáš žiadne kroky. Otvor ju a doplň aspoň prvý konkrétny krok, aby bolo jasné, čo sa tu deje a čo má táto rola odovzdať ďalej.`,
+          primary: { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: lane.id } },
+        };
+      }
+    }
+  }
+
+  if (phase === "connections") {
     const danglingNodes = index.nodes.filter((n) => {
       const id = n?.id ? String(n.id) : "";
       if (!id) return false;
@@ -593,22 +734,23 @@ const pickGuideCard = ({
     const inReview = Boolean(uiContext?.mentorOpen || uiContext?.storyOpen);
     if (!hasEndEvent && (danglingNodes.length > 0 || inReview)) {
       const pickNode = ctxLaneId
-        ? danglingNodes.find((n) => String(n?.laneId || "") === ctxLaneId) ||
-          danglingNodes[0]
+        ? danglingNodes.find((n) => String(n?.laneId || "") === ctxLaneId) || danglingNodes[0]
         : danglingNodes[0];
       if (pickNode) {
         const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
         const label = getNodeLabel(pickNode);
         return {
           key: `missing_end:${pickNode.id}`,
+          phase,
           scope: laneId ? "lane" : "global",
           laneId,
-          title: "Chýba koniec",
-          message:
-            "Chýba nám koniec procesu. Kam to má celé dopadnúť? " +
-            "Klikni na posledný krok a daj „Koniec sem“ — nech je proces uzavretý.",
-          primary: null,
-          secondary: { label: "Neskôr", action: "NOT_NOW" },
+          title: "Poďme uzavrieť proces",
+          message: `Kostra už sa pekne črtá. Ak je aktivita „${label || "tento krok"}“ posledný bod procesu, klikni na ňu na mape a potom použi tlačidlo „Koniec sem“. Tým jasne určíš, kde sa tok procesu uzatvára.`,
+          primary: {
+            label: "Ukáž miesto",
+            action: "FOCUS_NODE",
+            payload: { nodeId: pickNode.id, laneId, nodeName: label || "" },
+          },
           tertiary: {
             label: "Koniec sem",
             action: "CONNECT_END_HERE",
@@ -617,186 +759,70 @@ const pickGuideCard = ({
         };
       }
     }
-    const pickTask = (predicate) => {
-      if (!taskNodes.length) return null;
-      if (ctxLaneId) {
-        const inCtx = taskNodes.find(
-          (node) => String(node?.laneId || "") === ctxLaneId && predicate(node),
-        );
-        if (inCtx) return inCtx;
-      }
-      return taskNodes.find(predicate) || null;
-    };
-    const missingOutgoingTask = pickTask((node) => {
-      const id = node?.id ? String(node.id) : "";
-      return id && (outgoing.get(id) || 0) === 0;
-    });
     if (missingOutgoingTask) {
-      const laneId = missingOutgoingTask?.laneId
-        ? String(missingOutgoingTask.laneId)
-        : null;
+      const laneId = missingOutgoingTask?.laneId ? String(missingOutgoingTask.laneId) : null;
       const label = getNodeLabel(missingOutgoingTask);
       return {
         key: `task_no_out:${missingOutgoingTask.id}`,
+        phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Kam ďalej?",
-        message: `Aktivita „${label || "tento krok"}“ nemá pokračovanie. Na mape klikni na krok → Prepojiť (Connect) → potiahni šípku na ďalší krok.`,
+        title: "Tu chýba ďalší krok",
+        message: `Aktivita „${label || "tento krok"}“ zatiaľ nemá pokračovanie. Klikni na tento krok na mape a rozhodni: buď z neho potiahneš pokračovanie na ďalší krok, alebo použiješ „Koniec sem“, ak sa proces uzatvára práve tu.`,
         primary: {
-          label: "Na mape",
+          label: "Ukáž miesto",
           action: "FOCUS_NODE",
           payload: { nodeId: missingOutgoingTask.id, laneId, nodeName: label || "" },
         },
-        secondary: { label: "Neskôr", action: "NOT_NOW" },
         tertiary: {
           label: "Koniec sem",
           action: "CONNECT_END_HERE",
-          payload: { nodeId: missingOutgoingTask.id },
+          payload: { nodeId: missingOutgoingTask.id, laneId, nodeName: label || "" },
         },
       };
     }
-    const missingIncomingTask = pickTask((node) => {
-      const id = node?.id ? String(node.id) : "";
-      return id && (incoming.get(id) || 0) === 0;
-    });
     if (missingIncomingTask) {
-      const laneId = missingIncomingTask?.laneId
-        ? String(missingIncomingTask.laneId)
-        : null;
+      const laneId = missingIncomingTask?.laneId ? String(missingIncomingTask.laneId) : null;
       const label = getNodeLabel(missingIncomingTask);
       return {
         key: `task_no_in:${missingIncomingTask.id}`,
+        phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Odkiaľ to prichádza?",
-        message: `Aktivita „${label || "tento krok"}“ nemá predchodcu. Na mape klikni na krok pred tým → Prepojiť (Connect) → potiahni šípku sem.`,
+        title: "Tomuto kroku ešte niečo predchádza",
+        message: `Aktivita „${label || "tento krok"}“ ešte nemá predchodcu. Poďme na mapu a pozrime sa, z ktorého kroku sem má prísť tok procesu, aby bola väzba medzi rolami alebo krokmi jasná.`,
         primary: {
-          label: "Na mape",
+          label: "Ukáž miesto",
           action: "FOCUS_NODE",
           payload: { nodeId: missingIncomingTask.id, laneId, nodeName: label || "" },
         },
-        secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
-  }
-
-  const getLaneTaskCount = (laneId) => {
-    if (modelSnapshot?.tasksPerLane instanceof Map) {
-      return modelSnapshot.tasksPerLane.get(String(laneId || "")) || 0;
-    }
-    return getLaneTasks(engineJson, laneId).length;
-  };
-  const tasks = index.nodes.filter((n) => isTaskLike(n));
-  if (!tasks.length && index.lanes.length) {
-    const firstEmptyLane = index.lanes.find((lane) => getLaneTaskCount(lane.id) === 0) || null;
-    if (!firstEmptyLane) return null;
-    return {
-      key: "process_empty",
-      scope: "global",
-      title: "Pridajme prvé kroky",
-      message:
-        "Super — kostra je hotová ✅ Role už sú pripravené. Teraz spolu dopíšeme do každej roly 2–3 kroky (každý na nový riadok). Z toho spravím aktivity a potom to pospájame do logiky. Tip: píš slovesom — Overím…, Skontrolujem…, Odošlem…",
-      primary: firstEmptyLane
-        ? { label: "Začať s rolou", action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
-        : null,
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
-    };
-  }
-
-  if (ctxLaneId && ctxLane) {
-    const laneFindings = findings.filter(
-      (f) => getLaneIdForFinding(f, index) === ctxLaneId,
+    const disconnectedFinding = findings.find(
+      (f) => normalizeGuideRuleId(f) === "lane_is_disconnected",
     );
-    const laneDone = isLaneDone(engineJson, ctxLaneId, laneFindings);
-    const nextLane =
-      index.lanes.find((lane) => lane.id !== ctxLaneId && getLaneTaskCount(lane.id) === 0) ||
-      pickNextLane(engineJson, findings);
-    if (laneDone && nextLane && nextLane.id !== ctxLaneId) {
+    if (disconnectedFinding) {
+      const nextLane = pickNextLane(engineJson, findings);
       return {
-        key: `lane_done:${ctxLaneId}->${nextLane.id}`,
-        scope: "lane",
-        laneId: ctxLaneId,
-      title: "Ďalšia rola",
-      message: `Paráda — rola „${ctxLane.name || ctxLane.id}“ vyzerá hotová ✅ Poďme ďalej na „${nextLane.name || nextLane.id}“. Potom spravíme prepojenia a budeš mať plynulý proces.`,
-      primary: { label: "Pokračovať na ďalšiu rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
+        key: "lanes_disconnected",
+        phase,
+        scope: nextLane ? "lane" : "global",
+        laneId: nextLane?.id || null,
+        title: "Poďme spojiť role do jedného toku",
+        message: nextLane
+          ? `Kroky už máš doplnené. Teraz z nich sprav plynulý proces od začiatku po koniec. Začni v role „${nextLane.name || nextLane.id}“, kde ešte chýba väzba na ďalšiu časť procesu.`
+          : "Kroky už máš doplnené. Teraz z nich sprav plynulý proces od začiatku po koniec a doplň väzby medzi rolami tam, kde ešte chýbajú.",
+        primary: nextLane
+          ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } }
+          : null,
       };
     }
   }
 
-  const emptyLaneFinding = findings.find(
-    (f) => normalizeGuideRuleId(f) === "lane_is_empty",
-  );
-  if (emptyLaneFinding) {
-    const laneId = emptyLaneFinding?.target?.id;
-    const lane = index.lanes.find((l) => l?.id === laneId);
-    if (lane) {
-      return {
-        key: `lane_empty:${lane.id}`,
-        scope: "lane",
-        laneId: lane.id,
-        title: "Doplň rolu",
-        message: `Táto rola je zatiaľ prázdna. Skús napísať aspoň jeden krok, aby sme vedeli, čo tu prebieha.`,
-        primary: { label: "Do roly", action: "OPEN_LANE", payload: { laneId: lane.id } },
-        secondary: { label: "Neskôr", action: "NOT_NOW" },
-      };
-    }
-  }
-
-  const disconnectedFinding = findings.find(
-    (f) => normalizeGuideRuleId(f) === "lane_is_disconnected",
-  );
-  if (disconnectedFinding) {
-    return {
-      key: "lanes_disconnected",
-      scope: "global",
-      title: "Prepojme role",
-      message:
-        "Kroky už máme 👍 Teraz z toho spravíme plynulý proces: prepoj aktivity tak, aby to tieklo od začiatku až po koniec (aj medzi rolami).",
-      primary: { label: "Prepojiť kroky", action: "CONNECT_LANES_HEURISTIC" },
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
-    };
-  }
-
-  const { incoming, outgoing } = buildFlowAdjacency(index);
-  const hasEndEvent = index.nodes.some((n) =>
-    String(n?.type || "").toLowerCase().includes("end"),
-  );
-  const taskNodes = index.nodes.filter((n) => isTaskLike(n));
-  const hasDanglingTask = taskNodes.some((node) => {
-    const id = node?.id ? String(node.id) : "";
-    if (!id) return false;
-    const hasIn = (incoming.get(id) || 0) > 0;
-    const hasOut = (outgoing.get(id) || 0) > 0;
-    return !hasIn || !hasOut;
-  });
-  const hasHardFindings = findings.some((f) => f?.severity === "HARD");
-  const hasDisconnectedLanes =
-    typeof modelSnapshot?.lanesDisconnected === "boolean"
-      ? modelSnapshot.lanesDisconnected
-      : findings.some((f) => normalizeGuideRuleId(f) === "lane_is_disconnected");
-  const hasAnyEmptyLane = index.lanes.some((lane) => getLaneTaskCount(lane.id) === 0);
-  const isFullyConsistent =
-    !hasHardFindings &&
-    hasEndEvent &&
-    !hasDanglingTask &&
-    !hasAnyEmptyLane &&
-    !hasDisconnectedLanes;
-  const isPersistedOrOrg =
-    uiContext?.modelSourceKind === "org" || uiContext?.hasUnsavedChanges === false;
-
-  if (isFullyConsistent) {
-    const placeholderNamedNodes = index.nodes.filter((node) => {
-      const type = String(node?.type || "").toLowerCase();
-      if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
-        return false;
-      }
-      return hasAnglePlaceholderToken(node?.name || node?.label || "");
-    });
+  if (phase === "refinement") {
     if (placeholderNamedNodes.length) {
       const pickNode = ctxLaneId
-        ? placeholderNamedNodes.find((node) => String(node?.laneId || "") === String(ctxLaneId)) ||
-          placeholderNamedNodes[0]
+        ? placeholderNamedNodes.find((node) => String(node?.laneId || "") === String(ctxLaneId)) || placeholderNamedNodes[0]
         : placeholderNamedNodes[0];
       const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
       const placeholderTokens = Array.from(
@@ -810,27 +836,19 @@ const pickGuideCard = ({
       const count = placeholderNamedNodes.length;
       return {
         key: `placeholder_node:${pickNode?.id || "any"}`,
+        phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Pomenujme kroky",
+        title: "Poďme doladiť názvy",
         message:
           count > 1
-            ? `Našiel som ${count} placeholder názvy (napr. ${exampleToken}). Premenuj ich, aby bol proces zrozumiteľný.`
-            : `Našiel som placeholder názov (napr. ${exampleToken}). Premenuj ho, aby bol proces zrozumiteľný.`,
+            ? `Našiel som ${count} placeholder názvy, napríklad ${exampleToken}. Teraz už nejde o kostru, ale o spresnenie detailov. Premenuj ich na reálne pomenovania, aby bol proces zrozumiteľný aj pre ďalších ľudí.`
+            : `Našiel som placeholder názov, napríklad ${exampleToken}. Teraz už stačí doladiť detail a premenovať ho na reálny názov.`,
         primary: pickNode?.id
-          ? { label: "Na mape", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
-        secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
-
-    const renamableNodes = index.nodes.filter((node) => {
-      const type = String(node?.type || "").toLowerCase();
-      if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
-        return false;
-      }
-      return isPlaceholderNodeName(node?.name || "");
-    });
     if (renamableNodes.length) {
       const pickNode = ctxLaneId
         ? renamableNodes.find((node) => String(node?.laneId || "") === String(ctxLaneId)) || renamableNodes[0]
@@ -838,38 +856,50 @@ const pickGuideCard = ({
       const laneId = pickNode?.laneId ? String(pickNode.laneId) : null;
       return {
         key: `unnamed_node:${pickNode?.id || "any"}`,
+        phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Pomenujme kroky",
-        message:
-          "Vyzerá to hotovo ✅ Ešte mrkni na názvy krokov — nech tam neostanú všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“. Premenuj ich tak, aby bolo hneď jasné, čo sa v procese deje.",
+        title: "Ešte spresnime pomenovania",
+        message: "Proces už vyzerá dobre. Teraz dolaď posledné všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“, aby bolo hneď jasné, čo sa v procese deje.",
         primary: pickNode?.id
-          ? { label: "Na mape", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
-        secondary: { label: "Neskôr", action: "NOT_NOW" },
       };
     }
   }
 
-  if (isFullyConsistent && !isPersistedOrOrg) {
+  if (phase === "progress" && ctxLane && getLaneTaskCount(ctxLane.id) < GUIDE_MIN_TASKS_PER_LANE) {
     return {
-      key: "process_ready_for_save",
-      scope: "global",
-      title: "Pripravené na uloženie",
-      message:
-        "Výborne — proces je konzistentný a pripravený ✅ Môžeš ho teraz uložiť alebo pokračovať v úpravách.",
-      primary: { label: "Uložiť proces", action: "SAVE_PROCESS" },
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
+      key: `lane_progress:${ctxLane.id}`,
+      phase,
+      scope: "lane",
+      laneId: ctxLane.id,
+      title: "Ešte jeden alebo dva kroky",
+      message: `V role „${ctxLane.name || ctxLane.id}“ už niečo máš. Zostaň v nej ešte chvíľu a pridaj jeden alebo dva kroky, aby bol jej priebeh jasnejší, a potom sa posunieme ďalej.`,
+      primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLane.id } },
     };
   }
 
-  if (isFullyConsistent && isPersistedOrOrg) {
+  const isPersistedOrOrg =
+    uiContext?.modelSourceKind === "org" || uiContext?.hasUnsavedChanges === false;
+  if (phase === "ready" && !isPersistedOrOrg) {
+    return {
+      key: "process_ready_for_save",
+      phase,
+      scope: "global",
+      title: "Proces je pripravený",
+      message: "Mapa je konzistentná a pôsobí ucelene. Teraz je správny moment uložiť proces. Potom sa môžeš rozhodnúť, či s ním budeš ďalej pracovať v pieskovisku alebo ho presunieš do organizácie.",
+      primary: { label: "Uložiť proces", action: "SAVE_PROCESS" },
+    };
+  }
+
+  if (phase === "ready" && isPersistedOrOrg) {
     return {
       key: "process_complete",
+      phase,
       scope: "global",
-      title: "Proces je hotový",
-      message:
-        "Perfektné 👏 Proces je hotový. Môžeme ho nechať v pieskovisku alebo ho presunúť do organizačnej štruktúry.",
+      title: "Proces pôsobí hotovo",
+      message: "Vyzerá to dobre. Proces je ucelený, pomenovaný a pripravený na ďalší krok. Teraz sa už len rozhodni, či ho necháš v pieskovisku alebo ho presunieš do organizácie.",
       primary: { label: "Presunúť do organizácie", action: "MOVE_TO_ORG" },
       secondary: { label: "Zostať v pieskovisku", action: "STAY_IN_SANDBOX" },
     };
@@ -1171,6 +1201,19 @@ const DEMO_TEMPLATES = [
   },
 ];
 
+const HOME_GUIDE_MESSAGES = [
+  "Pomôžem ti začať od názvu procesu a rolí, aby kostra dávala zmysel hneď od začiatku.",
+  "Keď sa zasekneš, navediem ťa na ďalší krok, ktorý má teraz najväčší zmysel.",
+  "Strážim, aby sa z rozpracovaných krokov stal plynulý proces od začiatku po koniec.",
+  "Ukážem ti, kde chýba pokračovanie, kde sa proces uzatvára a čo ešte treba doplniť.",
+  "Pomôžem ti pomenovať kroky tak, aby mapa bola zrozumiteľná aj pre ďalších ľudí v tíme.",
+  "Keď doplníš kostru, posuniem ťa do role alebo miesta, ktoré sa oplatí riešiť ako ďalšie.",
+  "Nevypisujem len chyby. Snažím sa povedať, čo už máš dobre a čo je teraz najbližší užitočný krok.",
+  "Keď otvoríš rozpracovaný model, pomôžem ti zorientovať sa a nadviazať tam, kde si skončil.",
+  "Z BPMN nechcem robiť technický labyrint. Cieľ je, aby si vždy vedel, čo spraviť ďalej.",
+  "Som tu na to, aby sa z nápadu postupne stala čistá procesná mapa, nie chaotická kresba.",
+];
+
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const countExclusiveGateways = (engine) =>
@@ -1242,6 +1285,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
   const [guideHighlight, setGuideHighlight] = useState(null);
+  const [homeGuideMessageIndex, setHomeGuideMessageIndex] = useState(0);
+  const [laneDraftDirty, setLaneDraftDirty] = useState(false);
   const [activeLaneId, setActiveLaneId] = useState(null);
   const [modelVersion, setModelVersion] = useState(0);
   const [lastEditedLaneId, setLastEditedLaneId] = useState(null);
@@ -1252,7 +1297,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [mentorOpen, setMentorOpen] = useState(false);
   const [storyOpen, setStoryOpen] = useState(false);
   const [laneOpen, setLaneOpen] = useState(false);
-  const [storyOptions, setStoryOptions] = useState(() => createDefaultProcessStoryOptions());
   const [storyDoc, setStoryDoc] = useState(null);
   const [storyStale, setStoryStale] = useState(false);
   const [storyGeneratedAt, setStoryGeneratedAt] = useState(null);
@@ -1324,6 +1368,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guidePatchTimerRef = useRef(null);
   const guideHighlightTimerRef = useRef(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
+  const [openOrgProcessConfirmNode, setOpenOrgProcessConfirmNode] = useState(null);
+  const [regenerateConfirmOpen, setRegenerateConfirmOpen] = useState(false);
+  const [newModelConfirmOpen, setNewModelConfirmOpen] = useState(false);
+  const [wizardInputModal, setWizardInputModal] = useState(null);
+  const [wizardInputValue, setWizardInputValue] = useState("");
+  const [wizardInputError, setWizardInputError] = useState("");
+  const [wizardConfirmModal, setWizardConfirmModal] = useState(null);
+  const wizardInputSubmitRef = useRef(null);
+  const wizardConfirmActionRef = useRef(null);
   const pendingOpenActionRef = useRef(null);
   const pendingOpenResolveRef = useRef(null);
   const pendingOpenCancelRef = useRef(null);
@@ -1357,6 +1410,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [replyEditing, setReplyEditing] = useState({ noteId: null, replyId: null, text: "" });
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [lastExportedAt, setLastExportedAt] = useState(null);
+  const previousActiveOrgIdRef = useRef(null);
 
   const sampleSequenceFlowWaypoints = useCallback((activeModeler, limit = 5) => {
     const elementRegistry = activeModeler?.get?.("elementRegistry");
@@ -1475,6 +1529,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const applyProcessTemplate = (template) => {
     if (!template) return;
+    if (isReadOnlyMode) {
+      setInfo(
+        activeOrgCapabilities.canToggleOrgEdit
+          ? "Režim: len na čítanie. Najprv klikni Upraviť."
+          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+      );
+      return;
+    }
     setProcessCard((prev) => ({
       ...prev,
       generatorInput: {
@@ -1486,33 +1548,54 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         output: template.output || "",
       },
     }));
+    setHasUnsavedChanges(true);
   };
 
   const applyLaneTemplate = (template) => {
     if (!template) return;
-    updateLaneDescription(template.text || "");
-    setHasUnsavedChanges(true);
-    setLaneTemplateFlash(true);
-    if (laneTemplateFlashTimerRef.current) {
-      window.clearTimeout(laneTemplateFlashTimerRef.current);
-    }
-    laneTemplateFlashTimerRef.current = window.setTimeout(() => {
-      setLaneTemplateFlash(false);
-    }, 900);
-    const roleName = selectedLane?.name || selectedLane?.id || "rola";
-    setInfo(`Vložené do roly: ${roleName}`);
-    window.requestAnimationFrame(() => {
-      const textarea = laneTextareaRef.current;
-      if (!textarea) return;
-      try {
-        textarea.focus();
-        const end = textarea.value.length;
-        textarea.setSelectionRange(end, end);
-        textarea.scrollTop = textarea.scrollHeight;
-      } catch {
-        // ignore focus/selection errors
+    const applyTemplateText = () => {
+      updateLaneDescription(template.text || "");
+      setHasUnsavedChanges(true);
+      setLaneTemplateFlash(true);
+      if (laneTemplateFlashTimerRef.current) {
+        window.clearTimeout(laneTemplateFlashTimerRef.current);
       }
-    });
+      laneTemplateFlashTimerRef.current = window.setTimeout(() => {
+        setLaneTemplateFlash(false);
+      }, 900);
+      const roleName = selectedLane?.name || selectedLane?.id || "rola";
+      setInfo(`Vložené do roly: ${roleName}`);
+      window.requestAnimationFrame(() => {
+        const textarea = laneTextareaRef.current;
+        if (!textarea) return;
+        try {
+          textarea.focus();
+          const end = textarea.value.length;
+          textarea.setSelectionRange(end, end);
+          textarea.scrollTop = textarea.scrollHeight;
+        } catch {
+          // ignore focus/selection errors
+        }
+      });
+    };
+    const currentDraft = String(laneDescription || "").trim();
+    const nextDraft = String(template.text || "").trim();
+    if (currentDraft && currentDraft !== nextDraft) {
+      openWizardConfirmModal(
+        {
+          kicker: "Rola",
+          title: "Prepísať rozpísané kroky?",
+          message:
+            "V tejto role už máš rozpísaný draft. Ak budeš pokračovať, vzor nahradí aktuálny text v paneli.",
+          confirmLabel: "Áno, použiť vzor",
+          cancelLabel: "Nechať môj text",
+          warning: true,
+        },
+        applyTemplateText,
+      );
+      return;
+    }
+    applyTemplateText();
   };
 
   const openSingleCard = (cardKey) => {
@@ -1523,6 +1606,29 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setMentorOpen(cardKey === "mentor");
     setLaneOpen(cardKey === "lane");
   };
+  const getSelectedLaneKey = useCallback(
+    (lane = selectedLane) => String(lane?.engineId || lane?.id || "").trim(),
+    [selectedLane],
+  );
+  const resolveLaneElement = useCallback((elementRegistry, lane = selectedLane) => {
+    if (!elementRegistry || !lane) return null;
+    const engineId = String(lane?.engineId || lane?.id || "").trim();
+    const canvasId = String(lane?.canvasId || "").trim();
+    if (canvasId) {
+      const directCanvas = elementRegistry.get(canvasId);
+      if (directCanvas) return directCanvas;
+    }
+    if (engineId) {
+      const direct = elementRegistry.get(engineId);
+      if (direct) return direct;
+      const all = elementRegistry.getAll?.() || [];
+      const byEngine = all.find(
+        (el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "") === engineId,
+      );
+      if (byEngine) return byEngine;
+    }
+    return null;
+  }, [selectedLane]);
   const mapHelpIntentTypeToSection = (type) => {
     if (type === "XOR") return "xor";
     if (type === "AND") return "and_strict";
@@ -1820,32 +1926,87 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const runGuideReview = useCallback(
     async (reason = "manual", laneId = null) => {
       if (!guideEnabled) return;
+      const guideWorkspaceActive =
+        Boolean(engineJson) || drawerOpen || laneOpen || helpOpen || storyOpen || mentorOpen;
+      if (!guideWorkspaceActive) {
+        setGuideState(null);
+        return;
+      }
       const runModelVersion = modelVersionRef.current;
       guideLastReasonRef.current = reason;
       const modelSnapshot = collectGuideModelSnapshot();
       const guideEngine = modelSnapshot?.engine || engineJson;
       const generator = processCard?.generatorInput || {};
+      const processNameFilled = Boolean((generator.processName || "").trim());
+      const rolesValue = String(generator.roles || "").trim();
+      const rolesLines = rolesValue
+        ? rolesValue.split(/\r?\n/).map((line) => String(line || "").trim()).filter(Boolean)
+        : [];
+      const rolesFilled = rolesLines.length > 0;
+      const triggerFilled = Boolean((generator.trigger || "").trim());
+      const outputFilled = Boolean((generator.output || "").trim());
       const hasEngineModel =
         Boolean((guideEngine?.name || guideEngine?.processName || "").trim()) ||
         (Array.isArray(guideEngine?.lanes) && guideEngine.lanes.length > 0) ||
         (Array.isArray(guideEngine?.nodes) && guideEngine.nodes.length > 0);
       const hasProcessCard =
-        (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
+        (processNameFilled && rolesFilled) ||
         hasEngineModel;
       if (!hasProcessCard && !hasEngineModel) {
+        const partialCardStarted =
+          processNameFilled || rolesFilled || triggerFilled || outputFilled;
         setGuideState({
-          key: "process_card",
+          key: partialCardStarted ? "process_card_progress" : "process_card",
           scope: "global",
-          title: "Začíname spolu",
-          message:
-            "Najprv si nastavíme základ. Daj procesu názov a pridaj roly (každú na nový riadok). Keď budeš pripravený, vytvoríme model.",
+          title: partialCardStarted ? "Poďme krok po kroku" : "Začíname spolu",
+          message: !processNameFilled
+            ? "Začni názvom procesu. Jednou vetou pomenuj, čo ideme modelovať."
+            : !rolesFilled
+              ? "Názov už máš. Teraz doplň roly, každú na nový riadok, aby bolo jasné, kto v procese vystupuje."
+              : !triggerFilled
+                ? `Dobre, názov aj roly sú pripravené. Teraz doplň, čo proces „${generator.processName}“ spúšťa.`
+                : !outputFilled
+                  ? "Začiatok už máme. Ešte doplň, čo má byť na konci procesu alebo aký má byť jeho výsledok."
+                  : "Základ kostry je pripravený. Skontroluj názov procesu, roly, začiatok a koniec a potom klikni na „Vytvoriť model“.",
           primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
-          secondary: { label: "Neskôr", action: "NOT_NOW" },
         });
         return;
       }
       if (!guideEngine) {
-        setGuideState(null);
+        const key =
+          processNameFilled && rolesFilled && triggerFilled && outputFilled
+            ? "process_card_ready"
+            : !processNameFilled
+              ? "process_card_missing_name"
+              : !rolesFilled
+                ? "process_card_missing_roles"
+                : !triggerFilled
+                  ? "process_card_missing_trigger"
+                  : !outputFilled
+                    ? "process_card_missing_output"
+                : "process_card";
+        const message =
+          processNameFilled && rolesFilled && triggerFilled && outputFilled
+            ? "Základ kostry je pripravený. Skontroluj názov procesu, roly, začiatok a koniec a potom klikni na „Vytvoriť model“, aby sme z toho spravili prvú mapu."
+            : !processNameFilled
+              ? "Začni názvom procesu. Jednou vetou pomenuj, čo ideme modelovať."
+              : !rolesFilled
+                ? "Názov procesu už máš. Teraz doplň roly, každú na nový riadok, aby sme vedeli vytvoriť kostru procesu."
+                : !triggerFilled
+                  ? `Dobre, názov aj roly sú pripravené. Teraz doplň, čo proces „${generator.processName}“ spúšťa.`
+                  : !outputFilled
+                    ? "Začiatok už máme. Ešte doplň, čo má byť na konci procesu alebo aký má byť jeho výsledok."
+                    : "Najprv si nastavíme základ. Daj procesu názov a pridaj roly (každú na nový riadok). Keď budeš pripravený, vytvoríme model.";
+        setGuideState({
+          key,
+          scope: "global",
+          title:
+            processNameFilled && rolesFilled && triggerFilled && outputFilled
+              ? "Základ je pripravený"
+              : "Poďme doplniť kostru",
+          message,
+          primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
+        });
         return;
       }
       const nodesCount = Array.isArray(guideEngine?.nodes) ? guideEngine.nodes.length : 0;
@@ -1911,6 +2072,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       guideEnabled,
       processCard,
       engineJson,
+      drawerOpen,
+      laneOpen,
+      helpOpen,
+      storyOpen,
+      mentorOpen,
       laneDescription,
       applyGuideFromFindings,
       collectGuideModelSnapshot,
@@ -1920,8 +2086,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   useEffect(() => {
     if (!guideEnabled) return;
-    if (!guideState || guideState.key !== "process_card") return;
+    if (!guideState || !String(guideState.key || "").startsWith("process_card")) return;
     const generator = processCard?.generatorInput || {};
+    const partialCardStarted =
+      Boolean((generator.processName || "").trim()) ||
+      Boolean(String(generator.roles || "").trim()) ||
+      Boolean((generator.trigger || "").trim()) ||
+      Boolean((generator.output || "").trim());
     const hasEngineModel =
       Boolean((engineJson?.name || engineJson?.processName || "").trim()) ||
       (Array.isArray(engineJson?.lanes) && engineJson.lanes.length > 0) ||
@@ -1929,7 +2100,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const hasProcessCard =
       (Boolean((generator.processName || "").trim()) && Boolean((generator.roles || "").trim())) ||
       hasEngineModel;
-    if (hasProcessCard || hasEngineModel) {
+    if (partialCardStarted || hasProcessCard || hasEngineModel) {
       const key = [
         engineJson?.processId || "",
         engineJson?.name || engineJson?.processName || "",
@@ -1938,11 +2109,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0,
         (generator.processName || "").trim(),
         (generator.roles || "").trim(),
+        (generator.trigger || "").trim(),
+        (generator.output || "").trim(),
       ].join("|");
       if (guideModelLoadedKeyRef.current === key) return;
       guideModelLoadedKeyRef.current = key;
       setGuideState(null);
-      runGuideReview("model_loaded");
+      runGuideReview(partialCardStarted && !hasEngineModel ? "process_card_progress" : "model_loaded");
     }
   }, [guideEnabled, guideState, engineJson, processCard, runGuideReview]);
 
@@ -2555,6 +2728,27 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             },
           }));
         }
+        if (patch?.type === "RENAME_NODE" && next?.nodes) {
+          const renamedNode = next.nodes.find((node) => String(node?.id) === String(patch?.id));
+          const nodeType = String(renamedNode?.type || "").toLowerCase();
+          if (renamedNode && nodeType.includes("start")) {
+            setProcessCard((prevCard) => ({
+              ...prevCard,
+              generatorInput: {
+                ...prevCard.generatorInput,
+                trigger: String(renamedNode?.name || ""),
+              },
+            }));
+          } else if (renamedNode && nodeType.includes("end")) {
+            setProcessCard((prevCard) => ({
+              ...prevCard,
+              generatorInput: {
+                ...prevCard.generatorInput,
+                output: String(renamedNode?.name || ""),
+              },
+            }));
+          }
+        }
         return next;
       });
       setHasUnsavedChanges(true);
@@ -2570,6 +2764,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     },
     [guideEnabled, runGuideReview, bumpModelVersion],
   );
+
+  const findCanvasElementByEngineId = useCallback((engineId) => {
+    if (!engineId) return null;
+    const modeler = modelerRef.current;
+    const elementRegistry = modeler?.get?.("elementRegistry", false);
+    if (!elementRegistry?.get) return null;
+    const direct = elementRegistry.get(engineId);
+    if (direct) return direct;
+    const all = elementRegistry.getAll?.() || [];
+    return (
+      all.find(
+        (element) =>
+          String(element?.businessObject?.$attrs?.["data-engine-id"] || "") === String(engineId),
+      ) || null
+    );
+  }, []);
+
+  const renameCanvasElementByEngineId = useCallback((engineId, nextName) => {
+    const element = findCanvasElementByEngineId(engineId);
+    const modeler = modelerRef.current;
+    const modeling = modeler?.get?.("modeling", false);
+    if (!element || !modeling?.updateProperties) return false;
+    try {
+      modeling.updateProperties(element, { name: nextName });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [findCanvasElementByEngineId]);
 
   const syncEngineFromCanvas = useCallback(async () => {
     const modeler = modelerRef.current;
@@ -2609,10 +2832,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   useEffect(() => {
     if (!guideEnabled) return;
+    const guideWorkspaceActive =
+      Boolean(engineJson) || drawerOpen || laneOpen || helpOpen || storyOpen || mentorOpen;
+    if (!guideWorkspaceActive) {
+      setGuideState(null);
+      return;
+    }
     if (!engineJson && !guideState) {
       runGuideReview("initial");
     }
-  }, [guideEnabled, engineJson, guideState, runGuideReview]);
+  }, [guideEnabled, engineJson, guideState, runGuideReview, drawerOpen, laneOpen, helpOpen, storyOpen, mentorOpen]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -2653,19 +2882,31 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     );
   }, [guideEnabled, guideState, guideFindings, engineJson, activeLaneId, lastEditedLaneId]);
 
+  useEffect(() => {
+    if (xml) return undefined;
+    if (HOME_GUIDE_MESSAGES.length <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setHomeGuideMessageIndex((current) => (current + 1) % HOME_GUIDE_MESSAGES.length);
+    }, 12000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [xml]);
+
   const prevLaneOpenRef = useRef(laneOpen);
   const lastActiveLaneIdRef = useRef(null);
 
   useEffect(() => {
     if (laneOpen && selectedLane?.id) {
-      setActiveLaneId(selectedLane.id);
-      lastActiveLaneIdRef.current = selectedLane.id;
+      const laneKey = getSelectedLaneKey(selectedLane);
+      setActiveLaneId(laneKey || null);
+      lastActiveLaneIdRef.current = laneKey || null;
       return;
     }
     if (!laneOpen) {
       setActiveLaneId(null);
     }
-  }, [laneOpen, selectedLane]);
+  }, [laneOpen, selectedLane, getSelectedLaneKey]);
 
   useEffect(() => {
     if (prevLaneOpenRef.current && !laneOpen) {
@@ -2683,6 +2924,42 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }));
   }, [engineJson]);
 
+  const endOptions = useMemo(() => {
+    const nodes = engineJson?.nodes || [];
+    const ends = nodes.filter((node) => String(node?.type || "").toLowerCase().includes("end"));
+    const sorted = [...ends].sort((a, b) => String(a?.id || "").localeCompare(String(b?.id || "")));
+    return sorted.map((node, idx) => ({
+      id: node.id,
+      label: (String(node?.name || "").trim() || `Koniec ${idx + 1}`),
+    }));
+  }, [engineJson]);
+
+  const liveRoleItems = useMemo(
+    () =>
+      Array.isArray(engineJson?.lanes)
+        ? engineJson.lanes.map((lane, idx) => ({
+            id: lane?.id || `lane-${idx + 1}`,
+            name: String(lane?.name || "").trim() || `Rola ${idx + 1}`,
+          }))
+        : [],
+    [engineJson],
+  );
+
+  const primaryStartOption = startOptions[0] || null;
+  const primaryEndOption = endOptions[0] || null;
+  const hasGeneratedModel = Boolean(engineJson);
+  const canonicalStoryOptions = useMemo(
+    () => ({
+      useLanes: true,
+      summarizeParallels: true,
+      showEnds: true,
+      showBranchEnds: true,
+      moreDetails: true,
+      selectedStartId: primaryStartOption?.id || null,
+    }),
+    [primaryStartOption?.id],
+  );
+
   useEffect(() => {
     if (!selectedLane) {
       setLaneInsertOpen(false);
@@ -2696,6 +2973,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setLaneTemplateChoice("");
     setLaneHelpTipDismissed(false);
+    setLaneDraftDirty(false);
   }, [selectedLane?.id]);
 
   useEffect(() => {
@@ -2711,12 +2989,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         canvas.removeMarker(laneElement.id, "lane-selected");
       });
     if (selectedLane?.id) {
-      const laneElement = elementRegistry.get(selectedLane.id);
+      const laneElement = resolveLaneElement(elementRegistry, selectedLane);
       if (laneElement?.businessObject?.$type === "bpmn:Lane") {
         canvas.addMarker(laneElement.id, "lane-selected");
       }
     }
-  }, [selectedLane, modelVersion]);
+  }, [selectedLane, modelVersion, resolveLaneElement]);
 
   const headerStepperState = useMemo(
     () => ({
@@ -2751,19 +3029,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   useEffect(() => () => setHeaderStepperState(null), [setHeaderStepperState]);
 
-  const updateStoryOption = (key, value) =>
-    setStoryOptions((prev) => {
-      const next = { ...prev, [key]: value };
-      if (storyOpen && engineJson) {
-        const doc = generateProcessStory(engineJson, next);
-        setStoryDoc(doc);
-        setStoryGeneratedAt(new Date().toISOString());
-        setStoryStale(false);
-        storyEngineRef.current = engineJson;
-      }
-      return next;
-    });
-
   const regenerateStory = useCallback(() => {
     if (!engineJson) {
       setStoryDoc(null);
@@ -2772,30 +3037,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       storyEngineRef.current = null;
       return;
     }
-    const doc = generateProcessStory(engineJson, storyOptions);
+    const doc = generateProcessStory(engineJson, canonicalStoryOptions);
     setStoryDoc(doc);
     setStoryGeneratedAt(new Date().toISOString());
     setStoryStale(false);
     storyEngineRef.current = engineJson;
-  }, [engineJson, storyOptions]);
+  }, [engineJson, canonicalStoryOptions]);
 
   useEffect(() => {
     if (storyOpen && engineJson && !storyDoc) {
       regenerateStory();
     }
   }, [engineJson, regenerateStory, storyDoc, storyOpen]);
-
-  useEffect(() => {
-    if (!engineJson || startOptions.length === 0) return;
-    const selected = storyOptions.selectedStartId;
-    const exists = startOptions.some((opt) => opt.id === selected);
-    if (!exists) {
-      setStoryOptions((prev) => ({
-        ...prev,
-        selectedStartId: startOptions[0].id,
-      }));
-    }
-  }, [engineJson, startOptions, storyOptions.selectedStartId]);
 
   useEffect(() => {
     if (engineJson) return;
@@ -2812,85 +3065,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   }, [engineJson, storyDoc, storyOpen]);
 
-  const buildStoryText = (doc) => {
-    if (!doc) return "";
-    const lines = [];
-    if (doc.summary?.length) {
-      lines.push("Kratke zhrnutie");
-      doc.summary.forEach((line) => lines.push(line));
-      lines.push("");
-    }
-    if (doc.mainFlow?.length) {
-      lines.push("Hlavny priebeh");
-      doc.mainFlow.forEach((line, idx) => lines.push(`${idx + 1}. ${line.text}`));
-      lines.push("");
-    }
-    if (doc.decisions?.length) {
-      doc.decisions.forEach((decision) => {
-        lines.push(decision.title);
-        (decision.branches || []).forEach((branch) => {
-          lines.push(`  ${branch.intro}`);
-          (branch.steps || []).forEach((step) => lines.push(`    ${step.text}`));
-        });
-      });
-      lines.push("");
-    }
-    if (doc.parallels?.length) {
-      lines.push("Paralely");
-      doc.parallels.forEach((parallel) => {
-        lines.push(parallel.title);
-        (parallel.branches || []).forEach((branch) => {
-          lines.push(`- ${branch.label}`);
-          (branch.steps || []).forEach((step) => lines.push(`  - ${step.text}`));
-          if (branch.truncated) lines.push("  - ...");
-        });
-        if (parallel.outro) lines.push(parallel.outro);
-      });
-      lines.push("");
-    }
-    if (doc.notes?.length) {
-      lines.push("Poznamky");
-      doc.notes.forEach((note) => lines.push(`- ${note.text}`));
-    }
-    return lines.join("\n").trim();
-  };
+  const buildStoryParagraphs = (doc) => (Array.isArray(doc?.narrative) ? doc.narrative.filter(Boolean) : []);
 
-  const formatDecisionStepText = (value) => {
-    const raw = String(value || "").trim().replace(/^\s*-\s*/, "");
-    if (!raw) return "";
-    const match = raw.match(/^\(Nasleduje rozhodnutie\)\s+(.+)$/);
-    if (match) {
-      const name = match[1].trim();
-      return `V tejto vetve sa nasledne rozhoduje, ci ${name}.`;
-    }
-    return raw;
-  };
-
-  const _buildBranchParagraph = (branch) => {
-    const label = String(branch?.label || "").trim() || "moznost";
-    const steps = (branch?.steps || [])
-      .map((step) => formatDecisionStepText(step?.text))
-      .filter(Boolean);
-    if (!steps.length) {
-      return `Ak ${label}, potom pokracuje dalsia cast procesu.`;
-    }
-    return `Ak ${label}, potom ${steps.join(" ")}`;
-  };
+  const buildStoryText = (doc) => buildStoryParagraphs(doc).join("\n\n").trim();
 
   const handleCopyStory = async () => {
     const text = buildStoryText(storyDoc);
     if (!text) {
-      window.alert("Nie je co kopirovat.");
+      setInfo("Príbeh procesu zatiaľ nie je pripravený na kopírovanie.");
       return;
     }
     try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        window.prompt("Skopiruj text:", text);
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error("clipboard_unavailable");
       }
+      await navigator.clipboard.writeText(text);
+      setInfo("Príbeh procesu bol skopírovaný.");
     } catch (_err) {
-      window.prompt("Skopiruj text:", text);
+      setInfo("Nepodarilo sa skopírovať príbeh procesu.");
     }
   };
 
@@ -2917,6 +3109,57 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setHasUnsavedChanges(true);
   };
 
+  const handleStructuredProcessNameChange = useCallback((value) => {
+    updateGeneratorInput("processName", value);
+    if (!engineJson) return;
+    const modeler = modelerRef.current;
+    const modeling = modeler?.get?.("modeling", false);
+    const elementRegistry = modeler?.get?.("elementRegistry", false);
+    if (modeling?.updateProperties && elementRegistry?.getAll) {
+      try {
+        const candidate =
+          elementRegistry
+            .getAll()
+            .find((element) =>
+              String(element?.businessObject?.$type || element?.type || "").includes("Participant"),
+            ) ||
+          modeler?.get?.("canvas", false)?.getRootElement?.() ||
+          null;
+        if (candidate) {
+          modeling.updateProperties(candidate, { name: value });
+        }
+      } catch {
+        // keep local state update even if canvas root rename is unavailable
+      }
+    }
+    const nextName = String(value || "").trim();
+    setEngineJson((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        name: nextName || String(prev?.processId || "").trim() || "Proces",
+      };
+    });
+    bumpModelVersion();
+  }, [engineJson, bumpModelVersion]);
+
+  const handleStructuredNodeFieldChange = useCallback((field, nodeId, value) => {
+    updateGeneratorInput(field, value);
+    if (!engineJson || !nodeId) return;
+    const renamed = renameCanvasElementByEngineId(nodeId, value);
+    if (!renamed) {
+      handleEngineJsonPatch({ type: "RENAME_NODE", id: nodeId, name: value });
+    }
+  }, [engineJson, handleEngineJsonPatch, renameCanvasElementByEngineId]);
+
+  const handleStructuredLaneRename = useCallback((laneId, value) => {
+    if (!laneId) return;
+    const renamed = renameCanvasElementByEngineId(laneId, value);
+    if (!renamed) {
+      handleEngineJsonPatch({ type: "RENAME_LANE", id: laneId, name: value });
+    }
+  }, [handleEngineJsonPatch, renameCanvasElementByEngineId]);
+
   const updateLaneDescription = (value) => {
     if (isDemoMode) {
       const lines = String(value || "").split(/\r?\n/);
@@ -2926,7 +3169,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       value = lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     }
     setLaneDescription(value);
-    setHasUnsavedChanges(true);
+    setLaneDraftDirty(Boolean(String(value || "").trim()));
   };
 
   const _appendLine = (current, text) => {
@@ -2948,7 +3191,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       return lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     });
-    setHasUnsavedChanges(true);
+    setLaneDraftDirty(true);
     const roleName = helpInsertTarget?.laneName || helpInsertTarget?.laneId || "rola";
     setInfo(`Vložené do roly: ${roleName}`);
     if (helpInsertTarget?.type === "lane") {
@@ -3081,7 +3324,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   </div>
                 ) : null}
                 <div className="wizard-help-syntax-wrap">
-                  <span className="wizard-help-code-label">Ako to napísať</span>
+                  <span className="wizard-help-code-label">Odporúčaný zápis</span>
                   <code className="wizard-help-syntax">{rule.syntax}</code>
                 </div>
                 <div className="wizard-help-acc-actions">
@@ -3090,7 +3333,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     className="btn btn--small btn-primary wizard-help-insert-btn"
                     onClick={() => insertHelpExample(buildHelpTemplate(rule))}
                   >
-                    Vložiť príklad
+                    Vložiť do textu
                   </button>
                   <button
                     type="button"
@@ -3101,7 +3344,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       }
                     }}
                   >
-                    Upraviť v poli
+                    Späť do písania
                   </button>
                 </div>
               </div>
@@ -3264,6 +3507,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setMentorLastRunAt(null);
     setLastSavedAt(null);
     setLastExportedAt(null);
+    setGuideState(null);
+    setGuideFindings([]);
     historyRef.current = [];
     setHistoryCount(0);
   };
@@ -3405,8 +3650,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     const hasWork = Boolean(engineJson || xml || hasUnsavedChanges);
     if (hasWork && !options.skipConfirm) {
-      const confirmed = window.confirm("Začať nový model? Neuložené zmeny sa stratia.");
-      if (!confirmed) return;
+      setNewModelConfirmOpen(true);
+      return;
     }
     resetWizardState();
     setHelpOpen(false);
@@ -3415,6 +3660,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgOpen(false);
     setLaneOpen(false);
     setDrawerOpen(true);
+  };
+
+  const handleConfirmNewModel = () => {
+    setNewModelConfirmOpen(false);
+    handleNewModel({ skipConfirm: true });
   };
 
   const handleStartNewModel = () => handleNewModel({ skipConfirm: true });
@@ -3426,6 +3676,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     requestOpenWithSave(() => {
       resetWizardState();
+      setGuideState(null);
+      setGuideFindings([]);
       setHelpOpen(false);
       setMentorOpen(false);
       setStoryOpen(false);
@@ -3738,12 +3990,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setError(null);
     setInfo(null);
     if (engineJson) {
-      const proceed = window.confirm(
-        "Model uz mas vytvoreny. Chces ho naozaj vygenerovat znova?",
-      );
-      if (!proceed) {
-        return;
-      }
+      setRegenerateConfirmOpen(true);
+      return;
     }
     setIsLoading(true);
     try {
@@ -3763,8 +4011,31 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     } catch (e) {
       const message = e?.message || "Failed to generate diagram";
       setError(message);
-      setEngineJson(null);
-      setXmlFull("", "handleGenerate:clear");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConfirmRegenerate = async () => {
+    setRegenerateConfirmOpen(false);
+    setIsLoading(true);
+    try {
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
+      const payload = mapGeneratorInputToPayload(processCard.generatorInput);
+      const response = await generateLinearWizardDiagram(payload);
+      const generatedEngine = response?.engine_json;
+      if (!generatedEngine) {
+        throw new Error("Chýba engine_json v odpovedi.");
+      }
+      setEngineJson(generatedEngine);
+      const xmlText = await renderEngineXml(generatedEngine);
+      setXmlFull(xmlText, "handleGenerate");
+      setHasUnsavedChanges(true);
+    } catch (e) {
+      const message = e?.message || "Failed to generate diagram";
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -4078,7 +4349,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const elementFactory = modeler.get("elementFactory");
     const selection = modeler.get("selection");
     const canvas = modeler.get("canvas");
-    const laneElement = elementRegistry?.get(selectedLane.id);
+    const laneElement = resolveLaneElement(elementRegistry, selectedLane);
     if (!laneElement || !modeling || !elementFactory) {
       setError("Lane sa nepodarilo najst.");
       return;
@@ -4820,7 +5091,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const elementFactory = modeler.get("elementFactory");
     const selection = modeler.get("selection");
     const canvas = modeler.get("canvas");
-    const laneElement = elementRegistry?.get(selectedLane.id);
+    const laneElement = resolveLaneElement(elementRegistry, selectedLane);
     const processParent = getProcessParent(elementRegistry);
 
     if (!laneElement || !modeling || !elementFactory || !processParent) {
@@ -4888,14 +5159,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   useEffect(() => () => clearLanePreviewOverlays(), []);
 
   const handleAppendToLane = async () => {
-    setLaneOpen(false);
     if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
-      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      setInfo(
+        activeOrgCapabilities.canToggleOrgEdit
+          ? "Režim: len na čítanie. Najprv klikni Upraviť."
+          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+      );
       return;
     }
     if (!selectedLane || !laneDescription.trim()) {
       setError("Vyber lane a doplň aspoň jednu aktivitu.");
+      return;
+    }
+    if (laneSubmitGuardMessage) {
+      setError(laneSubmitGuardMessage);
       return;
     }
     const laneLines = splitLines(laneDescription);
@@ -4928,7 +5206,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const laneByName = new Map(
         (currentEngine?.lanes || []).map((l) => [String(l?.name || ""), String(l?.id || "")]),
       );
-      let laneId = selectedLane.id;
+      let laneId = getSelectedLaneKey(selectedLane);
       if (laneId && !laneIds.has(String(laneId))) {
         const mapped = laneByName.get(String(laneId));
         if (mapped) laneId = mapped;
@@ -5060,8 +5338,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
               setHasUnsavedChanges(true);
               setLaneDescription("");
+              setLaneDraftDirty(false);
               clearLanePreviewOverlays();
               setInfo("Kroky boli pridané (fallback render).");
+              setLaneOpen(false);
               bumpModelVersion();
               return;
             } catch (fallbackError) {
@@ -5074,7 +5354,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
+        setLaneDraftDirty(false);
         clearLanePreviewOverlays();
+        setLaneOpen(false);
         if (isDemoMode) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
           if (lanes.length > 1) {
@@ -5120,8 +5402,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setXmlFull(fullXml, "appendLane:fallback_full_rerender");
         setHasUnsavedChanges(true);
         setLaneDescription("");
+        setLaneDraftDirty(false);
         clearLanePreviewOverlays();
         setInfo("Kroky boli pridané (fallback render).");
+        setLaneOpen(false);
         if (isDemoMode) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
           if (lanes.length > 1) {
@@ -5181,7 +5465,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (modelSource?.kind === "org" && orgReadOnly) {
-      setInfo("Rezim: len na citanie. Najprv klikni Upravit.");
+      setInfo(
+        activeOrgCapabilities.canToggleOrgEdit
+          ? "Režim: len na čítanie. Najprv klikni Upraviť."
+          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+      );
       return;
     }
     setError(null);
@@ -5196,8 +5484,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         );
       }
       const { engine: syncedEngine, diagramXml } = await getSyncedCanvasSnapshot();
+      const configuredProcessName = String(processCard?.generatorInput?.processName || "").trim();
       const payload = {
         name:
+          configuredProcessName ||
           syncedEngine?.name ||
           syncedEngine?.processName ||
           syncedEngine?.processId ||
@@ -5318,6 +5608,47 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     [restoreRelayoutContext, bumpModelVersion],
   );
 
+  const handleViewerLaneSelect = useCallback(
+    (lane) => {
+      setSelectedLane(
+        lane
+          ? {
+              ...lane,
+              id: String(lane?.engineId || lane?.id || ""),
+              engineId: String(lane?.engineId || lane?.id || ""),
+              canvasId: String(lane?.canvasId || ""),
+            }
+          : null,
+      );
+      if (!lane?.id) return;
+      const laneKey = String(lane?.engineId || lane?.id || "");
+      setActiveLaneId(laneKey);
+      setLastEditedLaneId(laneKey);
+      openSingleCard("lane");
+
+      if (!guideEnabled || !guideState) return;
+      const key = String(guideState?.key || "");
+      const message = String(guideState?.message || "").toLowerCase();
+      const isWriteGuide =
+        key === "process_empty" ||
+        key.startsWith("lane_empty:") ||
+        key.startsWith("lane_progress:") ||
+        (message.includes("krok") &&
+          (message.includes("nap") || message.includes("dop") || message.includes("zosta")));
+      if (!isWriteGuide) return;
+
+      applyGuideHighlight(
+        {
+          token: `lane_click:${laneKey}:${Date.now()}`,
+          map: { type: "lane", laneId: laneKey, pulse: true },
+          laneInputLaneId: laneKey,
+        },
+        2200,
+      );
+    },
+    [guideEnabled, guideState, applyGuideHighlight],
+  );
+
   const viewerProps = useMemo(
     () => ({
       title: "Karta procesu - náhľad",
@@ -5331,15 +5662,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       loading: isLoading && !xml,
       error: error || "",
       readOnly: modelSource?.kind === "org" && orgReadOnly,
-      onLaneSelect: isReadOnlyMode ? undefined : setSelectedLane,
+      onLaneSelect: isReadOnlyMode ? undefined : handleViewerLaneSelect,
       onLaneOrderChange: reorderLanesByNames,
       onDiagramChange: handleDiagramChange,
       onUndo: handleUndo,
       canUndo: historyCount > 0,
       onSave: isDemoMode ? undefined : handleSaveModel,
+      onEditStructure: isDemoMode ? undefined : () => openSingleCard("drawer"),
       onMainMenu: handleMainMenu,
       saveDisabled: isDemoMode || saveLoading || isReadOnlyMode,
       saveLabel: isDemoMode ? "Demo režim" : saveLoading ? "Ukladám..." : "Uložiť",
+      editStructureDisabled: false,
       onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
       onXmlImported: handleXmlImported,
@@ -5365,11 +5698,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       relayouting,
       guideHighlight,
       handleXmlImported,
+      handleViewerLaneSelect,
       xml,
       modelSource,
       orgReadOnly,
       isReadOnlyMode,
       isDemoMode,
+      openSingleCard,
     ],
   );
 
@@ -5533,39 +5868,75 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleCreateOrgFolder = async () => {
     if (!activeOrgId) {
-      window.alert("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgError("Najprv si vyber alebo vytvor organizáciu.");
       return;
     }
-    const name = window.prompt("Nazov priecinka");
-    if (!name || !name.trim()) return;
-    try {
-      const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: name.trim() }, activeOrgId);
-      setOrgTree(result?.tree || null);
-      setExpandedOrgFolders((prev) => ({ ...prev, [selectedOrgFolderId]: true }));
-    } catch (e) {
-      window.alert(e?.message || "Nepodarilo sa vytvorit priecinok.");
+    if (!activeOrgCapabilities.canEditOrgModels) {
+      setOrgError("Nemáš právo upravovať model organizácie.");
+      return;
     }
+    openWizardInputModal(
+      {
+        kicker: "Model organizácie",
+        title: "Vytvoriť priečinok",
+        label: "Názov priečinka",
+        confirmLabel: "Vytvoriť priečinok",
+      },
+      async (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "Zadaj názov priečinka.";
+        try {
+          const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: trimmed }, activeOrgId);
+          setOrgTree(result?.tree || null);
+          setExpandedOrgFolders((prev) => ({ ...prev, [selectedOrgFolderId]: true }));
+          setOrgError(null);
+          return null;
+        } catch (e) {
+          const message = e?.message || "Nepodarilo sa vytvoriť priečinok.";
+          setOrgError(message);
+          return message;
+        }
+      },
+    );
   };
 
   const handleCreateOrgProcess = async () => {
     if (!activeOrgId) {
-      window.alert("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgError("Najprv si vyber alebo vytvor organizáciu.");
       return;
     }
-    const name = window.prompt("Nazov procesu");
-    if (!name || !name.trim()) return;
-    try {
-      const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: name.trim() }, activeOrgId);
-      setOrgTree(result?.tree || null);
-      const modelId = result?.node?.processRef?.modelId;
-      if (modelId) {
-        requestOpenWithSave(() => {
-          navigate(`/model/${modelId}`);
-        });
-      }
-    } catch (e) {
-      window.alert(e?.message || "Nepodarilo sa vytvorit proces.");
+    if (!activeOrgCapabilities.canEditOrgModels) {
+      setOrgError("Nemáš právo upravovať model organizácie.");
+      return;
     }
+    openWizardInputModal(
+      {
+        kicker: "Model organizácie",
+        title: "Vytvoriť proces",
+        label: "Názov procesu",
+        confirmLabel: "Vytvoriť proces",
+      },
+      async (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "Zadaj názov procesu.";
+        try {
+          const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: trimmed }, activeOrgId);
+          setOrgTree(result?.tree || null);
+          setOrgError(null);
+          const modelId = result?.node?.processRef?.modelId;
+          if (modelId) {
+            requestOpenWithSave(() => {
+              navigate(`/model/${modelId}`);
+            });
+          }
+          return null;
+        } catch (e) {
+          const message = e?.message || "Nepodarilo sa vytvoriť proces.";
+          setOrgError(message);
+          return message;
+        }
+      },
+    );
   };
 
   const findParentFolderInfo = (rootNode, processNodeId, currentFolder = null) => {
@@ -5614,6 +5985,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const openMoveProcessModal = (node) => {
     if (!node || node.type !== "process") return;
+    if (!activeOrgCapabilities.canEditOrgModels) {
+      setOrgError("Nemáš právo upravovať model organizácie.");
+      return;
+    }
     const parentInfo = findParentFolderInfo(orgTree, node.id);
     setOrgMenuNodeId(null);
     setOrgMoveNode(node);
@@ -5690,11 +6065,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     try {
       const resp = await listOrgModels(activeOrgId);
       const allItems = Array.isArray(resp) ? resp : [];
-      const processName = String(node.name || "").trim().toLowerCase();
-      const filtered = allItems.filter((item) => {
-        const name = String(item?.name || "").trim().toLowerCase();
-        return processName ? name === processName : false;
-      });
+      const currentModelId = String(node?.processRef?.modelId || "").trim();
+      const treeNodeId = String(node?.id || "").trim();
+      const treeScopedItems = allItems.filter((item) => String(item?.tree_node_id || "").trim() === treeNodeId);
+      const fallbackItems = allItems.filter((item) => String(item?.id || "").trim() === currentModelId);
+      const filtered =
+        treeScopedItems.length || fallbackItems.length
+          ? allItems.filter(
+              (item) =>
+                String(item?.tree_node_id || "").trim() === treeNodeId ||
+                String(item?.id || "").trim() === currentModelId,
+            )
+          : allItems.filter((item) => {
+              const name = String(item?.name || "").trim().toLowerCase();
+              const processName = String(node.name || "").trim().toLowerCase();
+              return processName ? name === processName : false;
+            });
       const sorted = filtered.sort((a, b) => new Date(b?.updated_at || 0) - new Date(a?.updated_at || 0));
       setOrgVersionsItems(sorted);
     } catch (e) {
@@ -5727,17 +6113,34 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setOrgError("Najprv si vyber alebo vytvor organizaciu.");
       return;
     }
-    const newName = window.prompt("Novy nazov procesu", node.name || "");
-    if (newName === null) return;
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    setOrgMenuNodeId(null);
-    try {
-      const result = await renameOrgNode(node.id, trimmed, activeOrgId);
-      setOrgTree(result?.tree || orgTree);
-    } catch (e) {
-      setOrgError(e?.message || "Nepodarilo sa premenovat proces.");
+    if (!activeOrgCapabilities.canEditOrgModels) {
+      setOrgError("Nemáš právo upravovať model organizácie.");
+      return;
     }
+    openWizardInputModal(
+      {
+        kicker: "Model organizácie",
+        title: "Premenovať proces",
+        label: "Nový názov procesu",
+        initialValue: node.name || "",
+        confirmLabel: "Uložiť názov",
+      },
+      async (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "Zadaj nový názov procesu.";
+        setOrgMenuNodeId(null);
+        try {
+          const result = await renameOrgNode(node.id, trimmed, activeOrgId);
+          setOrgTree(result?.tree || orgTree);
+          setOrgError(null);
+          return null;
+        } catch (e) {
+          const message = e?.message || "Nepodarilo sa premenovať proces.";
+          setOrgError(message);
+          return message;
+        }
+      },
+    );
   };
 
   const loadOrgModelFromTree = async (modelId, treeNodeId, options = {}) => {
@@ -5814,8 +6217,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(true);
     try {
       const resp = await loadOrgModel(modelId, activeOrgId);
+      const treeNodeId =
+        String(resp?.tree_node_id || "").trim() ||
+        String(findProcessPathByModelId(orgTree, modelId, [])?.slice(-1)?.[0]?.id || "").trim();
       applyLoadedModel(resp, {
-        source: { kind: "org", orgId: activeOrgId, modelId },
+        source: { kind: "org", orgId: activeOrgId, modelId, ...(treeNodeId ? { treeNodeId } : {}) },
       });
       setOrgVersionPreview(null);
       setPreviewVersionTag("");
@@ -5985,13 +6391,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const handleConflictRename = async () => {
-    const name = window.prompt("Nový názov procesu", orgPushConflictName || orgPushModel?.name || "");
-    if (!name) return;
-    setOrgPushConflictOpen(false);
-    setOrgPushConflictMatches([]);
-    setOrgPushConflictName("");
-    setOrgPushConflictSelectedId(null);
-    await executePushToOrg({ nameOverride: name.trim(), skipConflictCheck: false });
+    openWizardInputModal(
+      {
+        kicker: "Organizácia",
+        title: "Premenovať názov procesu",
+        label: "Nový názov procesu",
+        initialValue: orgPushConflictName || orgPushModel?.name || "",
+        confirmLabel: "Použiť nový názov",
+      },
+      async (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "Zadaj nový názov procesu.";
+        setOrgPushConflictOpen(false);
+        setOrgPushConflictMatches([]);
+        setOrgPushConflictName("");
+        setOrgPushConflictSelectedId(null);
+        await executePushToOrg({ nameOverride: trimmed, skipConflictCheck: false });
+        return null;
+      },
+    );
   };
 
   const handleConflictOverwrite = async () => {
@@ -6306,11 +6724,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           type="button"
           className={`org-tree-node org-tree-node--process ${isActive ? "is-active" : ""}`}
           onClick={() => {
-            const confirmed = window.confirm("Chceš otvoriť tento proces?");
-            if (!confirmed) return;
-            requestOpenWithSave(() => {
-              void openOrgProcessByNodeLatest(node.id);
-            });
+            setOpenOrgProcessConfirmNode({ id: node.id, name: node.name || "Proces" });
           }}
         >
           <div className="org-tree-prefix" aria-hidden>
@@ -6361,13 +6775,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               zIndex: 1000,
             }}
           >
-            <button type="button" className="org-tree-menu__item" onClick={() => handleRenameOrgProcess(node)}>
+            <button
+              type="button"
+              className="org-tree-menu__item"
+              onClick={() => handleRenameOrgProcess(node)}
+              disabled={!activeOrgCapabilities.canEditOrgModels}
+            >
               Premenovat
             </button>
             <button type="button" className="org-tree-menu__item" onClick={() => void openOrgVersionsModal(node)}>
               Verzie
             </button>
-            <button type="button" className="org-tree-menu__item" onClick={() => openMoveProcessModal(node)}>
+            <button
+              type="button"
+              className="org-tree-menu__item"
+              onClick={() => openMoveProcessModal(node)}
+              disabled={!activeOrgCapabilities.canEditOrgModels}
+            >
               Presunut do...
             </button>
             <div className="org-tree-menu__divider" />
@@ -6618,9 +7042,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (item.type === "folder") {
       setSelectedOrgFolderId(item.id);
       setExpandedOrgFolders((prev) => ({ ...prev, [item.id]: true, root: true }));
-    } else if (item.type === "process" && item.modelId) {
+    } else if (item.type === "process" && item.id) {
       requestOpenWithSave(() => {
-        navigate(`/model/${item.modelId}`);
+        void openOrgProcessByNodeLatest(item.id);
       });
     }
   };
@@ -6761,42 +7185,123 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setSavePromptOpen(false);
   };
 
-  const handleDeleteModel = async (id, name) => {
-    const confirmed = window.confirm(`Naozaj chcete zmazat tento model?\n\nModel: ${name || id}`);
-    if (!confirmed) return;
-    setModelsError(null);
-    setInfo(null);
-    setModelsActionLoading(true);
-    try {
-      await deleteWizardModel(id);
-      await fetchModels();
-      setInfo("Model bol zmazany.");
-    } catch (e) {
-      const message = e?.message || "Nepodarilo sa zmazat model.";
-      setModelsError(message);
-    } finally {
-      setModelsActionLoading(false);
+  const openWizardInputModal = useCallback((config, onSubmit) => {
+    wizardInputSubmitRef.current = typeof onSubmit === "function" ? onSubmit : null;
+    setWizardInputModal({
+      kicker: config?.kicker || "",
+      title: config?.title || "Zadaj hodnotu",
+      label: config?.label || "Názov",
+      confirmLabel: config?.confirmLabel || "Uložiť",
+      placeholder: config?.placeholder || "",
+      warning: config?.warning || "",
+    });
+    setWizardInputValue(config?.initialValue || "");
+    setWizardInputError("");
+  }, []);
+
+  const closeWizardInputModal = useCallback(() => {
+    setWizardInputModal(null);
+    setWizardInputValue("");
+    setWizardInputError("");
+    wizardInputSubmitRef.current = null;
+  }, []);
+
+  const submitWizardInputModal = useCallback(async () => {
+    const submit = wizardInputSubmitRef.current;
+    if (typeof submit !== "function") {
+      closeWizardInputModal();
+      return;
     }
+    const result = await submit(wizardInputValue);
+    if (typeof result === "string" && result.trim()) {
+      setWizardInputError(result);
+      return;
+    }
+    closeWizardInputModal();
+  }, [closeWizardInputModal, wizardInputValue]);
+
+  const openWizardConfirmModal = useCallback((config, onConfirm) => {
+    wizardConfirmActionRef.current = typeof onConfirm === "function" ? onConfirm : null;
+    setWizardConfirmModal({
+      kicker: config?.kicker || "",
+      title: config?.title || "Potvrdiť akciu?",
+      message: config?.message || "",
+      confirmLabel: config?.confirmLabel || "Potvrdiť",
+      cancelLabel: config?.cancelLabel || "Zrušiť",
+      warning: Boolean(config?.warning),
+    });
+  }, []);
+
+  const closeWizardConfirmModal = useCallback(() => {
+    setWizardConfirmModal(null);
+    wizardConfirmActionRef.current = null;
+  }, []);
+
+  const submitWizardConfirmModal = useCallback(async () => {
+    const action = wizardConfirmActionRef.current;
+    closeWizardConfirmModal();
+    if (typeof action === "function") {
+      await action();
+    }
+  }, [closeWizardConfirmModal]);
+
+  const handleDeleteModel = async (id, name) => {
+    openWizardConfirmModal(
+      {
+        kicker: "Pieskovisko",
+        title: "Zmazať model?",
+        message: `Naozaj chceš zmazať model ${name || id}?`,
+        confirmLabel: "Áno, zmazať",
+        cancelLabel: "Ponechať model",
+        warning: true,
+      },
+      async () => {
+        setModelsError(null);
+        setInfo(null);
+        setModelsActionLoading(true);
+        try {
+          await deleteWizardModel(id);
+          await fetchModels();
+          setInfo("Model bol zmazaný.");
+        } catch (e) {
+          const message = e?.message || "Nepodarilo sa zmazať model.";
+          setModelsError(message);
+        } finally {
+          setModelsActionLoading(false);
+        }
+      },
+    );
   };
 
   const handleRenameModel = async (id, currentName) => {
-    const newName = window.prompt("Zadajte novy nazov modelu", currentName || "");
-    if (newName === null) return;
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    setModelsError(null);
-    setInfo(null);
-    setModelsActionLoading(true);
-    try {
-      await renameWizardModel(id, trimmed);
-      await fetchModels();
-      setInfo("Model bol premenovany.");
-    } catch (e) {
-      const message = e?.message || "Nepodarilo sa premenovat model.";
-      setModelsError(message);
-    } finally {
-      setModelsActionLoading(false);
-    }
+    openWizardInputModal(
+      {
+        kicker: "Pieskovisko",
+        title: "Premenovať model",
+        label: "Nový názov modelu",
+        initialValue: currentName || "",
+        confirmLabel: "Uložiť názov",
+      },
+      async (value) => {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) return "Zadaj názov modelu.";
+        setModelsError(null);
+        setInfo(null);
+        setModelsActionLoading(true);
+        try {
+          await renameWizardModel(id, trimmed);
+          await fetchModels();
+          setInfo("Model bol premenovaný.");
+          return null;
+        } catch (e) {
+          const message = e?.message || "Nepodarilo sa premenovať model.";
+          setModelsError(message);
+          return message;
+        } finally {
+          setModelsActionLoading(false);
+        }
+      },
+    );
   };
 
   const setPushLoading = (id, isLoading) => {
@@ -6884,6 +7389,44 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setMyOrgsEmpty(null);
     }
   };
+
+  useEffect(() => {
+    const previousOrgId = previousActiveOrgIdRef.current;
+    const nextOrgId = activeOrgId || null;
+    previousActiveOrgIdRef.current = nextOrgId;
+    if (!previousOrgId || String(previousOrgId) === String(nextOrgId || "")) {
+      return;
+    }
+    setSelectedOrgFolderId("root");
+    setExpandedOrgFolders({ root: true });
+    setOrgMenuNodeId(null);
+    setOrgMenuAnchor(null);
+    setOrgVersionsOpen(false);
+    setOrgVersionsNode(null);
+    setOrgVersionsItems([]);
+    setOrgVersionsError(null);
+    setOrgVersionPreview(null);
+    setOrgMoveModalOpen(false);
+    setOrgMoveNode(null);
+    setOrgMoveTargetFolderId("root");
+    setOrgMoveCurrentParentId("root");
+    setOrgMoveError(null);
+    setOrgDeleteConfirmOpen(false);
+    setOrgDeleteFinalConfirmOpen(false);
+    setOrgDeleteNode(null);
+    setOrgDeleteRequestReason("");
+    setOrgDeleteError(null);
+    setOrgPushModalOpen(false);
+    setOrgPushModel(null);
+    setOrgPushTargetFolderId("root");
+    setOrgPushError(null);
+    setOrgPushConflictOpen(false);
+    setOrgPushConflictMatches([]);
+    setOrgPushConflictName("");
+    setOrgPushConflictSelectedId(null);
+    setOrgPushOverwriteConfirmOpen(false);
+    setOrgSearchQuery("");
+  }, [activeOrgId]);
 
   const openOrgsModal = () => {
     if (isDemoMode) {
@@ -7188,6 +7731,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     () => laneHelperItems.some((item) => Boolean(item.warning)) || hasAnglePlaceholderToken(laneDescription),
     [laneDescription, laneHelperItems],
   );
+  const laneSubmitGuardMessage = useMemo(() => {
+    const firstBlockingWarning = laneHelperItems.find((item) => Boolean(item.warning));
+    if (firstBlockingWarning?.warning) {
+      return `Riadok ${firstBlockingWarning.lineNumber}: ${firstBlockingWarning.warning}`;
+    }
+    if (hasAnglePlaceholderToken(laneDescription)) {
+      return "V texte máš placeholder ako <podmienka>. Nahraď ho reálnym pomenovaním skôr, než pridáš kroky do mapy.";
+    }
+    return "";
+  }, [laneDescription, laneHelperItems]);
   const laneWarningCount = useMemo(
     () => laneHelperItems.filter((item) => Boolean(item.warning)).length + (hasAnglePlaceholderToken(laneDescription) ? 1 : 0),
     [laneDescription, laneHelperItems],
@@ -7267,7 +7820,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       versionLabel: `#${Math.max(total - index, 1)}`,
     }));
   }, [orgVersionsItems]);
-  const showGuideBanners = modelSource?.kind !== "org" && guideEnabled && guideState?.message;
+  const guideWorkspaceActive =
+    Boolean(engineJson) || drawerOpen || laneOpen || helpOpen || storyOpen || mentorOpen;
+  const showGuideBanners =
+    modelSource?.kind !== "org" && guideEnabled && guideWorkspaceActive && guideState?.message;
+  const showHomeGuideBanner =
+    modelSource?.kind !== "org" && guideEnabled && !guideWorkspaceActive && !xml;
+  const homeGuideMessage =
+    HOME_GUIDE_MESSAGES[homeGuideMessageIndex % HOME_GUIDE_MESSAGES.length] || HOME_GUIDE_MESSAGES[0];
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
@@ -7496,7 +8056,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     </span>
                   </div>
                   <div className="process-card-description">
-                    Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme mapu.
+                    {hasGeneratedModel
+                      ? "Upravuješ základnú kostru existujúceho procesu a jeho hlavné údaje."
+                      : "Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme mapu."}
                   </div>
                 </div>
                 <button
@@ -7510,61 +8072,134 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="process-card-body process-card-process__body">
                 <div className="wizard-lane-v2__card process-card-process__card">
+                {hasGeneratedModel ? (
+                  <div className="process-card-edit-banner">
+                    <div className="process-card-edit-banner__eyebrow">Editácia kostry procesu</div>
+                    <div className="process-card-edit-banner__title">
+                      Tento model už existuje. Teraz upravuješ jeho základnú kostru, nie vytváraš nový model.
+                    </div>
+                  </div>
+                ) : null}
                 <section className="process-card-section process-card-process__section">
                   <div className="process-card-section__title">
-                    <h2>Začnime základom</h2>
-                    <span className="process-card-pill">Základ</span>
+                    <h2>{hasGeneratedModel ? "Kostra procesu" : "Začnime základom"}</h2>
+                    <span className="process-card-pill">{hasGeneratedModel ? "Živý model" : "Základ"}</span>
                   </div>
-                  <div className="process-card-process__template-row">
-                    {PROCESS_TEMPLATES.map((template) => (
-                      <button
-                        key={template.id}
-                        type="button"
-                        className="btn btn--small process-card-process__template-btn"
-                        onClick={() => applyProcessTemplate(template)}
-                      >
-                        Vzor: {template.label}
-                      </button>
-                    ))}
+                  <div className="process-card-description process-card-description--panel">
+                    {hasGeneratedModel
+                      ? "Model už existuje. Táto karta teraz spravuje základnú kostru procesu a zobrazuje údaje priamo z mapy."
+                      : "Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme kostru mapy."}
                   </div>
+                  {!hasGeneratedModel ? (
+                    <div className="process-card-process__template-row">
+                      {PROCESS_TEMPLATES.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className="btn btn--small process-card-process__template-btn"
+                          onClick={() => applyProcessTemplate(template)}
+                          disabled={isReadOnlyMode}
+                        >
+                          Vzor: {template.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   <label className="wizard-field">
-                    <span>Ako sa proces volá?</span>
+                    <span>{hasGeneratedModel ? "Názov procesu v modeli" : "Ako sa proces volá?"}</span>
                     <input
                       value={generatorInput.processName}
-                      onChange={(e) => updateGeneratorInput("processName", e.target.value)}
+                      onChange={(e) =>
+                        hasGeneratedModel
+                          ? handleStructuredProcessNameChange(e.target.value)
+                          : updateGeneratorInput("processName", e.target.value)
+                      }
                       placeholder="Napr. Schválenie žiadosti"
+                      disabled={isReadOnlyMode}
                     />
                   </label>
+                  {!hasGeneratedModel ? (
+                    <label className="wizard-field">
+                      <span>Kto v ňom vystupuje? (každú rolu na nový riadok)</span>
+                      <textarea
+                        value={generatorInput.roles}
+                        onChange={(e) => updateGeneratorInput("roles", e.target.value)}
+                        rows={4}
+                        placeholder={"Každú rolu napíš na nový riadok"}
+                        disabled={isReadOnlyMode}
+                      />
+                    </label>
+                  ) : (
+                    <div className="wizard-field wizard-field--full">
+                      <span>Roly v modeli</span>
+                      <div className="process-card-role-list">
+                        {liveRoleItems.map((lane, index) => (
+                          <label key={lane.id} className="process-card-role-item">
+                            <span className="process-card-role-item__label">Rola {index + 1}</span>
+                            <input
+                              value={lane.name}
+                              onChange={(e) => handleStructuredLaneRename(lane.id, e.target.value)}
+                              placeholder={`Rola ${index + 1}`}
+                              disabled={isReadOnlyMode}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="process-card-inline-note">
+                        Nové roly budeme dopĺňať ako samostatnú funkciu. Zatiaľ tu vieš upraviť názvy rolí, ktoré už v modeli existujú.
+                      </div>
+                    </div>
+                  )}
                   <label className="wizard-field">
-                    <span>Kto v ňom vystupuje? (každú rolu na nový riadok)</span>
-                    <textarea
-                      value={generatorInput.roles}
-                      onChange={(e) => updateGeneratorInput("roles", e.target.value)}
-                      rows={4}
-                      placeholder={"Každú rolu napíš na nový riadok"}
-                    />
-                  </label>
-                  <label className="wizard-field">
-                    <span>Čo proces spúšťa?</span>
+                    <span>{hasGeneratedModel ? "Začiatok procesu v modeli" : "Čo proces spúšťa?"}</span>
                     <input
                       value={generatorInput.trigger}
-                      onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
+                      onChange={(e) =>
+                        hasGeneratedModel
+                          ? handleStructuredNodeFieldChange("trigger", primaryStartOption?.id, e.target.value)
+                          : updateGeneratorInput("trigger", e.target.value)
+                      }
                       placeholder="Napr. Nová žiadosť od klienta"
+                      disabled={isReadOnlyMode || (hasGeneratedModel && !primaryStartOption)}
                     />
+                    {hasGeneratedModel && startOptions.length > 1 ? (
+                      <div className="process-card-inline-note">
+                        Upravuješ prvý štart v modeli. Spolu sú v mape {startOptions.length} štarty.
+                      </div>
+                    ) : null}
                   </label>
                   <label className="wizard-field">
-                    <span>Čo má byť na konci?</span>
+                    <span>{hasGeneratedModel ? "Koniec procesu v modeli" : "Čo má byť na konci?"}</span>
                     <textarea
                       value={generatorInput.output}
-                      onChange={(e) => updateGeneratorInput("output", e.target.value)}
+                      onChange={(e) =>
+                        hasGeneratedModel
+                          ? handleStructuredNodeFieldChange("output", primaryEndOption?.id, e.target.value)
+                          : updateGeneratorInput("output", e.target.value)
+                      }
                       rows={2}
                       placeholder="Aký je výsledok procesu?"
+                      disabled={isReadOnlyMode}
                     />
+                    {hasGeneratedModel && !primaryEndOption ? (
+                      <div className="process-card-inline-note">
+                        V modeli zatiaľ nemáš koncový prvok. Text si vieš pripraviť už teraz a keď koniec doplníš, budeš ho vedieť prepojiť aj s mapou.
+                      </div>
+                    ) : null}
+                    {hasGeneratedModel && endOptions.length > 1 ? (
+                      <div className="process-card-inline-note">
+                        Upravuješ prvý koniec v modeli. Spolu sú v mape {endOptions.length} konce.
+                      </div>
+                    ) : null}
                   </label>
                   <div className="process-card-grid">
                     <label className="wizard-field">
                       <span>Status</span>
-                      <select value={processMeta.status} onChange={(e) => updateProcessMeta("status", e.target.value)} >
+                      <select
+                        value={processMeta.status}
+                        onChange={(e) => updateProcessMeta("status", e.target.value)}
+                        disabled={isReadOnlyMode}
+                      >
                         <option value="Draft">Koncept</option>
                         <option value="Review">Na posúdenie</option>
                         <option value="Approved">Schválený</option>
@@ -7573,17 +8208,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     </label>
                     <label className="wizard-field">
                       <span>Verzia</span>
-                      <input value={processMeta.version} onChange={(e) => updateProcessMeta("version", e.target.value)} />
+                      <input
+                        value={processMeta.version}
+                        onChange={(e) => updateProcessMeta("version", e.target.value)}
+                        disabled={isReadOnlyMode}
+                      />
                     </label>
                   </div>
                   <div className="process-card-buttons">
                       <button
-                        className="btn btn-primary"
+                        className={`btn ${hasGeneratedModel ? "btn--warning" : "btn-primary"}`}
                         type="button"
                         onClick={handleGenerate}
                         disabled={isLoading || isReadOnlyMode}
                       >
-                        {isLoading ? "Vytváram..." : "Vytvoriť model"}
+                        {isLoading ? "Vytváram..." : hasGeneratedModel ? "Vytvoriť model znova" : "Vytvoriť model"}
                       </button>
                   </div>
                 </section>
@@ -7595,11 +8234,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <div className="process-card-grid">
                     <label className="wizard-field">
                       <span>Vlastnik procesu</span>
-                      <input value={processMeta.owner} onChange={(e) => updateProcessMeta("owner", e.target.value)} />
+                      <input
+                        value={processMeta.owner}
+                        onChange={(e) => updateProcessMeta("owner", e.target.value)}
+                        disabled={isReadOnlyMode}
+                      />
                     </label>
                     <label className="wizard-field">
                       <span>Oddelenie</span>
-                      <input value={processMeta.department} onChange={(e) => updateProcessMeta("department", e.target.value)} />
+                      <input
+                        value={processMeta.department}
+                        onChange={(e) => updateProcessMeta("department", e.target.value)}
+                        disabled={isReadOnlyMode}
+                      />
                     </label>
                     <label className="wizard-field wizard-field--full">
                       <span>Popis procesu</span>
@@ -7607,6 +8254,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         value={processMeta.description}
                         onChange={(e) => updateProcessMeta("description", e.target.value)}
                         rows={4}
+                        disabled={isReadOnlyMode}
                       />
                     </label>
                   </div>
@@ -7721,10 +8369,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   </div>
                 ) : null}
                 <div className="org-sidebar__actions">
-                  <button type="button" className="btn btn--small" onClick={handleCreateOrgFolder} disabled={!activeOrgId}>
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    onClick={handleCreateOrgFolder}
+                    disabled={!activeOrgId || !activeOrgCapabilities.canEditOrgModels}
+                  >
                     + Folder
                   </button>
-                  <button type="button" className="btn btn--small" onClick={handleCreateOrgProcess} disabled={!activeOrgId}>
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    onClick={handleCreateOrgProcess}
+                    disabled={!activeOrgId || !activeOrgCapabilities.canEditOrgModels}
+                  >
                     + Process
                   </button>
                   <button type="button" className="btn btn--small" onClick={toggleOrgTreeExpand} disabled={!orgTree}>
@@ -7836,7 +8494,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           ) : null}
                           {guideState?.tertiary ? (
                             <button
-                              className="btn btn--small"
+                              className={`btn btn--small ${guideState?.tertiary?.action === "CONNECT_END_HERE" ? "btn-guide-cta" : ""}`}
                               type="button"
                               onClick={() => {
                                 console.log("[Guide] tertiary click", {
@@ -7855,36 +8513,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         </div>
                       </div>
                     ) : null}
-                    {!isDemoMode ? (
-                    <div className="wizard-lane-v2__section">
-                      <div className="wizard-lane-v2__section-header">VZORY</div>
-                      <div className="wizard-lane-v2__section-sub">Dočasne: výber cez dropdown</div>
-                      <div className="wizard-lane-v2__template-select-wrap">
-                        <select
-                          className="wizard-lane-v2__template-select"
-                          value={laneTemplateChoice}
-                          onChange={(e) => {
-                            const selectedId = e.target.value;
-                            setLaneTemplateChoice(selectedId);
-                            const template = LANE_TEMPLATES.find((item) => item.id === selectedId);
-                            if (template) {
-                              applyLaneTemplate(template);
-                            }
-                          }}
-                          disabled={isReadOnlyMode}
-                        >
-                          <option value="">Vyber vzor...</option>
-                          {LANE_TEMPLATES.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {template.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    ) : null}
                     <div className="wizard-lane-v2__onboarding">
-                      <div className="wizard-lane-v2__onboarding-title">Typy krokov</div>
+                      <div className="wizard-lane-v2__onboarding-title">Ako písať kroky v role</div>
                       <div className="wizard-lane-v2__onboarding-list">
                         <div className="wizard-lane-v2__type-row">
                           <button
@@ -7895,7 +8525,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             KROK
                           </button>
                           <span className="wizard-lane-v2__type-copy">
-                            {" - bežná činnosť (1 riadok = 1 krok)"}
+                            {" - bežná činnosť. Každý riadok je jeden samostatný krok."}
                           </span>
                         </div>
                         <div className="wizard-lane-v2__type-row">
@@ -7907,7 +8537,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             ROZHODNUTIE
                           </button>
                           <span className="wizard-lane-v2__type-copy">
-                            {" - vetvenie: „ak/keď“ → „tak/inak“"}
+                            {" - vetvenie. Použi formát „ak/keď ... tak ..., inak ...“."}
                           </span>
                         </div>
                         <div className="wizard-lane-v2__type-row">
@@ -7919,14 +8549,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             PARALELA
                           </button>
                           <span className="wizard-lane-v2__type-copy">
-                            {" - kroky súčasne: „paralelne / súčasne / naraz“ → paralelný tok"}
+                            {" - kroky súčasne. Použi „paralelne“, „súčasne“ alebo „naraz“."}
                           </span>
                         </div>
                       </div>
                     </div>
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
-                      <div className="wizard-lane-v2__section-sub">1 riadok = 1 krok</div>
+                      <div className="wizard-lane-v2__section-sub">Píš stručne. 1 riadok = 1 krok v procese.</div>
                       {isDemoMode ? (
                         <div className="wizard-lane-v2__section-sub">Demo limit: max {DEMO_LIMITS.maxObjectsPerLane} objektov na rolu.</div>
                       ) : null}
@@ -7977,12 +8607,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       {lanePlaceholderWarning ? (
                         <div className="wizard-lane-v2__control-warning">{lanePlaceholderWarning}</div>
                       ) : null}
+                      {laneSubmitGuardMessage ? (
+                        <div className="wizard-lane-v2__control-warning">{laneSubmitGuardMessage}</div>
+                      ) : null}
                       <div className="wizard-lane-v2__row-actions">
                         <button
                           className="btn btn-primary lane-primary-btn wizard-lane-v2__apply-btn"
                           type="button"
                           onClick={handleAppendToLane}
-                          disabled={isLoading || (isReadOnlyMode && !isDemoMode) || !laneDescription.trim()}
+                          disabled={
+                            isLoading ||
+                            (isReadOnlyMode && !isDemoMode) ||
+                            !laneDescription.trim() ||
+                            Boolean(laneSubmitGuardMessage)
+                          }
                         >
                           {isLoading ? "Pridávam..." : laneApplyButtonLabel}
                         </button>
@@ -8001,6 +8639,34 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         <div className="wizard-lane-v2__disabled-hint">Najprv napíš aspoň 1 krok.</div>
                       ) : null}
                     </div>
+                    {!isDemoMode ? (
+                    <div className="wizard-lane-v2__section">
+                      <div className="wizard-lane-v2__section-header">VZORY</div>
+                      <div className="wizard-lane-v2__section-sub">Dočasná pomôcka, keď si chceš rýchlo predvyplniť text.</div>
+                      <div className="wizard-lane-v2__template-select-wrap">
+                        <select
+                          className="wizard-lane-v2__template-select"
+                          value={laneTemplateChoice}
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            setLaneTemplateChoice(selectedId);
+                            const template = LANE_TEMPLATES.find((item) => item.id === selectedId);
+                            if (template) {
+                              applyLaneTemplate(template);
+                            }
+                          }}
+                          disabled={isReadOnlyMode}
+                        >
+                          <option value="">Vyber vzor...</option>
+                          {LANE_TEMPLATES.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    ) : null}
 
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__control-head">
@@ -8015,7 +8681,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             }`}
                             aria-hidden
                           />
-                          KONTROLA KROKOV
+                          Kontrola zápisu
                         </span>
                       </div>
                       <div className="wizard-lane-v2__control-body is-compact">
@@ -8060,7 +8726,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       : "hlavné kroky"}
                   </div>
                   <div className="wizard-help-card-hint">
-                    Vyplň polia a klikni na „Vložiť príklad“, potom si text uprav podľa seba.
+                    Vyber typ zápisu, doplň vlastné slová a vlož ho do textu. Potom ho už len upravíš podľa svojho procesu.
                   </div>
                 </div>
                 <div className="process-card-header-actions">
@@ -8091,118 +8757,80 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-drawer is-open process-card-story">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Pribeh procesu</div>
+                  <div className="process-card-label">Príbeh procesu</div>
                   <div className="process-card-description">
-                    Zhrnutie procesu v ludskej reci podla aktualnej mapy.
+                    Zhrnutie procesu v ľudskej reči podľa aktuálnej mapy.
                   </div>
                 </div>
                 <button
                   type="button"
                   className="process-card-close"
-                  aria-label="Zavriet pribeh procesu"
+                  aria-label="Zavrieť príbeh procesu"
                   onClick={() => setStoryOpen(false)}
                 >
-                  x
+                  ×
                 </button>
               </div>
               <div className="process-card-body">
-                <section className="process-card-section">
-                  <div className="process-card-section__title">
-                    <h2>Nastavenia</h2>
-                    <span className="process-card-pill process-card-pill--muted">Vystup</span>
-                  </div>
-                  {startOptions.length > 1 ? (
-                    <label className="wizard-field">
-                      <span>Start</span>
-                      <select
-                        value={storyOptions.selectedStartId || startOptions[0]?.id || ""}
-                        onChange={(e) => updateStoryOption("selectedStartId", e.target.value)}
-                      >
-                        {startOptions.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  <div className="process-story-options">
-                    <label className="process-story-toggle">
-                      <input
-                        type="checkbox"
-                        checked={storyOptions.useLanes}
-                        onChange={(e) => updateStoryOption("useLanes", e.target.checked)}
-                      />
-                      <span>Pouzit roly (lanes)</span>
-                    </label>
-                    <label className="process-story-toggle">
-                      <input
-                        type="checkbox"
-                        checked={storyOptions.summarizeParallels}
-                        onChange={(e) => updateStoryOption("summarizeParallels", e.target.checked)}
-                      />
-                      <span>Zhrnut paralely</span>
-                    </label>
-                    <label className="process-story-toggle">
-                      <input
-                        type="checkbox"
-                        checked={storyOptions.showBranchEnds}
-                        onChange={(e) => updateStoryOption("showBranchEnds", e.target.checked)}
-                      />
-                      <span>Zobrazit konce vetiev</span>
-                    </label>
-                    <label className="process-story-toggle">
-                      <input
-                        type="checkbox"
-                        checked={storyOptions.moreDetails}
-                        onChange={(e) => updateStoryOption("moreDetails", e.target.checked)}
-                      />
-                      <span>Viac detailov</span>
-                    </label>
-                  </div>
-                  <div className="process-story-actions">
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={regenerateStory}
-                      disabled={!engineJson}
-                    >
-                      Prepocitat
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={handleCopyStory}
-                      disabled={!storyDoc}
-                    >
-                      Kopirovat text
-                    </button>
-                  </div>
-                  {storyStale ? (
-                    <div className="process-story-stale">
-                      Mapa sa zmenila. Klikni na Prepocitat pre novy pribeh.
+                <section className="process-card-section process-story-panel">
+                  <div className="process-story-panel__hero">
+                    <div className="process-story-panel__copy">
+                      <div className="process-card-section__title">
+                        <h2>Opis procesu</h2>
+                        <span className="process-card-pill process-card-pill--muted">Automatický výstup</span>
+                      </div>
+                      <p className="process-story-panel__intro">
+                        Tento panel automaticky vytvára čistý opis procesu podľa aktuálnej mapy. Cieľom je text, pri ktorom si používateľ povie: áno, presne takto to robíme.
+                      </p>
                     </div>
-                  ) : null}
-                  {storyGeneratedAt ? (
-                    <div className="process-story-meta">Naposledy generovane: {formatDateTime(storyGeneratedAt)}</div>
-                  ) : null}
+                    <div className="process-story-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={regenerateStory}
+                        disabled={!engineJson}
+                      >
+                        Obnoviť príbeh
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={handleCopyStory}
+                        disabled={!storyDoc}
+                      >
+                        Kopírovať text
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="process-story-status">
+                    {storyStale ? (
+                      <div className="process-story-stale">
+                        Mapa sa zmenila. Obnov príbeh procesu podľa aktuálneho stavu modelu.
+                      </div>
+                    ) : null}
+                    {storyGeneratedAt ? (
+                      <div className="process-story-meta">Naposledy generované: {formatDateTime(storyGeneratedAt)}</div>
+                    ) : null}
+                  </div>
                 </section>
 
-                <section className="process-card-section">
+                <section className="process-card-section process-story-output">
                   <div className="process-card-section__title">
-                    <h2>Celý príbeh</h2>
-                    <span className="process-card-pill process-card-pill--muted">Text</span>
+                    <h2>Čistý opis procesu</h2>
+                    <span className="process-card-pill process-card-pill--muted">Dokument</span>
                   </div>
                   {storyDoc ? (
-                    <textarea
-                      className="process-story-textarea"
-                      value={buildStoryText(storyDoc)}
-                      readOnly
-                      rows={14}
-                    />
+                    <div className="process-story-document">
+                      {buildStoryParagraphs(storyDoc).map((paragraph, index) => (
+                        <p key={`story-paragraph-${index}`} className="process-story-document__paragraph">
+                          {paragraph}
+                        </p>
+                      ))}
+                    </div>
                   ) : (
                     <div className="process-story-empty">
-                      {engineJson ? "Klikni na Prepočítať pre príbeh." : "Najprv načítaj alebo vytvor mapu."}
+                      {engineJson ? "Klikni na „Obnoviť príbeh“ a vygeneruj si opis procesu." : "Najprv načítaj alebo vytvor mapu."}
                     </div>
                   )}
                 </section>
@@ -8392,7 +9020,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <div style={{ fontSize: 12, opacity: 0.8 }}>
                   {activeOrgCapabilities.canToggleOrgEdit
                     ? "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."
-                    : "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."}
+                    : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať."}
                 </div>
               </div>
               {activeOrgCapabilities.canToggleOrgEdit ? (
@@ -8469,7 +9097,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   ) : null}
                     {guideState?.tertiary ? (
                       <button
-                        className="btn btn--small"
+                        className={`btn btn--small ${guideState?.tertiary?.action === "CONNECT_END_HERE" ? "btn-guide-cta" : ""}`}
                         type="button"
                         onClick={() => {
                           console.log("[Guide] tertiary click", {
@@ -8485,6 +9113,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         {guideState.tertiary.label}
                       </button>
                     ) : null}
+                </div>
+              </div>
+            ) : showHomeGuideBanner ? (
+              <div className="guide-bar guide-bar--welcome">
+                <div className="guide-bar__text">
+                  <div className="guide-bar__title">Ahoj, ja som tvoj sprievodca</div>
+                  <div>{homeGuideMessage}</div>
+                </div>
+                <div className="guide-bar__actions">
+                  <button
+                    className="btn btn--small btn-primary"
+                    type="button"
+                    onClick={handleStartNewModel}
+                  >
+                    Vytvoriť model
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -8579,6 +9223,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="wizard-shape-meta">
                 Vkladáš do: lane {selectedLane.name || selectedLane.id}
+              </div>
+              <div className="wizard-help-card-hint wizard-help-card-hint--modal">
+                Vyber typ zápisu, doplň vlastné slová a vlož ho do textu. Potom ho už len upravíš podľa svojho procesu.
               </div>
               <div className="wizard-help-modal-body">
                 {renderHelpList()}
@@ -9277,6 +9924,169 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
                   Uložiť model
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {regenerateConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={() => setRegenerateConfirmOpen(false)}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Karta procesu</p>
+                  <h3 className="wizard-dialog-title">Vytvoriť model znova?</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={() => setRegenerateConfirmOpen(false)}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text wizard-dialog-section wizard-dialog-section--warning">
+                Model už existuje. Ak budeš pokračovať, kostra procesu sa vygeneruje znova podľa aktuálnych údajov v karte procesu.
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={() => setRegenerateConfirmOpen(false)}>
+                  Nechať pôvodný model
+                </button>
+                <button className="btn btn-primary" type="button" onClick={handleConfirmRegenerate}>
+                  Vytvoriť znova
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {newModelConfirmOpen ? (
+          <div className="wizard-models-modal" onClick={() => setNewModelConfirmOpen(false)}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Sandbox</p>
+                  <h3 className="wizard-dialog-title">Začať nový model?</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={() => setNewModelConfirmOpen(false)}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text wizard-dialog-section wizard-dialog-section--warning">
+                Máš rozpracovaný model. Ak budeš pokračovať, neuložené zmeny sa stratia a otvorí sa nová prázdna karta procesu.
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={() => setNewModelConfirmOpen(false)}>
+                  Ostať v aktuálnom modeli
+                </button>
+                <button className="btn btn--warning" type="button" onClick={handleConfirmNewModel}>
+                  Áno, nový model
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {wizardInputModal ? (
+          <div className="wizard-models-modal" onClick={closeWizardInputModal}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  {wizardInputModal.kicker ? <p className="wizard-dialog-kicker">{wizardInputModal.kicker}</p> : null}
+                  <h3 className="wizard-dialog-title">{wizardInputModal.title}</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={closeWizardInputModal}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text wizard-dialog-section">
+                <label className="wizard-field wizard-field--full">
+                  <span>{wizardInputModal.label}</span>
+                  <input
+                    value={wizardInputValue}
+                    onChange={(e) => {
+                      setWizardInputValue(e.target.value);
+                      if (wizardInputError) setWizardInputError("");
+                    }}
+                    placeholder={wizardInputModal.placeholder || ""}
+                    autoFocus
+                  />
+                </label>
+                {wizardInputModal.warning ? <div className="process-card-inline-note">{wizardInputModal.warning}</div> : null}
+                {wizardInputError ? <div className="wizard-error wizard-error--compact">{wizardInputError}</div> : null}
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={closeWizardInputModal}>
+                  Zrušiť
+                </button>
+                <button className="btn btn-primary" type="button" onClick={() => void submitWizardInputModal()}>
+                  {wizardInputModal.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {wizardConfirmModal ? (
+          <div className="wizard-models-modal" onClick={closeWizardConfirmModal}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  {wizardConfirmModal.kicker ? <p className="wizard-dialog-kicker">{wizardConfirmModal.kicker}</p> : null}
+                  <h3 className="wizard-dialog-title">{wizardConfirmModal.title}</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={closeWizardConfirmModal}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className={`wizard-save-prompt__text wizard-dialog-section ${wizardConfirmModal.warning ? "wizard-dialog-section--warning" : ""}`}>
+                {wizardConfirmModal.message}
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={closeWizardConfirmModal}>
+                  {wizardConfirmModal.cancelLabel}
+                </button>
+                <button
+                  className={`btn ${wizardConfirmModal.warning ? "btn--warning" : "btn-primary"}`}
+                  type="button"
+                  onClick={() => void submitWizardConfirmModal()}
+                >
+                  {wizardConfirmModal.confirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {openOrgProcessConfirmNode ? (
+          <div className="wizard-models-modal" onClick={() => setOpenOrgProcessConfirmNode(null)}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Model organizácie</p>
+                  <h3 className="wizard-dialog-title">Otvoriť proces?</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={() => setOpenOrgProcessConfirmNode(null)}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text wizard-dialog-section">
+                Otvorí sa najnovšia verzia procesu <strong>{openOrgProcessConfirmNode.name}</strong>.
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={() => setOpenOrgProcessConfirmNode(null)}>
+                  Zavrieť
+                </button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    const nodeId = openOrgProcessConfirmNode?.id;
+                    setOpenOrgProcessConfirmNode(null);
+                    if (!nodeId) return;
+                    requestOpenWithSave(() => {
+                      void openOrgProcessByNodeLatest(nodeId);
+                    });
+                  }}
+                >
+                  Otvoriť proces
                 </button>
               </div>
             </div>

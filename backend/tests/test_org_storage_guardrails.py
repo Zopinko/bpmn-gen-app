@@ -267,3 +267,45 @@ def test_member_cannot_delete_org_process(tmp_path):
         assert any(child.get("id") == node_id for child in children)
     finally:
         _restore_env(previous)
+
+
+def test_viewer_cannot_mutate_org_tree(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("viewer@example.com", "password123")
+        owner_client = _authed_client("owner@example.com")
+        viewer_client = _authed_client("viewer@example.com")
+        org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+        owner_client.post(
+            "/api/orgs/members",
+            json={"email": "viewer@example.com", "org_id": org_id, "role": "member"},
+        )
+        owner_client.post(
+            "/api/orgs/members/role",
+            json={"email": "viewer@example.com", "org_id": org_id, "role": "viewer"},
+        )
+
+        create_folder = viewer_client.post(
+            f"/api/org-model/folder?org_id={org_id}",
+            json={"parentId": "root", "name": "Viewer folder"},
+        )
+        assert create_folder.status_code == 403
+        assert "upravovať model organizácie" in (create_folder.json().get("detail") or "").lower()
+
+        created = owner_client.post(
+            f"/api/org-model/process?org_id={org_id}",
+            json={"parentId": "root", "name": "Protected process"},
+        )
+        assert created.status_code == 200
+        node_id = created.json()["node"]["id"]
+
+        rename_process = viewer_client.patch(
+            f"/api/org-model/node/{node_id}?org_id={org_id}",
+            json={"name": "Viewer rename"},
+        )
+        assert rename_process.status_code == 403
+        assert "upravovať model organizácie" in (rename_process.json().get("detail") or "").lower()
+    finally:
+        _restore_env(previous)

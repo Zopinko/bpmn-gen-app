@@ -57,6 +57,9 @@ def list_org_models(org_id: str) -> List[Dict[str, Any]]:
                     "name": data.get("name"),
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),
+                    "tree_node_id": data.get("tree_node_id"),
+                    "base_model_id": data.get("base_model_id"),
+                    "process_meta": data.get("process_meta") if isinstance(data.get("process_meta"), dict) else {},
                 }
             )
         except Exception:

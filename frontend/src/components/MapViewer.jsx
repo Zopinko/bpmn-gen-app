@@ -37,9 +37,12 @@ export default function MapViewer({
   onUndo,
   canUndo = false,
   onSave,
+  onEditStructure,
   onMainMenu,
   saveDisabled = false,
   saveLabel = "Uložiť",
+  editStructureLabel = "Upraviť kostru procesu",
+  editStructureDisabled = false,
   onEngineJsonPatch,
   onModelerReady,
   onXmlImported,
@@ -53,6 +56,8 @@ export default function MapViewer({
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
   const [confirmModal, setConfirmModal] = useState(null);
+  const [inputModal, setInputModal] = useState(null);
+  const [inputModalValue, setInputModalValue] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [localCanUndo, setLocalCanUndo] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
@@ -126,6 +131,20 @@ export default function MapViewer({
 
   const closeConfirmModal = () => {
     setConfirmModal(null);
+  };
+
+  const openInputModal = ({ title, label, value, onConfirm }) => {
+    setInputModal({
+      title: title || "Zadaj názov",
+      label: label || "Názov",
+      onConfirm: typeof onConfirm === "function" ? onConfirm : null,
+    });
+    setInputModalValue(value || "");
+  };
+
+  const closeInputModal = () => {
+    setInputModal(null);
+    setInputModalValue("");
   };
 
   const executeDeleteElements = (elements) => {
@@ -283,36 +302,10 @@ export default function MapViewer({
     };
 
     const resolveElement = (id) => {
-      if (String(guideHighlight?.type || "") === "missing_end") {
-        const candidates = elementRegistry
-          .getAll()
-          .filter((el) => {
-            if (!el || el.type === "label") return false;
-            const boType = String(el?.businessObject?.$type || el?.type || "");
-            const isFlowNode = Boolean(el?.businessObject?.$instanceOf?.("bpmn:FlowNode"));
-            const isEnd = boType.includes("EndEvent");
-            if (!isFlowNode || isEnd) return false;
-            const incoming = Array.isArray(el?.incoming) ? el.incoming.length : 0;
-            const outgoing = Array.isArray(el?.outgoing) ? el.outgoing.length : 0;
-            return incoming > 0 && outgoing === 0;
-          });
-        if (candidates.length) {
-          const rightmost = candidates.reduce((winner, el) => {
-            if (!winner) return el;
-            const right = Number(el?.x || 0) + Number(el?.width || 0);
-            const winnerRight = Number(winner?.x || 0) + Number(winner?.width || 0);
-            return right > winnerRight ? el : winner;
-          }, null);
-          if (rightmost) return rightmost;
-        }
-      }
-
       const direct = resolveByIdOrEngineId(id);
       if (direct) return direct;
 
       const nodeName = String(guideHighlight?.nodeName || "").trim();
-      if (!nodeName) return null;
-
       const laneIdHint = guideHighlight?.laneId ? String(guideHighlight.laneId) : "";
       const laneEl = laneIdHint ? resolveByIdOrEngineId(laneIdHint) : null;
       const laneBounds = laneEl
@@ -339,11 +332,31 @@ export default function MapViewer({
           ) {
             return false;
           }
+          if (String(guideHighlight?.type || "") === "missing_end") {
+            const isFlowNode = Boolean(el?.businessObject?.$instanceOf?.("bpmn:FlowNode"));
+            const isEnd = boType.includes("EndEvent");
+            const incoming = Array.isArray(el?.incoming) ? el.incoming.length : 0;
+            const outgoing = Array.isArray(el?.outgoing) ? el.outgoing.length : 0;
+            if (!isFlowNode || isEnd || incoming <= 0 || outgoing !== 0) {
+              return false;
+            }
+            if (!nodeName) return true;
+          }
           const name = String(el?.businessObject?.name || "").trim();
-          return name && name === nodeName;
+          return nodeName && name === nodeName;
         });
       if (!candidates.length) return null;
-      return candidates.find((el) => isInLane(el)) || candidates[0] || null;
+      const laneCandidate = candidates.find((el) => isInLane(el)) || null;
+      if (laneCandidate) return laneCandidate;
+      if (String(guideHighlight?.type || "") === "missing_end") {
+        return candidates.reduce((winner, el) => {
+          if (!winner) return el;
+          const right = Number(el?.x || 0) + Number(el?.width || 0);
+          const winnerRight = Number(winner?.x || 0) + Number(winner?.width || 0);
+          return right > winnerRight ? el : winner;
+        }, null);
+      }
+      return candidates[0] || null;
     };
 
     const isLane = String(guideHighlight?.type || "") === "lane";
@@ -811,10 +824,16 @@ export default function MapViewer({
           const created = modeling.addLane(element, position);
           if (!created) return;
           const currentName = created.businessObject?.name || "";
-          const name = window.prompt("Názov lane", currentName);
-          if (typeof name === "string" && name.trim()) {
-            modeling.updateProperties(created, { name: name.trim() });
-          }
+          openInputModal({
+            title: position === "top" ? "Pridať rolu nad" : "Pridať rolu pod",
+            label: "Názov role",
+            value: currentName,
+            onConfirm: (name) => {
+              if (typeof name === "string" && name.trim()) {
+                modeling.updateProperties(created, { name: name.trim() });
+              }
+            },
+          });
         };
 
         container.appendChild(
@@ -1020,7 +1039,9 @@ export default function MapViewer({
         showLaneHandles(element);
         if (typeof onLaneSelect === "function" && boType === "bpmn:Lane") {
           onLaneSelect({
-            id: element.id,
+            id: getEngineId(element) || ensureEngineId(element) || element.id,
+            canvasId: element.id,
+            engineId: getEngineId(element) || ensureEngineId(element) || element.id,
             name: element.businessObject?.name || "",
           });
           showLaneHandle(element.id);
@@ -1915,6 +1936,17 @@ export default function MapViewer({
                       {saveLabel}
                     </button>
                   ) : null}
+                  {onEditStructure ? (
+                    <button
+                      className="map-toolbar__btn map-toolbar__btn--structure"
+                      type="button"
+                      onClick={onEditStructure}
+                      title={editStructureLabel}
+                      disabled={editStructureDisabled}
+                    >
+                      {editStructureLabel}
+                    </button>
+                  ) : null}
                   {onMainMenu ? (
                     <button
                       className="map-toolbar__btn map-toolbar__btn--main-menu"
@@ -1985,6 +2017,45 @@ export default function MapViewer({
                   }}
                 >
                   Zmazať
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {inputModal ? (
+          <div className="wizard-models-modal" onClick={closeInputModal}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
+              <div className="wizard-models-header">
+                <div className="wizard-dialog-copy">
+                  <h3 className="wizard-dialog-title">{inputModal.title}</h3>
+                </div>
+                <button className="btn btn--small" type="button" onClick={closeInputModal}>
+                  Zrušiť
+                </button>
+              </div>
+              <div className="wizard-save-prompt__text wizard-dialog-section">
+                <label className="wizard-field wizard-field--full">
+                  <span>{inputModal.label}</span>
+                  <input
+                    value={inputModalValue}
+                    onChange={(e) => setInputModalValue(e.target.value)}
+                    autoFocus
+                  />
+                </label>
+              </div>
+              <div className="wizard-save-prompt__actions">
+                <button className="btn" type="button" onClick={closeInputModal}>
+                  Zrušiť
+                </button>
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    inputModal?.onConfirm?.(inputModalValue);
+                    closeInputModal();
+                  }}
+                >
+                  Uložiť názov
                 </button>
               </div>
             </div>

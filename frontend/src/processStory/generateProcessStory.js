@@ -127,6 +127,96 @@ const postProcessText = (doc, laneNames, lineTypes) => {
   return { ...doc, summary, mainFlow };
 };
 
+const cleanNarrativeLine = (value) => {
+  const raw = String(value || "").trim().replace(/^\s*-\s*/, "");
+  if (!raw) return "";
+  const nestedDecision = raw.match(/^\(Nasleduje rozhodnutie\)\s+(.+)$/);
+  if (nestedDecision) {
+    return `V tejto casti sa nasledne rozhoduje: ${nestedDecision[1].trim()}.`;
+  }
+  if (/^Nasleduje dalsia paralela\.?$/i.test(raw)) {
+    return "V tejto casti sa proces dalej vetvi do subeznych cinnosti.";
+  }
+  return raw;
+};
+
+const stripGatewayPlaceholder = (value) => {
+  const raw = cleanNarrativeLine(value);
+  if (!raw) return "";
+  if (/^V tomto bode nasleduje rozhodnutie\.?$/i.test(raw)) return "";
+  if (/^Potom sa proces rozdeli na paralelne kroky\.?$/i.test(raw)) return "";
+  return raw;
+};
+
+const joinNarrativeSentences = (items) =>
+  items
+    .map((item) => cleanNarrativeLine(item))
+    .filter(Boolean)
+    .join(" ");
+
+const cleanStoryHeading = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/^Rozhodnutie:\s*/i, "")
+    .replace(/^Paralela:\s*/i, "")
+    .trim();
+
+const buildDecisionNarrative = (decision) => {
+  const title = cleanStoryHeading(decision?.title) || "rozhodnutie";
+  const branches = (decision?.branches || [])
+    .map((branch) => {
+      const label = String(branch?.label || "").trim() || "dana moznost";
+      const steps = joinNarrativeSentences((branch?.steps || []).map((step) => step?.text));
+      if (!steps) return `Ak ${label}, proces pokracuje dalsou castou.`;
+      return `Ak ${label}, potom ${steps}`;
+    })
+    .filter(Boolean);
+  if (!branches.length) return "";
+  return `V procese nasleduje rozhodnutie: ${title}. ${branches.join(" ")}`.trim();
+};
+
+const buildParallelNarrative = (parallel) => {
+  const title = cleanStoryHeading(parallel?.title);
+  const branches = (parallel?.branches || [])
+    .map((branch) => {
+      const label = String(branch?.label || "").trim();
+      const steps = joinNarrativeSentences((branch?.steps || []).map((step) => step?.text));
+      if (!steps) return label || "";
+      return label ? `${label}: ${steps}` : steps;
+    })
+    .filter(Boolean);
+  if (!branches.length) return "";
+  const intro = title
+    ? `V tomto bode prebieha paralelna cast procesu: ${title}.`
+    : "V tomto bode prebiehaju subezne tieto cinnosti:";
+  const outro = cleanNarrativeLine(parallel?.outro);
+  return [intro, branches.join(" "), outro].filter(Boolean).join(" ").trim();
+};
+
+const buildNarrativeParagraphs = (doc) => {
+  const paragraphs = [];
+  const summary = joinNarrativeSentences(doc?.summary || []);
+  if (summary) paragraphs.push(summary);
+
+  const mainFlow = (doc?.mainFlow || [])
+    .map((line) => stripGatewayPlaceholder(line?.text))
+    .filter(Boolean)
+    .join(" ");
+  if (mainFlow) paragraphs.push(mainFlow);
+
+  (doc?.decisions || []).forEach((decision) => {
+    const text = buildDecisionNarrative(decision);
+    if (text) paragraphs.push(text);
+  });
+
+  (doc?.parallels || []).forEach((parallel) => {
+    const text = buildParallelNarrative(parallel);
+    if (text) paragraphs.push(text);
+  });
+
+  return paragraphs;
+};
+
 const buildIndex = (engineJson) => {
   const nodes = Array.isArray(engineJson?.nodes) ? engineJson.nodes : [];
   const flows = Array.isArray(engineJson?.flows) ? engineJson.flows : [];
@@ -364,6 +454,13 @@ const formatBranchLabel = (flow, index) => {
   return `Moznost ${letter}`;
 };
 
+const describeParallelBranch = ({ flow, idx, nodeById, laneById }) => {
+  const targetNode = nodeById.get(flow?.targetId);
+  const laneName = targetNode?.laneId ? String(laneById.get(targetNode.laneId) || "").trim() : "";
+  if (laneName) return laneName;
+  return `Vetva ${idx + 1}`;
+};
+
 export const createDefaultProcessStoryOptions = () => ({
   useLanes: true,
   summarizeParallels: true,
@@ -474,7 +571,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
       mainFlowItems.push({ ...line, type: "and" });
       const flows = outgoing.get(node.id) || [];
       const joinNode = findJoinNode({ splitId: node.id, outgoing, incoming, nodeById, type: "and" });
-      const maxSteps = opts.summarizeParallels && !opts.moreDetails ? 1 : 20;
+      const maxSteps = opts.summarizeParallels ? 1 : opts.moreDetails ? 20 : 6;
       const parallel = {
         title: `Paralela: ${withFallback(node?.name, "Paralela")}`,
         branches: flows.map((flow, idx) => {
@@ -495,12 +592,12 @@ export const generateProcessStory = (engineJson, options = {}) => {
           });
           const truncated = branchSteps.length >= maxSteps && (outgoing.get(flow.targetId) || []).length;
           return {
-            label: `Vetva ${idx + 1}`,
+            label: describeParallelBranch({ flow, idx, nodeById, laneById }),
             steps: branchSteps,
             truncated,
           };
         }),
-        outro: joinNode ? "Ked su paralelne kroky hotove, proces pokracuje dalej." : "",
+        outro: joinNode ? "Keď sú súbežné činnosti hotové, proces pokračuje ďalej." : "",
       };
       parallels.push(parallel);
       const nextFlow = joinNode ? chooseNext(outgoing.get(joinNode.id) || []) : null;
@@ -529,5 +626,9 @@ export const generateProcessStory = (engineJson, options = {}) => {
     notes,
   };
   const lineTypes = mainFlowItems.map((item) => item.type);
-  return postProcessText(doc, laneNames, lineTypes);
+  const processed = postProcessText(doc, laneNames, lineTypes);
+  return {
+    ...processed,
+    narrative: buildNarrativeParagraphs(processed),
+  };
 };

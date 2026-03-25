@@ -33,6 +33,13 @@ def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _require_org_model_edit_access(user: AuthUser, org_id: str) -> str:
+    role = (get_user_org_role(user.id, org_id) or "").strip().lower()
+    if role not in {"owner", "member", "admin"}:
+        raise HTTPException(status_code=403, detail="Používateľ nemá právo upravovať model organizácie.")
+    return role
+
+
 @router.get("")
 def get_org_model(org_id: str | None = None, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, org_id)
@@ -77,6 +84,7 @@ def create_org_folder(
         raise HTTPException(status_code=400, detail="name je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = create_folder(org_id=org_id, parent_id=parent_id.strip(), name=name.strip())
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:
@@ -97,6 +105,7 @@ def create_org_process(
         raise HTTPException(status_code=400, detail="name je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = create_process(org_id=org_id, parent_id=parent_id.strip(), name=name.strip())
         record_org_event(
             org_id,
@@ -130,6 +139,7 @@ def create_org_process_from_org_model(
         raise HTTPException(status_code=400, detail="name je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = create_process_from_org_model(
             org_id=org_id,
             parent_id=parent_id.strip(),
@@ -163,6 +173,7 @@ def rename_org_node(
         raise HTTPException(status_code=400, detail="name je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = rename_node(org_id=org_id, node_id=node_id, name=name.strip())
         record_org_event(
             org_id,
@@ -189,6 +200,7 @@ def move_org_node(payload: dict = Body(...), org_id: str | None = None, current_
         raise HTTPException(status_code=400, detail="targetParentId je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = move_node(
             org_id=org_id,
             node_id=node_id.strip(),
@@ -247,6 +259,7 @@ def update_process_model_ref(
         raise HTTPException(status_code=400, detail="modelId je povinny.")
     try:
         org_id = _resolve_org_id(current_user, org_id)
+        _require_org_model_edit_access(current_user, org_id)
         node = set_process_model_ref(org_id=org_id, node_id=node_id, model_id=model_id.strip())
         return {"node": node, "tree": get_tree(org_id)}
     except ValueError as exc:

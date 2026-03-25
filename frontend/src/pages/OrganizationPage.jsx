@@ -441,6 +441,9 @@ function OrganizationPage() {
       } else if (action === "demote") {
         await updateOrgMemberRole(targetEmail, activeOrgId, "member");
         setAddMemberInfo(`Používateľ ${targetEmail} bol zmenený na člena.`);
+      } else if (action === "viewer") {
+        await updateOrgMemberRole(targetEmail, activeOrgId, "viewer");
+        setAddMemberInfo(`Používateľ ${targetEmail} bol zmenený na pozorovateľa.`);
       } else {
         await removeOrgMember(targetEmail, activeOrgId);
         setAddMemberInfo(`Používateľ ${targetEmail} bol odstránený z organizácie.`);
@@ -515,6 +518,14 @@ function OrganizationPage() {
         hint: "Pre potvrdenie zmeny prepíš presný e-mail používateľa:",
         submitLabel: memberActionModal.loading ? "Mením rolu..." : "Zmeniť na člena",
         submitClass: "btn btn-danger",
+      };
+    }
+    if (action === "viewer") {
+      return {
+        title: "Potvrdenie zmeny na pozorovateľa",
+        hint: "Pre potvrdenie zmeny prepíš presný e-mail používateľa:",
+        submitLabel: memberActionModal.loading ? "Mením rolu..." : "Zmeniť na pozorovateľa",
+        submitClass: "btn",
       };
     }
     return {
@@ -700,12 +711,29 @@ function OrganizationPage() {
                           <td>
                             <div className="organization-inline-actions">
                               {memberRole === "member" ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn--small"
+                                    onClick={() => openMemberActionModal("promote", member.email, member.role)}
+                                  >
+                                    Zmeniť na vlastníka
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn--small"
+                                    onClick={() => openMemberActionModal("viewer", member.email, member.role)}
+                                  >
+                                    Zmeniť na pozorovateľa
+                                  </button>
+                                </>
+                              ) : memberRole === "viewer" ? (
                                 <button
                                   type="button"
                                   className="btn btn--small"
-                                  onClick={() => openMemberActionModal("promote", member.email, member.role)}
+                                  onClick={() => openMemberActionModal("demote", member.email, member.role)}
                                 >
-                                  Zmeniť na vlastníka
+                                  Zmeniť na člena
                                 </button>
                               ) : (
                                 <button
@@ -721,7 +749,11 @@ function OrganizationPage() {
                                 className="btn btn--small btn-danger organization-remove-member-btn"
                                 onClick={() => openMemberActionModal("remove", member.email, member.role)}
                               >
-                                {memberRole === "owner" ? "Vyhodiť vlastníka" : "Vyhodiť člena"}
+                                {memberRole === "owner"
+                                  ? "Vyhodiť vlastníka"
+                                  : memberRole === "viewer"
+                                    ? "Vyhodiť pozorovateľa"
+                                    : "Vyhodiť člena"}
                               </button>
                             </div>
                           </td>
