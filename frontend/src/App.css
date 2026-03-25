@@ -2549,6 +2549,7 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
 }
 
@@ -2627,12 +2628,18 @@ body {
 }
 
 .process-card-body {
+  flex: 1;
+  min-height: 0;
   padding: 14px 18px 18px;
   overflow-y: auto;
   overflow-x: visible;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.process-card-org .process-card-body {
+  min-height: 0;
 }
 
 .process-card-section {
