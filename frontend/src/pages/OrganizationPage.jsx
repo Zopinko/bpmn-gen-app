@@ -789,14 +789,20 @@ function OrganizationPage() {
 
       {memberActionModal.open ? (
         <div className="wizard-models-modal" onClick={closeMemberActionModal}>
-          <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(event) => event.stopPropagation()}>
+          <div className="wizard-models-panel wizard-models-panel--compact" onClick={(event) => event.stopPropagation()}>
             <div className="wizard-models-header">
-              <h3 style={{ margin: 0 }}>{getMemberActionMeta().title}</h3>
+              <div className="wizard-dialog-copy">
+                <p className="wizard-dialog-kicker">Organizácia</p>
+                <h3 className="wizard-dialog-title">{getMemberActionMeta().title}</h3>
+                <p className="wizard-dialog-subtitle">{getMemberActionMeta().hint}</p>
+              </div>
             </div>
-            <p className="organization-hint" style={{ marginBottom: 10 }}>
-              {getMemberActionMeta().hint}
-            </p>
-            <p style={{ marginTop: 0, marginBottom: 10, color: "#e5e7eb", fontWeight: 600 }}>{memberActionModal.targetEmail}</p>
+            <div className="wizard-dialog-meta">
+              <div className="wizard-dialog-meta__chip">
+                <span className="wizard-dialog-meta__label">Člen</span>
+                <strong>{memberActionModal.targetEmail}</strong>
+              </div>
+            </div>
             <input
               type="email"
               className="wizard-models-search"
@@ -806,7 +812,7 @@ function OrganizationPage() {
               autoFocus
             />
             {memberActionModal.error ? <p className="auth-message auth-message--error">{memberActionModal.error}</p> : null}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <div className="wizard-dialog-actions">
               <button type="button" className="btn" onClick={closeMemberActionModal} disabled={memberActionModal.loading}>
                 Zrušiť
               </button>

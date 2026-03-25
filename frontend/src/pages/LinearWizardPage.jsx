@@ -3844,16 +3844,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   }, []);
 
-  const ensureProjectNotesSeenBaseline = useCallback((orgId) => {
-    const scopedOrgId = String(orgId || "").trim();
-    if (!scopedOrgId || typeof window === "undefined") return "";
-    const existing = readProjectNotesLastSeen(scopedOrgId);
-    if (existing) return existing;
-    const baseline = new Date().toISOString();
-    window.localStorage.setItem(getProjectNotesSeenStorageKey(scopedOrgId), baseline);
-    return baseline;
-  }, [readProjectNotesLastSeen]);
-
   const fetchProjectNotes = async ({ silent = false } = {}) => {
     const scopedOrgId = String(activeOrgId || "").trim();
     if (!scopedOrgId) {
@@ -3881,22 +3871,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEditingNoteText("");
       }
       const selfEmail = String(currentUser?.email || "").trim().toLowerCase();
-      const resolvedSeenAt = ensureProjectNotesSeenBaseline(scopedOrgId);
+      const resolvedSeenAt = readProjectNotesLastSeen(scopedOrgId);
       if (resolvedSeenAt !== projectNotesLastSeenAt) {
         setProjectNotesLastSeenAt(resolvedSeenAt);
       }
       const seenAtMs = resolvedSeenAt ? Date.parse(resolvedSeenAt) : Number.NaN;
+      const hasSeenMarker = Number.isFinite(seenAtMs);
       const nextUnreadIds = new Set();
       incoming.forEach((note) => {
         const noteActorEmail = String(note?.createdByEmail || note?.created_by_email || "").trim().toLowerCase();
         const noteCreatedAt = Date.parse(note?.createdAt || note?.created_at || "");
-        if ((!selfEmail || noteActorEmail !== selfEmail) && Number.isFinite(noteCreatedAt) && Number.isFinite(seenAtMs) && noteCreatedAt > seenAtMs) {
+        if ((!selfEmail || noteActorEmail !== selfEmail) && Number.isFinite(noteCreatedAt) && (!hasSeenMarker || noteCreatedAt > seenAtMs)) {
           nextUnreadIds.add(`note:${note.id}`);
         }
         (note?.replies || []).forEach((reply) => {
           const replyActorEmail = String(reply?.createdByEmail || reply?.created_by_email || "").trim().toLowerCase();
           const replyCreatedAt = Date.parse(reply?.createdAt || reply?.created_at || "");
-          if ((!selfEmail || replyActorEmail !== selfEmail) && Number.isFinite(replyCreatedAt) && Number.isFinite(seenAtMs) && replyCreatedAt > seenAtMs) {
+          if ((!selfEmail || replyActorEmail !== selfEmail) && Number.isFinite(replyCreatedAt) && (!hasSeenMarker || replyCreatedAt > seenAtMs)) {
             nextUnreadIds.add(`reply:${note.id}:${reply.id}`);
           }
         });
@@ -3927,11 +3918,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   useEffect(() => {
-    setProjectNotesLastSeenAt(ensureProjectNotesSeenBaseline(activeOrgId));
+    setProjectNotesLastSeenAt(readProjectNotesLastSeen(activeOrgId));
     notesUnreadIdsRef.current = new Set();
     notesPollingStartedRef.current = false;
     setNotesBadgePulse(false);
-  }, [activeOrgId, ensureProjectNotesSeenBaseline]);
+  }, [activeOrgId, readProjectNotesLastSeen]);
 
   useEffect(() => {
     if (notesOpen) {
@@ -9029,13 +9020,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={closePushModal}>
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Ulozit do organizacie</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Organizácia</p>
+                  <h3 className="wizard-dialog-title">Uložiť do organizácie</h3>
+                  <p className="wizard-dialog-subtitle">Vyber miesto v tímovom strome, kam sa uloží aktuálny model zo sandboxu.</p>
+                </div>
                 <button className="btn btn--small" type="button" onClick={closePushModal}>
                   Zavriet
                 </button>
               </div>
-              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
-                Model: <strong>{orgPushModel?.name || orgPushModel?.id || "-"}</strong>
+              <div className="wizard-dialog-meta">
+                <div className="wizard-dialog-meta__chip">
+                  <span className="wizard-dialog-meta__label">Model</span>
+                  <strong>{orgPushModel?.name || orgPushModel?.id || "-"}</strong>
+                </div>
               </div>
               {orgPushError ? <div className="wizard-error">{orgPushError}</div> : null}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
@@ -9045,10 +9043,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={toggleOrgPushTreeExpand}
                   disabled={!orgTree || orgPushLoading}
                 >
-                  {isOrgPushTreeFullyExpanded ? "Zbalit strom" : "Rozbalit strom"}
+                  {isOrgPushTreeFullyExpanded ? "Zbaliť strom" : "Rozbaliť strom"}
                 </button>
               </div>
-              <div className="org-tree">
+              <div className="org-tree wizard-dialog-section wizard-dialog-scroll">
                 {orgTree
                   ? renderOrgFolderPickerNode(orgTree, 0, {
                       mode: "push",
@@ -9060,9 +9058,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     })
                   : null}
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={closePushModal} disabled={orgPushLoading}>
-                  Zrusit
+                  Zrušiť
                 </button>
                 <button
                   className="btn btn-primary"
@@ -9070,7 +9068,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={handleConfirmPushToOrg}
                   disabled={orgPushLoading || !orgTree}
                 >
-                  {orgPushLoading ? "Ukladam..." : "Ulozit sem"}
+                  {orgPushLoading ? "Ukladám..." : "Uložiť sem"}
                 </button>
               </div>
             </div>
@@ -9081,16 +9079,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={handleConflictCloseModal}>
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Duplicitný názov</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Konflikt</p>
+                  <h3 className="wizard-dialog-title">Duplicitný názov</h3>
+                  <p className="wizard-dialog-subtitle">V organizácii už existuje proces s týmto názvom. Vyber, ako sa má pokračovať.</p>
+                </div>
                 <button className="btn btn--small" type="button" onClick={handleConflictCloseModal}>
                   Zavrieť
                 </button>
               </div>
-              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+              <div className="wizard-dialog-section wizard-dialog-section--warning">
                 V organizačnej vrstve už existuje proces s názvom <strong>{orgPushConflictName}</strong>.
               </div>
               {orgPushConflictMatches.length ? (
-                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 12 }}>
+                <div className="wizard-dialog-section">
                   <div style={{ marginBottom: 6 }}>Nájdené zhody:</div>
                   <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
                     {orgPushConflictMatches.map((match) => (
@@ -9110,7 +9112,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   </ul>
                 </div>
               ) : null}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+              <div className="wizard-dialog-actions">
                 <button
                   className="btn"
                   type="button"
@@ -9134,18 +9136,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={handleCancelOverwrite}>
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Potvrdiť prepísanie</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Potvrdenie</p>
+                  <h3 className="wizard-dialog-title">Potvrdiť prepísanie</h3>
+                </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelOverwrite}>
                   Zavrieť
                 </button>
               </div>
-              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+              <div className="wizard-dialog-section wizard-dialog-section--warning">
                 Ozaj chceš prepísať vybraný proces v organizačnej vrstve?
               </div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+              <div className="wizard-dialog-subtitle">
                 Ak prepíšeš tento proces, zmeny z tvojho Pieskoviska sa prejavia v organizačnej vrstve.
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+              <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={handleCancelOverwrite}>
                   Zrušiť
                 </button>
@@ -9161,25 +9166,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={closeDeleteProcessModal}>
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Odstrániť proces?</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Proces</p>
+                  <h3 className="wizard-dialog-title">
+                    {activeOrgCapabilities.canDirectDeleteOrgProcess ? "Odstrániť proces?" : "Požiadať o odstránenie?"}
+                  </h3>
+                  <p className="wizard-dialog-subtitle">
+                    {activeOrgCapabilities.canDirectDeleteOrgProcess
+                      ? "Priame odstránenie je dostupné len pre roly s oprávnením mazať organizačné procesy."
+                      : "Táto požiadavka sa odošle ownerovi organizácie na schválenie."}
+                  </p>
+                </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
                   Zavrieť
                 </button>
               </div>
-              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+              <div className={`wizard-dialog-section ${activeOrgCapabilities.canDirectDeleteOrgProcess ? "wizard-dialog-section--danger" : "wizard-dialog-section--warning"}`}>
                 {activeOrgCapabilities.canDirectDeleteOrgProcess
                   ? `Proces "${orgDeleteNode?.name || "-"}" bude odstránený zo stromu organizácie.`
                   : `Proces "${orgDeleteNode?.name || "-"}" nemôžeš odstrániť priamo.`}
               </div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+              <div className="wizard-dialog-subtitle">
                 {activeOrgCapabilities.canDirectDeleteOrgProcess
                   ? "Táto akcia sa nedá vrátiť späť."
-                  : "Posli ownerovi kratky dovod, preco ma byt proces odstraneny."}
+                  : "Pošli ownerovi krátky dôvod, prečo má byť proces odstránený."}
               </div>
               {!activeOrgCapabilities.canDirectDeleteOrgProcess ? (
-                <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+                <div className="wizard-dialog-section" style={{ display: "grid", gap: 6 }}>
                   <label htmlFor="org-delete-request-reason" style={{ fontSize: 12, opacity: 0.82 }}>
-                    Dovod ziadosti
+                    Dôvod žiadosti
                   </label>
                   <textarea
                     id="org-delete-request-reason"
@@ -9187,13 +9202,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     style={{ minHeight: 100 }}
                     value={orgDeleteRequestReason}
                     onChange={(e) => setOrgDeleteRequestReason(e.target.value)}
-                    placeholder="Strucne napis, preco ma byt proces odstraneny..."
+                    placeholder="Stručne napíš, prečo má byť proces odstránený..."
                     maxLength={500}
                   />
                 </div>
               ) : null}
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
                   {activeOrgCapabilities.canDirectDeleteOrgProcess ? "Zrušiť" : "Zavrieť"}
                 </button>
@@ -9215,19 +9230,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={closeDeleteProcessModal}>
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Potvrdiť odstránenie procesu?</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Posledné potvrdenie</p>
+                  <h3 className="wizard-dialog-title">Potvrdiť odstránenie procesu?</h3>
+                </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
                   Zavrieť
                 </button>
               </div>
-              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+              <div className="wizard-dialog-section wizard-dialog-section--danger">
                 Naozaj chceš odstrániť proces "{orgDeleteNode?.name || "-"}"?
               </div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+              <div className="wizard-dialog-subtitle">
                 Táto akcia sa nedá vrátiť späť.
               </div>
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <div className="wizard-dialog-actions">
                 <button
                   className="btn"
                   type="button"
@@ -9250,22 +9268,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
         {savePromptOpen ? (
           <div className="wizard-models-modal" onClick={handleCancelOpen}>
-            <div className="wizard-models-panel wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Ulozit model?</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Sandbox</p>
+                  <h3 className="wizard-dialog-title">Uložiť model?</h3>
+                </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
-                  Zavriet
+                  Zavrieť
                 </button>
               </div>
-              <div className="wizard-save-prompt__text">
-                Mas rozpracovany model. Chces ho ulozit pred otvorenim ineho?
+              <div className="wizard-save-prompt__text wizard-dialog-section">
+                Máš rozpracovaný model. Chceš ho uložiť pred otvorením iného?
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={handleOpenWithoutSave}>
-                  Neulozit
+                  Neuložiť
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
-                  Ulozit model
+                  Uložiť model
                 </button>
               </div>
             </div>
@@ -9274,14 +9295,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
         {orgEditConfirmOpen ? (
           <div className="wizard-models-modal" onClick={handleCancelEnableOrgEdit}>
-            <div className="wizard-models-panel wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
+            <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Prepnúť do editácie?</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Organizácia</p>
+                  <h3 className="wizard-dialog-title">Prepnúť do editácie?</h3>
+                </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelEnableOrgEdit}>
                   Zrušiť
                 </button>
               </div>
-              <div className="wizard-save-prompt__text">
+              <div className="wizard-save-prompt__text wizard-dialog-section">
                 Zmeny sa budú ukladať do organizácie. Chceš pokračovať?
               </div>
               <div className="wizard-save-prompt__actions">
@@ -9300,19 +9324,36 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setNotesOpen(false)}>
             <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Poznámky k projektu</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Tím</p>
+                  <h3 className="wizard-dialog-title">Poznámky k projektu</h3>
+                  <p className="wizard-dialog-subtitle">Zachytávajte dohody, otázky a rozhodnutia, aby ich videl celý tím.</p>
+                </div>
                 <button className="btn btn--small" type="button" onClick={() => setNotesOpen(false)}>
                   Zavrieť
                 </button>
               </div>
               <div className="project-notes-body">
                 {projectNotesError ? <div className="wizard-error">{projectNotesError}</div> : null}
-                <div className="project-note-meta" style={{ marginBottom: 8 }}>
-                  Organizácia: {activeOrgName || "Nezvolená"}
+                <div className="project-notes-toolbar">
+                  <div className="project-notes-toolbar__top">
+                    <div className="project-notes-toolbar__title">
+                      <h4>Zdieľané poznámky</h4>
+                      <p>Organizácia: {activeOrgName || "Nezvolená"}</p>
+                    </div>
+                    {activeOrgId ? (
+                      <div className="wizard-dialog-meta">
+                        <div className="wizard-dialog-meta__chip">
+                          <span className="wizard-dialog-meta__label">Neprečítané</span>
+                          <strong>{unreadProjectNotesCount}</strong>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 {activeOrgId ? (
                   <>
-                    <label className="wizard-field">
+                    <label className="wizard-field wizard-dialog-section">
                       <span>Nová poznámka</span>
                       <textarea
                         className="project-notes-textarea project-notes-textarea--draft"
@@ -9355,9 +9396,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             value={normalizeNoteStatus(note.status)}
                             onChange={(e) => updateProjectNote(note.id, { status: e.target.value })}
                           >
-                            <option value="new">Nove</option>
-                            <option value="reviewed">Skontrolovane</option>
-                            <option value="agreed">Dohodnute</option>
+                            <option value="new">Nové</option>
+                            <option value="reviewed">Skontrolované</option>
+                            <option value="agreed">Dohodnuté</option>
                           </select>
                           <div className="project-note-actions">
                             <button
@@ -9365,7 +9406,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               className="btn btn--small btn-accent"
                               onClick={() => setReplyOpenById((prev) => ({ ...prev, [note.id]: true }))}
                             >
-                              Pridat odpoved
+                              Pridať odpoveď
                             </button>
                             <button
                               type="button"
@@ -9373,14 +9414,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               onClick={() => startEditProjectNote(note)}
                               disabled={editingNoteId === note.id}
                             >
-                              Upravit
+                              Upraviť
                             </button>
                             <button
                               type="button"
                               className="btn btn--small btn-danger"
                               onClick={() => removeProjectNote(note.id)}
                             >
-                              Zmazat
+                              Zmazať
                             </button>
                           </div>
                         </div>
@@ -9400,10 +9441,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onClick={() => saveEditProjectNote(note.id)}
                                 disabled={!editingNoteText.trim()}
                               >
-                                Ulozit
+                                Uložiť
                               </button>
                               <button type="button" className="btn btn--small" onClick={cancelEditProjectNote}>
-                                Zrusit
+                                Zrušiť
                               </button>
                             </div>
                           </div>
@@ -9427,10 +9468,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       onClick={saveEditReply}
                                       disabled={!String(replyEditing.text || "").trim()}
                                     >
-                                      Ulozit
+                                      Uložiť
                                     </button>
                                     <button type="button" className="btn btn--small" onClick={cancelEditReply}>
-                                      Zrusit
+                                      Zrušiť
                                     </button>
                                   </div>
                                 </div>
@@ -9448,14 +9489,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       className="btn btn--small"
                                       onClick={() => startEditReply(note.id, reply)}
                                     >
-                                      Upravit
+                                      Upraviť
                                     </button>
                                     <button
                                       type="button"
                                       className="btn btn--small btn-danger"
                                       onClick={() => removeReply(note.id, reply.id)}
                                     >
-                                      Zmazat
+                                      Zmazať
                                     </button>
                                   </div>
                                 </div>
@@ -9470,7 +9511,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onChange={(e) =>
                                   setReplyDrafts((prev) => ({ ...prev, [note.id]: e.target.value }))
                                 }
-                                placeholder="Napis odpoved..."
+                                placeholder="Napíš odpoveď..."
                               />
                               <button
                                 type="button"
@@ -9478,7 +9519,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onClick={() => addProjectNoteReply(note.id)}
                                 disabled={!String(replyDrafts[note.id] || "").trim()}
                               >
-                                Ulozit odpoved
+                                Uložiť odpoveď
                               </button>
                               <button
                                 type="button"
@@ -9488,7 +9529,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   setReplyOpenById((prev) => ({ ...prev, [note.id]: false }));
                                 }}
                               >
-                                Zrusit
+                                Zrušiť
                               </button>
                             </div>
                           ) : null}
@@ -9506,14 +9547,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setActivityOpen(false)}>
             <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Aktivita organizacie</h3>
+                <div className="wizard-dialog-copy">
+                  <p className="wizard-dialog-kicker">Tím</p>
+                  <h3 className="wizard-dialog-title">Aktivita organizácie</h3>
+                  <p className="wizard-dialog-subtitle">Prehľad zmien, požiadaviek a tímovej aktivity v aktuálnej organizácii.</p>
+                </div>
                 <button className="btn btn--small" type="button" onClick={() => setActivityOpen(false)}>
                   Zavrieť
                 </button>
               </div>
               <div className="project-notes-body">
-                <div className="project-note-meta" style={{ marginBottom: 8 }}>
-                  Organizácia: {activeOrgName || "Nezvolená"}
+                <div className="project-notes-toolbar">
+                  <div className="project-notes-toolbar__top">
+                    <div className="project-notes-toolbar__title">
+                      <h4>Tímová aktivita</h4>
+                      <p>Organizácia: {activeOrgName || "Nezvolená"}</p>
+                    </div>
+                    <div className="wizard-dialog-meta">
+                      {activeOrgCapabilities.canApproveDeleteRequests ? (
+                        <div className="wizard-dialog-meta__chip">
+                          <span className="wizard-dialog-meta__label">Na schválenie</span>
+                          <strong>{visibleActivityPendingCount}</strong>
+                        </div>
+                      ) : null}
+                      <div className="wizard-dialog-meta__chip">
+                        <span className="wizard-dialog-meta__label">Udalosti</span>
+                        <strong>{projectActivityItems.length}</strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div className="project-activity-filters">
                   <button
@@ -9521,14 +9583,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     className={`project-activity-filter ${projectActivityFilter === "all" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("all")}
                   >
-                    Vsetko
+                    Všetko
                   </button>
                   <button
                     type="button"
                     className={`project-activity-filter ${projectActivityFilter === "requests" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("requests")}
                   >
-                    Poziadavky
+                    Požiadavky
                   </button>
                   <button
                     type="button"
@@ -9542,7 +9604,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     className={`project-activity-filter ${projectActivityFilter === "members" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("members")}
                   >
-                    Clenovia
+                    Členovia
                   </button>
                 </div>
                 {projectActivityError ? <div className="wizard-error">{projectActivityError}</div> : null}
@@ -9558,7 +9620,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       <div className={`project-activity-section ${activityRequestsPulse ? "is-pulse" : ""}`}>
                         <div className="project-activity-section__header">
                           <h4 className="project-activity-section__title">
-                            Poziadavky na odstranenie
+                            Požiadavky na odstránenie
                             {filteredPendingDeleteRequests.length > 0 ? (
                               <span className="project-activity-badge is-pending project-activity-badge--count">
                                 {filteredPendingDeleteRequests.length}
@@ -9567,7 +9629,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           </h4>
                         </div>
                         {filteredPendingDeleteRequests.length === 0 ? (
-                          <div className="project-notes-empty">Ziadne poziadavky na odstranenie.</div>
+                          <div className="project-notes-empty">Žiadne požiadavky na odstránenie.</div>
                         ) : (
                           <div className="project-notes-list">
                             {filteredPendingDeleteRequests.map((item) => {

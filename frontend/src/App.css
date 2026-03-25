@@ -2798,6 +2798,92 @@ body {
 
 }
 
+.wizard-models-panel--compact {
+  width: min(640px, 90vw);
+}
+
+.wizard-dialog-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wizard-dialog-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #93c5fd;
+}
+
+.wizard-dialog-title {
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.wizard-dialog-subtitle {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.wizard-dialog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.wizard-dialog-meta__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.68);
+  color: #e2e8f0;
+  font-size: 0.82rem;
+}
+
+.wizard-dialog-meta__label {
+  color: #94a3b8;
+}
+
+.wizard-dialog-section {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.wizard-dialog-section--danger {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(127, 29, 29, 0.16);
+}
+
+.wizard-dialog-section--warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(120, 53, 15, 0.18);
+}
+
+.wizard-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.wizard-dialog-scroll {
+  overflow: auto;
+}
+
 .wizard-models-panel--org-push {
   width: min(672px, 90vw);
 }
@@ -3026,6 +3112,40 @@ body {
   flex-direction: column;
   gap: 12px;
   overflow: auto;
+}
+
+.project-notes-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.project-notes-toolbar__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-notes-toolbar__title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-notes-toolbar__title h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.project-notes-toolbar__title p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
 }
 
 .project-notes-textarea {
