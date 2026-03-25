@@ -9,6 +9,7 @@ from auth.service import (
     AuthUser,
     add_org_member,
     create_org_with_owner,
+    delete_org_by_owner,
     find_user_id_by_email,
     get_or_create_org_invite,
     get_latest_org_invite,
@@ -89,6 +90,20 @@ def create_org(payload: CreateOrgRequest, current_user: AuthUser = Depends(requi
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return org
+
+
+@router.delete("/{org_id}")
+def delete_org(org_id: str, current_user: AuthUser = Depends(require_user)):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    try:
+        result = delete_org_by_owner(resolved_org_id, current_user.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result
 
 
 @router.get("/my")

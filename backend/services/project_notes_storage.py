@@ -78,6 +78,14 @@ def save_project_notes(org_id: str, notes: List[dict]) -> List[dict]:
     return sanitized
 
 
+def delete_project_notes(org_id: str) -> None:
+    if not str(org_id or "").strip():
+        return
+    file_path = _org_notes_path(org_id)
+    if file_path.exists():
+        file_path.unlink()
+
+
 def has_legacy_global_notes() -> bool:
     legacy_path = _resolve_legacy_notes_path()
     return legacy_path.exists()

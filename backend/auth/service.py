@@ -20,6 +20,8 @@ from auth.security import (
     verify_password,
 )
 from core.auth_config import get_auth_config
+from services.org_model_storage import delete_org_storage
+from services.project_notes_storage import delete_project_notes
 
 
 @dataclass(frozen=True)
@@ -568,6 +570,25 @@ def get_org_by_id(org_id: str) -> dict | None:
     if not row:
         return None
     return {"id": row["id"], "name": row["name"]}
+
+
+def delete_org_by_owner(org_id: str, user_id: str) -> dict:
+    role = get_user_org_role(user_id, org_id)
+    if role != "owner":
+        raise PermissionError("Pouzivatel nema pravo upravovat organizaciu.")
+
+    org = get_org_by_id(org_id)
+    if not org:
+        raise LookupError("Organizacia neexistuje.")
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
+        conn.commit()
+
+    delete_org_storage(org_id)
+    delete_project_notes(org_id)
+    logger.info("Deleted org %s by user %s", org_id, user_id)
+    return {"id": org_id, "name": org["name"], "deleted": True}
 
 
 def _row_value(row: dict | None, key: str):

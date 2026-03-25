@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   addOrgMember,
   createOrg,
+  deleteOrg,
   getOrgInviteLink,
   listMyOrgs,
   listOrgActivity,
@@ -42,6 +43,15 @@ function OrganizationPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createInfo, setCreateInfo] = useState("");
+  const [deleteOrgModal, setDeleteOrgModal] = useState({
+    open: false,
+    stage: 1,
+    orgId: "",
+    orgName: "",
+    typedName: "",
+    loading: false,
+    error: "",
+  });
 
   const [memberActionModal, setMemberActionModal] = useState({
     open: false,
@@ -323,6 +333,66 @@ function OrganizationPage() {
     }
   };
 
+  const openDeleteOrgModal = (org) => {
+    setDeleteOrgModal({
+      open: true,
+      stage: 1,
+      orgId: String(org?.id || ""),
+      orgName: String(org?.name || org?.id || ""),
+      typedName: "",
+      loading: false,
+      error: "",
+    });
+  };
+
+  const closeDeleteOrgModal = () => {
+    if (deleteOrgModal.loading) return;
+    setDeleteOrgModal({
+      open: false,
+      stage: 1,
+      orgId: "",
+      orgName: "",
+      typedName: "",
+      loading: false,
+      error: "",
+    });
+  };
+
+  const handleDeleteOrgContinue = () => {
+    setDeleteOrgModal((prev) => ({ ...prev, stage: 2, error: "" }));
+  };
+
+  const handleConfirmDeleteOrg = async () => {
+    const targetName = String(deleteOrgModal.orgName || "").trim();
+    const typedName = String(deleteOrgModal.typedName || "").trim();
+    const orgId = String(deleteOrgModal.orgId || "").trim();
+
+    if (!orgId) {
+      setDeleteOrgModal((prev) => ({ ...prev, error: "Organizácia sa nepodarila identifikovať." }));
+      return;
+    }
+    if (!targetName || typedName !== targetName) {
+      setDeleteOrgModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš presný názov organizácie." }));
+      return;
+    }
+
+    setDeleteOrgModal((prev) => ({ ...prev, loading: true, error: "" }));
+    setCreateError("");
+    setCreateInfo("");
+
+    try {
+      await deleteOrg(orgId);
+      setCreateInfo(`Organizácia „${targetName}“ bola vymazaná.`);
+      closeDeleteOrgModal();
+      await refreshOrgs(String(activeOrgId) === orgId ? "" : activeOrgId);
+      if (String(activeOrgId) !== orgId) {
+        await refreshMembers();
+      }
+    } catch (e) {
+      setDeleteOrgModal((prev) => ({ ...prev, loading: false, error: e?.message || "Vymazanie organizácie zlyhalo." }));
+    }
+  };
+
   const openMemberActionModal = (action, email, role = "") => {
     setMemberActionModal({
       open: true,
@@ -533,13 +603,14 @@ function OrganizationPage() {
                   <th>Typ</th>
                   <th>Rola</th>
                   <th>Stav</th>
-                  <th>Akcia</th>
+                  <th>Akcie</th>
                 </tr>
               </thead>
               <tbody>
                 {orgs.map((org) => {
                   const isActive = String(org.id) === String(activeOrgId);
                   const orgCapabilities = getOrgCapabilities(org.role);
+                  const canDelete = orgCapabilities.isOwner;
                   return (
                     <tr key={org.id}>
                       <td>{org.name || org.id}</td>
@@ -551,14 +622,25 @@ function OrganizationPage() {
                       <td>{getOrgRoleLabel(org.role)}</td>
                       <td>{isActive ? "Aktívna" : "-"}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn btn--small btn-primary"
-                          disabled={isActive}
-                          onClick={() => handleSelectActiveOrg(org)}
-                        >
-                          {isActive ? "Aktívna" : "Nastaviť ako aktívnu"}
-                        </button>
+                        <div className="organization-inline-actions">
+                          <button
+                            type="button"
+                            className="btn btn--small btn-primary"
+                            disabled={isActive}
+                            onClick={() => handleSelectActiveOrg(org)}
+                          >
+                            {isActive ? "Aktívna" : "Nastaviť ako aktívnu"}
+                          </button>
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              className="btn btn--small btn-danger"
+                              onClick={() => openDeleteOrgModal(org)}
+                            >
+                              Vymazať organizáciu
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -808,6 +890,68 @@ function OrganizationPage() {
           </form>
         )}
       </div>
+
+      {deleteOrgModal.open ? (
+        <div className="wizard-models-modal" onClick={closeDeleteOrgModal}>
+          <div className="wizard-models-panel wizard-models-panel--compact" onClick={(event) => event.stopPropagation()}>
+            <div className="wizard-models-header">
+              <div className="wizard-dialog-copy">
+                <p className="wizard-dialog-kicker">Organizácia</p>
+                <h3 className="wizard-dialog-title">Vymazať organizáciu</h3>
+                <p className="wizard-dialog-subtitle">
+                  {deleteOrgModal.stage === 1
+                    ? "Tento krok nenávratne zmaže organizáciu, jej modely a tímové poznámky."
+                    : "Pre finálne potvrdenie prepíš presný názov organizácie."}
+                </p>
+              </div>
+            </div>
+            <div className="wizard-dialog-meta">
+              <div className="wizard-dialog-meta__chip">
+                <span className="wizard-dialog-meta__label">Organizácia</span>
+                <strong>{deleteOrgModal.orgName}</strong>
+              </div>
+            </div>
+            {deleteOrgModal.stage === 1 ? (
+              <div className="organization-info-box">
+                <p className="organization-hint">
+                  Po vymazaní sa odstráni celý pracovný priestor organizácie. Tento krok sa nedá vrátiť späť.
+                </p>
+              </div>
+            ) : (
+              <input
+                type="text"
+                className="wizard-models-search"
+                placeholder="Prepíš názov organizácie"
+                value={deleteOrgModal.typedName}
+                onChange={(event) =>
+                  setDeleteOrgModal((prev) => ({ ...prev, typedName: event.target.value, error: "" }))
+                }
+                autoFocus
+              />
+            )}
+            {deleteOrgModal.error ? <p className="auth-message auth-message--error">{deleteOrgModal.error}</p> : null}
+            <div className="wizard-dialog-actions">
+              <button type="button" className="btn" onClick={closeDeleteOrgModal} disabled={deleteOrgModal.loading}>
+                Zrušiť
+              </button>
+              {deleteOrgModal.stage === 1 ? (
+                <button type="button" className="btn btn-danger" onClick={handleDeleteOrgContinue}>
+                  Pokračovať
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={handleConfirmDeleteOrg}
+                  disabled={deleteOrgModal.loading}
+                >
+                  {deleteOrgModal.loading ? "Mažem organizáciu..." : "Natrvalo vymazať"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {memberActionModal.open ? (
         <div className="wizard-models-modal" onClick={closeMemberActionModal}>

@@ -410,6 +410,28 @@ export async function createOrg(name) {
   return response.json();
 }
 
+export async function deleteOrg(orgId) {
+  const response = await fetch(`${API_BASE}/api/orgs/${encodeURIComponent(orgId)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data?.detail || null;
+    } catch (_e) {
+      // ignore parse errors
+    }
+    const message = detail || `HTTP ${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.detail = detail;
+    throw error;
+  }
+  return response.json();
+}
+
 export async function getOrgInviteLink(orgId, options = {}) {
   const query = new URLSearchParams();
   if (options?.regenerate) query.set("regenerate", "true");

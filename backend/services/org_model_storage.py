@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,12 @@ def org_tree_path(org_id: str) -> Path:
     path = _models_dir() / "orgs" / str(org_id) / "tree.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def delete_org_storage(org_id: str) -> None:
+    base_dir = _models_dir() / "orgs" / str(org_id)
+    if base_dir.exists():
+        shutil.rmtree(base_dir, ignore_errors=True)
 
 
 def _default_root() -> dict[str, Any]:

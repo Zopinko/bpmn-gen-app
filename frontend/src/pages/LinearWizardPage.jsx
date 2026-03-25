@@ -8669,11 +8669,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setModelsOpen(false)}>
             <div className="wizard-models-panel wizard-models-panel--sandbox" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <div>
-                  <h3 style={{ margin: 0 }}>Moje uložené modely (Pieskovisko)</h3>
-                  <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
-                    Súkromné modely viditeľné len pre teba. Tlačidlom „Push do organizácie“ ich uložíš do organizačnej
-                    knižnice.
+                <div className="wizard-models-copy">
+                  <h3 className="wizard-models-title">Moje uložené modely (Pieskovisko)</h3>
+                  <div className="wizard-models-subtitle">
+                    Súkromné modely viditeľné len pre teba. Tlačidlom „Uložiť do organizácie“ ich uložíš do
+                    organizačnej knižnice.
                   </div>
                 </div>
                 <div className="wizard-models-tools">
@@ -8699,18 +8699,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               {modelsError ? <div className="wizard-error">{modelsError}</div> : null}
               {myOrgsEmpty === true ? (
-                <div className="wizard-error" style={{ marginTop: 8 }}>
-                  Pouzivatel nema organizaciu.
-                </div>
+                <div className="wizard-error wizard-error--compact">Používateľ nemá organizáciu.</div>
               ) : null}
               {myOrgsEmpty === true ? (
-                <div style={{ marginTop: 8 }}>
+                <div className="wizard-models-empty-actions">
                   <button className="btn btn--small btn-primary" type="button" onClick={openOrgsModal}>
-                    Spravovat organizaciu
+                    Spravovať organizáciu
                   </button>
                 </div>
               ) : null}
-              <div style={{ overflow: "auto" }}>
+              <div className="wizard-models-table-wrap">
                 <table className="wizard-models-table">
                   <thead>
                     <tr>
@@ -8734,25 +8732,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           <tr key={`${group.key}_row`}>
                             <td>
                               <div className="wizard-model-name" title={group.label}>
-                                {group.label}
+                                <span className="wizard-model-name__title">{group.label}</span>
                                 {latest?.process_meta?.org_pushes?.length ? (
                                   <span
-                                    style={{
-                                      marginLeft: 8,
-                                      fontSize: 10,
-                                      padding: "2px 6px",
-                                      borderRadius: 999,
-                                      border: "1px solid rgba(59,130,246,0.35)",
-                                      background: "rgba(30,58,138,0.2)",
-                                      color: "#dbeafe",
-                                    }}
-                                    title={`Ulozene v ${latest.process_meta.org_pushes.length} organizacii(ach)`}
+                                    className="wizard-model-org-badge"
+                                    title={`Uložené v ${latest.process_meta.org_pushes.length} organizácii(ách)`}
                                   >
-                                    Organizácia
+                                    V organizácii
                                   </span>
                                 ) : null}
                               </div>
-                              <div style={{ fontSize: 12, opacity: 0.7 }}>Verzie: {group.items.length}</div>
                             </td>
                             <td>{latest?.process_meta?.version || "–"}</td>
                             <td>{formatDateTime(latest?.created_at)}</td>
@@ -8764,7 +8753,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   type="button"
                                   onClick={() => toggleModelGroup(group.key)}
                                 >
-                                  {isExpanded ? "Skryť verzie" : "Verzie"}
+                                  <span>{isExpanded ? "Skryť verzie" : "Verzie"}</span>
+                                  <span className="wizard-model-count">{group.items.length}</span>
                                 </button>
                                 {latest ? (
                                   <button
@@ -8791,17 +8781,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   </button>
                                 ) : null}
                                 {latest ? (
-                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                                  <div className="wizard-model-action-stack">
                                     <button
                                       className="btn btn--small"
                                       type="button"
                                       onClick={() => handlePushModelToOrg(latest)}
                                       disabled={!activeOrgId || pushModelLoadingIds.has(latest.id)}
                                     >
-                                      {pushModelLoadingIds.has(latest.id) ? "Ukladám..." : "Push do organizácie"}
+                                      {pushModelLoadingIds.has(latest.id) ? "Ukladám..." : "Uložiť do organizácie"}
                                     </button>
                                     {!activeOrgId ? (
-                                      <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>
+                                      <div className="wizard-model-action-hint">
                                         Nemáš žiadnu organizáciu
                                       </div>
                                     ) : null}
@@ -8860,17 +8850,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                               >
                                                 Zmazať
                                               </button>
-                                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                                              <div className="wizard-model-action-stack">
                                                 <button
                                                   className="btn btn--small"
                                                   type="button"
                                                   onClick={() => handlePushModelToOrg(m)}
                                                   disabled={!activeOrgId || pushModelLoadingIds.has(m.id)}
                                                 >
-                                                  {pushModelLoadingIds.has(m.id) ? "Ukladám..." : "Push do organizácie"}
+                                                  {pushModelLoadingIds.has(m.id) ? "Ukladám..." : "Uložiť do organizácie"}
                                                 </button>
                                                 {!activeOrgId ? (
-                                                  <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>
+                                                  <div className="wizard-model-action-hint">
                                                     Nemáš žiadnu organizáciu
                                                   </div>
                                                 ) : null}
