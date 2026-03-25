@@ -59,29 +59,70 @@ const HELP_RULES = [
   {
     id: "xor",
     title: "Rozhodnutie",
-    description: "Rozhodnutie znamená, že sa proces vetví (napr. áno / nie).",
+    description: "Keď sa proces môže vydať dvoma smermi, vypíš podmienku a čo sa stane v oboch prípadoch. Do každej vetvy môžeš napísať aj viac činností pod seba.",
     iconClass: "bpmn-icon-gateway-xor",
     syntax: "Zápis: Ak/Ked <otázka>, tak <čo sa stane>, inak <čo sa stane>",
     example: "Ak zákazník schváli ponuku, tak pripravím zmluvu, inak koniec",
     template: "Ak <podmienka> tak <krok>, inak <inak>",
+    buildTemplate: (values = {}) => {
+      const condition = String(values.podmienka || "").trim() || "<podmienka>";
+      const yesBranch = String(values.krok || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(", ") || "<krok>";
+      const noBranch = String(values.inak || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(", ") || "<inak>";
+      return `Ak ${condition} tak ${yesBranch}, inak ${noBranch}`;
+    },
     fields: [
       { key: "podmienka", label: "Otázka (rozhodnutie)", token: "podmienka", placeholder: "napr. Je doklad správny?" },
-      { key: "krok", label: "Ak ÁNO, čo sa stane?", token: "krok", placeholder: "napr. pokračujem v spracovaní" },
-      { key: "inak", label: "Ak NIE, čo sa stane?", token: "inak", placeholder: "napr. vyžiadam doplnenie alebo ukončím" },
+      {
+        key: "krok",
+        label: "Ak ÁNO, čo sa stane?",
+        token: "krok",
+        placeholder: "napr. pripravím zmluvu\npošlem ju na podpis",
+        multiline: true,
+        rows: 3,
+      },
+      {
+        key: "inak",
+        label: "Ak NIE, čo sa stane?",
+        token: "inak",
+        placeholder: "napr. vrátim žiadosť na doplnenie\nukončím spracovanie",
+        multiline: true,
+        rows: 3,
+      },
     ],
   },
   {
     id: "and_strict",
     title: "Paralelné kroky",
-    description: "Viac krokov prebieha naraz (paralelne).",
+    description: "Keď sa po tomto bode dejú viaceré činnosti naraz, vypíš ich pod seba. Pomocník ich vloží do jedného paralelného riadku.",
     iconClass: "bpmn-icon-gateway-parallel",
     syntax: "Paralelne: <krok>; <krok>; <krok>",
     example: "Paralelne: pripravím zmluvu; overím identitu; nastavím splátky",
     template: "Paralelne: <krok1>; <krok2>; <krok3>",
+    buildTemplate: (values = {}) => {
+      const steps = String(values.kroky || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const rendered = steps.length ? steps.join("; ") : "<krok1>; <krok2>; <krok3>";
+      return `Paralelne: ${rendered}`;
+    },
     fields: [
-      { key: "krok1", label: "Krok 1", token: "krok1", placeholder: "napr. pripravím zmluvu" },
-      { key: "krok2", label: "Krok 2", token: "krok2", placeholder: "napr. overím identitu" },
-      { key: "krok3", label: "Krok 3", token: "krok3", placeholder: "napr. nastavím splátky" },
+      {
+        key: "kroky",
+        label: "Kroky, ktoré sa dejú naraz",
+        token: "kroky",
+        placeholder: "napr. pripravím zmluvu\noverím identitu\nnastavím splátky",
+        multiline: true,
+        rows: 4,
+      },
     ],
   },
 ];
@@ -643,8 +684,8 @@ const pickGuideCard = ({
       laneId: laneIdForHard || null,
       title: "Poďme opraviť tento bod",
       message: isGatewaySingleOutgoing
-        ? "Toto rozhodnutie ešte nie je dokončené. Zatiaľ z neho vedie len jedna možnosť. Otvor toto miesto a doplň druhú vetvu, aby bolo jasné, čo sa stane pri inom výsledku."
-        : `Tu je malá nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Poďme to upraviť skôr, než pôjdeme ďalej.`,
+        ? "Máme tu rozhodnutie, ktoré ešte nie je dokončené. Zatiaľ z neho vedie len jedna možnosť. Poďme doplniť druhú vetvu, aby bolo jasné, čo sa stane pri inom výsledku."
+        : `Na tomto mieste máme malú nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Poďme ju upraviť skôr, než pôjdeme ďalej.`,
       primary: laneIdForHard
         ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
         : null,
@@ -660,7 +701,7 @@ const pickGuideCard = ({
       scope: "global",
       title: "Kostra je hotová",
       message:
-        `Super, kostra procesu je pripravená. Začni rolou „${firstEmptyLane.name || firstEmptyLane.id}“ a doplň do nej aspoň 2 až 3 konkrétne kroky. Rolu si otvoríš kliknutím na ňu v mape alebo tlačidlom vpravo. Píš krátko a slovesom, napríklad Overím..., Skontrolujem..., Odošlem....`,
+        `Máme pripravenú kostru procesu. Poďme začať rolou „${firstEmptyLane.name || firstEmptyLane.id}“ a doplniť do nej aspoň 2 až 3 konkrétne kroky. Rolu si otvoríme kliknutím na ňu v mape alebo tlačidlom vpravo. Píšme krátko a slovesom, napríklad Overím..., Skontrolujem..., Odošlem....`,
       primary: firstEmptyLane
         ? { label: "Otvoriť prvú rolu", action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
         : null,
@@ -683,7 +724,7 @@ const pickGuideCard = ({
         scope: "lane",
         laneId: ctxLaneId,
         title: "Ešte chvíľu zostaň v tejto role",
-        message: `Rola „${ctxLane.name || ctxLane.id}“ už má základ. Doplň do nej ešte aspoň jeden krok, aby bolo jasné, čo sa tu deje od začiatku po odovzdanie ďalej.`,
+        message: `Máme základ role „${ctxLane.name || ctxLane.id}“. Poďme do nej doplniť ešte aspoň jeden krok, aby bolo jasné, čo sa tu deje od začiatku po odovzdanie ďalej.`,
         primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLaneId } },
       };
     }
@@ -694,7 +735,7 @@ const pickGuideCard = ({
         scope: "lane",
         laneId: ctxLaneId,
         title: "Poďme na ďalšiu rolu",
-        message: `Rola „${ctxLane.name || ctxLane.id}“ už vyzerá dobre. Teraz bude najlepšie otvoriť rolu „${nextLane.name || nextLane.id}“ a doplniť jej hlavné kroky, aby bol proces kompletný naprieč všetkými účastníkmi.`,
+        message: `Rola „${ctxLane.name || ctxLane.id}“ už vyzerá dobre. Teraz poďme otvoriť rolu „${nextLane.name || nextLane.id}“ a doplniť jej hlavné kroky, aby bol proces kompletný naprieč všetkými účastníkmi.`,
         primary: { label: "Otvoriť ďalšiu rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
       };
     }
@@ -714,7 +755,7 @@ const pickGuideCard = ({
           scope: "lane",
           laneId: lane.id,
           title: "Táto rola ešte čaká na kroky",
-          message: `V role „${lane.name || lane.id}“ ešte nemáš žiadne kroky. Otvor ju a doplň aspoň prvý konkrétny krok, aby bolo jasné, čo sa tu deje a čo má táto rola odovzdať ďalej.`,
+          message: `V role „${lane.name || lane.id}“ ešte nemáme žiadne kroky. Poďme ju otvoriť a doplniť aspoň prvý konkrétny krok, aby bolo jasné, čo sa tu deje a čo má táto rola odovzdať ďalej.`,
           primary: { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: lane.id } },
         };
       }
@@ -745,7 +786,7 @@ const pickGuideCard = ({
           scope: laneId ? "lane" : "global",
           laneId,
           title: "Poďme uzavrieť proces",
-          message: `Kostra už sa pekne črtá. Ak je aktivita „${label || "tento krok"}“ posledný bod procesu, klikni na ňu na mape a potom použi tlačidlo „Koniec sem“. Tým jasne určíš, kde sa tok procesu uzatvára.`,
+          message: `Kostra už sa pekne črtá. Ak je aktivita „${label || "tento krok"}“ posledný bod procesu, poďme kliknúť na ňu na mape a potom použiť tlačidlo „Koniec sem“. Tým jasne určíme, kde sa tok procesu uzatvára.`,
           primary: {
             label: "Ukáž miesto",
             action: "FOCUS_NODE",
@@ -768,7 +809,7 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Tu chýba ďalší krok",
-        message: `Aktivita „${label || "tento krok"}“ zatiaľ nemá pokračovanie. Klikni na tento krok na mape a rozhodni: buď z neho potiahneš pokračovanie na ďalší krok, alebo použiješ „Koniec sem“, ak sa proces uzatvára práve tu.`,
+        message: `Aktivita „${label || "tento krok"}“ zatiaľ nemá pokračovanie. Poďme kliknúť na tento krok na mape a rozhodnúť: buď z neho potiahneme pokračovanie na ďalší krok, alebo použijeme „Koniec sem“, ak sa proces uzatvára práve tu.`,
         primary: {
           label: "Ukáž miesto",
           action: "FOCUS_NODE",
@@ -790,7 +831,7 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Tomuto kroku ešte niečo predchádza",
-        message: `Aktivita „${label || "tento krok"}“ ešte nemá predchodcu. Poďme na mapu a pozrime sa, z ktorého kroku sem má prísť tok procesu, aby bola väzba medzi rolami alebo krokmi jasná.`,
+        message: `Aktivita „${label || "tento krok"}“ ešte nemá predchodcu. Poďme sa na mape pozrieť, z ktorého kroku sem má prísť tok procesu, aby bola väzba medzi rolami alebo krokmi jasná.`,
         primary: {
           label: "Ukáž miesto",
           action: "FOCUS_NODE",
@@ -810,8 +851,8 @@ const pickGuideCard = ({
         laneId: nextLane?.id || null,
         title: "Poďme spojiť role do jedného toku",
         message: nextLane
-          ? `Kroky už máš doplnené. Teraz z nich sprav plynulý proces od začiatku po koniec. Začni v role „${nextLane.name || nextLane.id}“, kde ešte chýba väzba na ďalšiu časť procesu.`
-          : "Kroky už máš doplnené. Teraz z nich sprav plynulý proces od začiatku po koniec a doplň väzby medzi rolami tam, kde ešte chýbajú.",
+          ? `Máme doplnené kroky. Teraz z nich poďme spraviť plynulý proces od začiatku po koniec. Začneme v role „${nextLane.name || nextLane.id}“, kde ešte chýba väzba na ďalšiu časť procesu.`
+          : "Máme doplnené kroky. Teraz z nich poďme spraviť plynulý proces od začiatku po koniec a doplniť väzby medzi rolami tam, kde ešte chýbajú.",
         primary: nextLane
           ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } }
           : null,
@@ -842,8 +883,8 @@ const pickGuideCard = ({
         title: "Poďme doladiť názvy",
         message:
           count > 1
-            ? `Našiel som ${count} placeholder názvy, napríklad ${exampleToken}. Teraz už nejde o kostru, ale o spresnenie detailov. Premenuj ich na reálne pomenovania, aby bol proces zrozumiteľný aj pre ďalších ľudí.`
-            : `Našiel som placeholder názov, napríklad ${exampleToken}. Teraz už stačí doladiť detail a premenovať ho na reálny názov.`,
+            ? `Máme ešte ${count} placeholder názvy, napríklad ${exampleToken}. Teraz už nejde o kostru, ale o spresnenie detailov. Poďme ich premenovať na reálne pomenovania, aby bol proces zrozumiteľný aj pre ďalších ľudí.`
+            : `Máme tu ešte placeholder názov, napríklad ${exampleToken}. Poďme doladiť detail a premenovať ho na reálny názov.`,
         primary: pickNode?.id
           ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
@@ -860,7 +901,7 @@ const pickGuideCard = ({
         scope: laneId ? "lane" : "global",
         laneId,
         title: "Ešte spresnime pomenovania",
-        message: "Proces už vyzerá dobre. Teraz dolaď posledné všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“, aby bolo hneď jasné, čo sa v procese deje.",
+        message: "Proces už vyzerá dobre. Teraz poďme doladiť posledné všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“, aby bolo hneď jasné, čo sa v procese deje.",
         primary: pickNode?.id
           ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
@@ -875,7 +916,7 @@ const pickGuideCard = ({
       scope: "lane",
       laneId: ctxLane.id,
       title: "Ešte jeden alebo dva kroky",
-      message: `V role „${ctxLane.name || ctxLane.id}“ už niečo máš. Zostaň v nej ešte chvíľu a pridaj jeden alebo dva kroky, aby bol jej priebeh jasnejší, a potom sa posunieme ďalej.`,
+      message: `V role „${ctxLane.name || ctxLane.id}“ už niečo máme. Poďme v nej ešte chvíľu zostať a pridať jeden alebo dva kroky, aby bol jej priebeh jasnejší, a potom sa posunieme ďalej.`,
       primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLane.id } },
     };
   }
@@ -888,7 +929,7 @@ const pickGuideCard = ({
       phase,
       scope: "global",
       title: "Proces je pripravený",
-      message: "Mapa je konzistentná a pôsobí ucelene. Teraz je správny moment uložiť proces. Potom sa môžeš rozhodnúť, či s ním budeš ďalej pracovať v pieskovisku alebo ho presunieš do organizácie.",
+      message: "Máme konzistentnú mapu, ktorá pôsobí ucelene. Teraz je správny moment uložiť proces. Potom sa spolu rozhodneme, či s ním budeme ďalej pracovať v pieskovisku alebo ho presunieme do organizácie.",
       primary: { label: "Uložiť proces", action: "SAVE_PROCESS" },
     };
   }
@@ -899,7 +940,7 @@ const pickGuideCard = ({
       phase,
       scope: "global",
       title: "Proces pôsobí hotovo",
-      message: "Vyzerá to dobre. Proces je ucelený, pomenovaný a pripravený na ďalší krok. Teraz sa už len rozhodni, či ho necháš v pieskovisku alebo ho presunieš do organizácie.",
+      message: "Vyzerá to dobre. Máme ucelený a pomenovaný proces pripravený na ďalší krok. Teraz sa už len rozhodneme, či ho necháme v pieskovisku alebo ho presunieme do organizácie.",
       primary: { label: "Presunúť do organizácie", action: "MOVE_TO_ORG" },
       secondary: { label: "Zostať v pieskovisku", action: "STAY_IN_SANDBOX" },
     };
@@ -996,19 +1037,34 @@ const determineInlineHint = (lines) => {
     const conditionLen = beforeTak.replace(/[,\s]+/g, "").length;
     const isTooShort = conditionLen < 2;
     if (isTooShort) {
-      return { kind: "decision", state: "D0", complete: false, message: "Rozhodnutie: dopíš podmienku a vetvy „tak“ + „inak“." };
+      return {
+        kind: "decision",
+        state: "D0",
+        complete: false,
+        message: "Vyzerá to na rozhodnutie. Dopíš podmienku a potom obe vetvy: „tak“ aj „inak“.",
+      };
     }
     if (!hasTak) {
-      return { kind: "decision", state: "D1", complete: false, message: "Doplň vetvu „tak“." };
+      return {
+        kind: "decision",
+        state: "D1",
+        complete: false,
+        message: "Máme podmienku. Teraz doplň vetvu „tak“, aby bolo jasné, čo sa stane v prvom prípade.",
+      };
     }
     if (!hasInak) {
-      return { kind: "decision", state: "D2", complete: false, message: "Doplň vetvu „inak“." };
+      return {
+        kind: "decision",
+        state: "D2",
+        complete: false,
+        message: "Ešte doplň vetvu „inak“, aby bolo jasné, čo sa stane v opačnom prípade.",
+      };
     }
     return {
       kind: "decision",
       state: "D3",
       complete: true,
-      message: "Rozhodnutie je OK ✅ (môžeš upraviť podmienku alebo vetvy)",
+      message: "Rozhodnutie je OK ✅ Môžeš ešte upraviť podmienku alebo spresniť obe vetvy.",
     };
   })();
 
@@ -1020,7 +1076,7 @@ const determineInlineHint = (lines) => {
         kind: "parallel",
         state: "P0",
         complete: false,
-        message: "Paralela: uveď aspoň 2 kroky (oddeľ čiarkou alebo „a“).",
+        message: "Vyzerá to na súbežné kroky. Doplň aspoň 2 činnosti a oddeľ ich čiarkou alebo slovom „a“.",
       };
     }
     if (itemCount === 1) {
@@ -1028,14 +1084,14 @@ const determineInlineHint = (lines) => {
         kind: "parallel",
         state: "P1",
         complete: false,
-        message: "Pridaj ešte jeden krok (oddeľ ho čiarkou).",
+        message: "Máme prvú súbežnú činnosť. Pridaj ešte jednu, aby bolo jasné, čo sa deje naraz.",
       };
     }
     return {
       kind: "parallel",
       state: "P2",
       complete: true,
-      message: "Paralela je OK ✅ (ďalší krok pridáš po čiarke)",
+      message: "Súbežné kroky sú OK ✅ Ak chceš, ďalšiu činnosť pridáš po čiarke.",
     };
   })();
 
@@ -1959,14 +2015,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           scope: "global",
           title: partialCardStarted ? "Poďme krok po kroku" : "Začíname spolu",
           message: !processNameFilled
-            ? "Začni názvom procesu. Jednou vetou pomenuj, čo ideme modelovať."
+            ? "Poďme začať názvom procesu. Jednou vetou pomenujeme, čo ideme modelovať."
             : !rolesFilled
-              ? "Názov už máš. Teraz doplň roly, každú na nový riadok, aby bolo jasné, kto v procese vystupuje."
+              ? "Máme názov procesu. Teraz poďme doplniť roly, každú na nový riadok, aby bolo jasné, kto v procese vystupuje."
               : !triggerFilled
-                ? `Dobre, názov aj roly sú pripravené. Teraz doplň, čo proces „${generator.processName}“ spúšťa.`
+                ? `Máme názov aj roly. Teraz poďme doplniť, čo proces „${generator.processName}“ spúšťa.`
                 : !outputFilled
-                  ? "Začiatok už máme. Ešte doplň, čo má byť na konci procesu alebo aký má byť jeho výsledok."
-                  : "Základ kostry je pripravený. Skontroluj názov procesu, roly, začiatok a koniec a potom klikni na „Vytvoriť model“.",
+                  ? "Máme začiatok procesu. Ešte poďme doplniť, čo má byť na konci procesu alebo aký má byť jeho výsledok."
+                  : "Máme pripravený základ kostry. Poďme skontrolovať názov procesu, roly, začiatok a koniec a potom klikneme na „Vytvoriť model“.",
           primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
         });
         return;
@@ -1986,16 +2042,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 : "process_card";
         const message =
           processNameFilled && rolesFilled && triggerFilled && outputFilled
-            ? "Základ kostry je pripravený. Skontroluj názov procesu, roly, začiatok a koniec a potom klikni na „Vytvoriť model“, aby sme z toho spravili prvú mapu."
+            ? "Máme pripravený základ kostry. Poďme skontrolovať názov procesu, roly, začiatok a koniec a potom kliknúť na „Vytvoriť model“, aby sme z toho spravili prvú mapu."
             : !processNameFilled
-              ? "Začni názvom procesu. Jednou vetou pomenuj, čo ideme modelovať."
+              ? "Poďme začať názvom procesu. Jednou vetou pomenujeme, čo ideme modelovať."
               : !rolesFilled
-                ? "Názov procesu už máš. Teraz doplň roly, každú na nový riadok, aby sme vedeli vytvoriť kostru procesu."
+                ? "Máme názov procesu. Teraz poďme doplniť roly, každú na nový riadok, aby sme vedeli vytvoriť kostru procesu."
                 : !triggerFilled
-                  ? `Dobre, názov aj roly sú pripravené. Teraz doplň, čo proces „${generator.processName}“ spúšťa.`
+                  ? `Máme názov aj roly. Teraz poďme doplniť, čo proces „${generator.processName}“ spúšťa.`
                   : !outputFilled
-                    ? "Začiatok už máme. Ešte doplň, čo má byť na konci procesu alebo aký má byť jeho výsledok."
-                    : "Najprv si nastavíme základ. Daj procesu názov a pridaj roly (každú na nový riadok). Keď budeš pripravený, vytvoríme model.";
+                    ? "Máme začiatok procesu. Ešte poďme doplniť, čo má byť na konci procesu alebo aký má byť jeho výsledok."
+                    : "Najprv si spolu nastavíme základ. Dáme procesu názov a pridáme roly, každú na nový riadok. Keď budeme pripravení, vytvoríme model.";
         setGuideState({
           key,
           scope: "global",
@@ -2188,7 +2244,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       token: `${key}:${Date.now()}`,
       map: null,
       laneInputLaneId: null,
+      processCardField: null,
     };
+
+    if (key.startsWith("process_card")) {
+      if (key === "process_card" || key === "process_card_missing_name") {
+        highlight.processCardField = "processName";
+      } else if (key === "process_card_missing_roles") {
+        highlight.processCardField = "roles";
+      } else if (key === "process_card_missing_trigger") {
+        highlight.processCardField = "trigger";
+      } else if (key === "process_card_missing_output") {
+        highlight.processCardField = "output";
+      } else if (key === "process_card_progress") {
+        if (!String(processCard?.generatorInput?.processName || "").trim()) {
+          highlight.processCardField = "processName";
+        } else if (!String(processCard?.generatorInput?.roles || "").trim()) {
+          highlight.processCardField = "roles";
+        } else if (!String(processCard?.generatorInput?.trigger || "").trim()) {
+          highlight.processCardField = "trigger";
+        } else if (!String(processCard?.generatorInput?.output || "").trim()) {
+          highlight.processCardField = "output";
+        }
+      }
+    }
 
     if (isGatewayBranchHint) {
       highlight.map = {
@@ -2231,7 +2310,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
 
     applyGuideHighlight(highlight);
-  }, [guideEnabled, guideState, guideFindings, engineJson, activeLaneId, selectedLane, applyGuideHighlight]);
+  }, [guideEnabled, guideState, guideFindings, engineJson, activeLaneId, selectedLane, processCard, applyGuideHighlight]);
 
   const runConnectHeuristic = useCallback(() => {
     const modeler = modelerRef.current;
@@ -3234,6 +3313,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const buildHelpTemplate = (rule) => {
     if (!rule?.template) return "";
+    if (typeof rule.buildTemplate === "function") {
+      return String(rule.buildTemplate(helpInputs[rule.id] || {}));
+    }
     let output = rule.template;
     const values = helpInputs[rule.id] || {};
     (rule.fields || []).forEach((field) => {
@@ -3304,17 +3386,31 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     {(rule.fields || []).map((field, index) => (
                       <label key={`${rule.id}-${field.key}`} className="wizard-help-skeleton-input">
                         <span>{field.label}</span>
-                        <input
-                          ref={(el) => {
-                            if (el && index === 0) {
-                              helpFirstInputRefs.current[rule.id] = el;
-                            }
-                          }}
-                          type="text"
-                          value={helpInputs[rule.id]?.[field.key] || ""}
-                          placeholder={field.placeholder}
-                          onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
-                        />
+                        {field.multiline ? (
+                          <textarea
+                            ref={(el) => {
+                              if (el && index === 0) {
+                                helpFirstInputRefs.current[rule.id] = el;
+                              }
+                            }}
+                            rows={field.rows || 3}
+                            value={helpInputs[rule.id]?.[field.key] || ""}
+                            placeholder={field.placeholder}
+                            onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
+                          />
+                        ) : (
+                          <input
+                            ref={(el) => {
+                              if (el && index === 0) {
+                                helpFirstInputRefs.current[rule.id] = el;
+                              }
+                            }}
+                            type="text"
+                            value={helpInputs[rule.id]?.[field.key] || ""}
+                            placeholder={field.placeholder}
+                            onChange={(e) => updateHelpInput(rule.id, field.key, e.target.value)}
+                          />
+                        )}
                       </label>
                     ))}
                   </div>
@@ -8098,7 +8194,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       ))}
                     </div>
                   ) : null}
-                  <label className="wizard-field">
+                  <label
+                    className={`wizard-field ${
+                      guideHighlight?.processCardField === "processName" ? "guide-highlight-input" : ""
+                    }`}
+                  >
                     <span>{hasGeneratedModel ? "Názov procesu v modeli" : "Ako sa proces volá?"}</span>
                     <input
                       value={generatorInput.processName}
@@ -8112,7 +8212,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     />
                   </label>
                   {!hasGeneratedModel ? (
-                    <label className="wizard-field">
+                    <label
+                      className={`wizard-field ${
+                        guideHighlight?.processCardField === "roles" ? "guide-highlight-input" : ""
+                      }`}
+                    >
                       <span>Kto v ňom vystupuje? (každú rolu na nový riadok)</span>
                       <textarea
                         value={generatorInput.roles}
@@ -8143,7 +8247,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       </div>
                     </div>
                   )}
-                  <label className="wizard-field">
+                  <label
+                    className={`wizard-field ${
+                      guideHighlight?.processCardField === "trigger" ? "guide-highlight-input" : ""
+                    }`}
+                  >
                     <span>{hasGeneratedModel ? "Začiatok procesu v modeli" : "Čo proces spúšťa?"}</span>
                     <input
                       value={generatorInput.trigger}
@@ -8161,7 +8269,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       </div>
                     ) : null}
                   </label>
-                  <label className="wizard-field">
+                  <label
+                    className={`wizard-field ${
+                      guideHighlight?.processCardField === "output" ? "guide-highlight-input" : ""
+                    }`}
+                  >
                     <span>{hasGeneratedModel ? "Koniec procesu v modeli" : "Čo má byť na konci?"}</span>
                     <textarea
                       value={generatorInput.output}
@@ -8597,10 +8709,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         </button>
                         {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">1 tip</span> : null}
                       </div>
-                      {lanePlaceholderWarning ? (
+                      {lanePlaceholderWarning && !inlineLaneHint ? (
                         <div className="wizard-lane-v2__control-warning">{lanePlaceholderWarning}</div>
                       ) : null}
-                      {laneSubmitGuardMessage ? (
+                      {laneSubmitGuardMessage && !inlineLaneHint ? (
                         <div className="wizard-lane-v2__control-warning">{laneSubmitGuardMessage}</div>
                       ) : null}
                       <div className="wizard-lane-v2__row-actions">
@@ -8686,7 +8798,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   <div className="wizard-lane-v2__control-line">
                                     <strong>{item.badge}</strong> - {item.text}
                                   </div>
-                                  {item.warning ? (
+                                  {item.warning && !inlineLaneHint ? (
                                     <div className="wizard-lane-v2__control-warning">{item.warning}</div>
                                   ) : null}
                                 </div>

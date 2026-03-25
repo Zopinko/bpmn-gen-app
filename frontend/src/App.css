@@ -1640,6 +1640,22 @@ body {
     0 10px 22px rgba(15, 118, 110, 0.12);
 }
 
+.wizard-field.guide-highlight-input {
+  border-radius: 18px;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.wizard-field.guide-highlight-input input,
+.wizard-field.guide-highlight-input textarea,
+.wizard-field.guide-highlight-input select {
+  border-color: rgba(13, 148, 136, 0.64) !important;
+  box-shadow:
+    0 0 0 2px rgba(20, 184, 166, 0.18),
+    0 10px 22px rgba(15, 118, 110, 0.1);
+}
+
 /* Hide bpmn-js palette + context pad (custom toolbar will replace). */
 .map-viewer__body .djs-palette,
 .map-viewer__body .djs-context-pad {
@@ -4465,17 +4481,19 @@ body {
 
 .wizard-lane-inline-hint {
   margin-top: 6px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(96, 165, 250, 0.22);
-  background: rgba(15, 23, 42, 0.36);
-  color: rgba(191, 219, 254, 0.92);
+  padding: 11px 13px;
+  border-radius: 15px;
+  border: 1px solid rgba(96, 165, 250, 0.26);
+  background:
+    linear-gradient(180deg, rgba(13, 24, 42, 0.62), rgba(10, 18, 34, 0.72));
+  color: rgba(219, 234, 254, 0.96);
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.48;
   box-shadow:
-    0 0 0 1px rgba(59, 130, 246, 0.16),
-    inset 0 0 0 1px rgba(191, 219, 254, 0.03);
+    0 0 0 1px rgba(59, 130, 246, 0.12),
+    0 12px 24px rgba(15, 23, 42, 0.14),
+    inset 0 0 0 1px rgba(191, 219, 254, 0.04);
 }
 
 .wizard-lane-inline-hint code {
@@ -5124,7 +5142,8 @@ body {
   color: rgba(148, 163, 184, 0.88);
 }
 
-.wizard-help-skeleton-input input {
+.wizard-help-skeleton-input input,
+.wizard-help-skeleton-input textarea {
   width: 100%;
   border-radius: 11px;
   border: 1px solid rgba(148, 163, 184, 0.28);
@@ -5134,7 +5153,14 @@ body {
   font-size: 13px;
 }
 
-.wizard-help-skeleton-input input:focus {
+.wizard-help-skeleton-input textarea {
+  min-height: 78px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wizard-help-skeleton-input input:focus,
+.wizard-help-skeleton-input textarea:focus {
   outline: none;
   border-color: rgba(96, 165, 250, 0.75);
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
