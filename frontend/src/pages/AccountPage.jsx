@@ -57,19 +57,22 @@ function AccountPage({ currentUser, onLogout }) {
     <section className="account-page">
       <div className="auth-card account-card">
         <div className="account-card-head">
-          <h1>Profil</h1>
+          <div>
+            <p className="auth-eyebrow">Účet</p>
+            <h1>Profil</h1>
+          </div>
           <div className="account-card-head__actions">
             <Link to="/" className="btn app-nav__link-btn">
               Späť
             </Link>
             <button type="button" className="btn app-nav__logout" onClick={onLogout}>
-              Odhlásiť
+              Odhlásiť sa
             </button>
           </div>
         </div>
         <div className="account-info-grid">
           <div className="account-info-row">
-            <span>Email</span>
+            <span>E-mail</span>
             <strong>{currentUser?.email || "Neznáme"}</strong>
           </div>
           <div className="account-info-row">

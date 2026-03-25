@@ -5644,7 +5644,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgDeleteError(
       activeOrgCapabilities.canDirectDeleteOrgProcess
         ? null
-        : "Ako člen organizácie nemôžeš proces odstrániť priamo. Pošli túto požiadavku ownerovi.",
+        : "Ako člen organizácie nemôžeš proces odstrániť priamo. Pošli túto požiadavku vlastníkovi.",
     );
     setOrgDeleteConfirmOpen(true);
     setOrgDeleteFinalConfirmOpen(false);
@@ -6095,7 +6095,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setInfo("Proces bol odstránený.");
       } else {
         await requestOrgProcessDelete(orgDeleteNode.id, activeOrgId, orgDeleteRequestReason);
-        setInfo("Žiadosť o odstránenie procesu bola odoslaná ownerovi.");
+        setInfo("Žiadosť o odstránenie procesu bola odoslaná vlastníkovi.");
       }
       setOrgDeleteConfirmOpen(false);
       setOrgDeleteFinalConfirmOpen(false);
@@ -9174,7 +9174,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <p className="wizard-dialog-subtitle">
                     {activeOrgCapabilities.canDirectDeleteOrgProcess
                       ? "Priame odstránenie je dostupné len pre roly s oprávnením mazať organizačné procesy."
-                      : "Táto požiadavka sa odošle ownerovi organizácie na schválenie."}
+                      : "Táto požiadavka sa odošle vlastníkovi organizácie na schválenie."}
                   </p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
@@ -9189,7 +9189,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div className="wizard-dialog-subtitle">
                 {activeOrgCapabilities.canDirectDeleteOrgProcess
                   ? "Táto akcia sa nedá vrátiť späť."
-                  : "Pošli ownerovi krátky dôvod, prečo má byť proces odstránený."}
+                  : "Pošli vlastníkovi krátky dôvod, prečo má byť proces odstránený."}
               </div>
               {!activeOrgCapabilities.canDirectDeleteOrgProcess ? (
                 <div className="wizard-dialog-section" style={{ display: "grid", gap: 6 }}>

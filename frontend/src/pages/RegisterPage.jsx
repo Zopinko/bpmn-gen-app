@@ -15,7 +15,7 @@ function RegisterPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (password !== confirmPassword) {
-      setStatus({ loading: false, error: "Hesla sa nezhoduju.", success: "" });
+      setStatus({ loading: false, error: "Heslá sa nezhodujú.", success: "" });
       return;
     }
     setStatus({ loading: true, error: "", success: "" });
@@ -23,7 +23,7 @@ function RegisterPage() {
       const result = await registerAuth({ email, password });
       const sid = new URLSearchParams(location.search).get("sid");
       void trackSignupCompleted(sid || undefined);
-      setStatus({ loading: false, error: "", success: result?.message || "Registracia bola uspesna." });
+      setStatus({ loading: false, error: "", success: result?.message || "Registrácia bola úspešná." });
       setTimeout(() => navigate("/login"), 800);
     } catch (error) {
       setStatus({ loading: false, error: error.message, success: "" });
@@ -33,8 +33,13 @@ function RegisterPage() {
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1>Registracia</h1>
-        <label htmlFor="register-email">Email</label>
+        <p className="auth-eyebrow">BPMN.GEN</p>
+        <h1>Registrácia</h1>
+        <p className="auth-intro">
+          Vytvor si účet a priprav si priestor pre vlastné procesy, tím a organizáciu.
+        </p>
+
+        <label htmlFor="register-email">E-mail</label>
         <input
           id="register-email"
           type="email"
@@ -55,7 +60,7 @@ function RegisterPage() {
           required
         />
 
-        <label htmlFor="register-confirm-password">Potvrd heslo</label>
+        <label htmlFor="register-confirm-password">Potvrď heslo</label>
         <input
           id="register-confirm-password"
           type="password"
@@ -67,14 +72,14 @@ function RegisterPage() {
         />
 
         <button type="submit" disabled={status.loading}>
-          {status.loading ? "Registrujem..." : "Vytvorit ucet"}
+          {status.loading ? "Registrujem..." : "Vytvoriť účet"}
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
         {status.success ? <p className="auth-message auth-message--success">{status.success}</p> : null}
 
         <p className="auth-footer">
-          Uz mas ucet? <Link to="/login">Prihlas sa</Link>
+          Už máš účet? <Link to="/login">Prihlás sa</Link>
         </p>
       </form>
     </section>

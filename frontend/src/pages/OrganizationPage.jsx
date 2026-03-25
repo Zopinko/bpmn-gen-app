@@ -33,6 +33,7 @@ function OrganizationPage() {
   const [inviteError, setInviteError] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteMeta, setInviteMeta] = useState(null);
+
   const [activityItems, setActivityItems] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState("");
@@ -41,6 +42,7 @@ function OrganizationPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createInfo, setCreateInfo] = useState("");
+
   const [memberActionModal, setMemberActionModal] = useState({
     open: false,
     action: "",
@@ -71,7 +73,9 @@ function OrganizationPage() {
     const active = preferred || fromStorage || safeOrgs[0];
     const nextId = String(active?.id || "");
     const nextName = String(active?.name || "");
+
     setActiveOrgId(nextId);
+
     if (typeof window !== "undefined" && nextId) {
       window.localStorage.setItem("ACTIVE_ORG_ID", nextId);
       window.localStorage.setItem("ACTIVE_ORG_NAME", nextName);
@@ -101,10 +105,7 @@ function OrganizationPage() {
     () => orgs.find((org) => String(org.id) === String(activeOrgId)) || null,
     [orgs, activeOrgId],
   );
-  const ownsAnyOrg = useMemo(
-    () => orgs.some((org) => normalizeOrgRole(org?.role) === "owner"),
-    [orgs],
-  );
+  const ownsAnyOrg = useMemo(() => orgs.some((org) => normalizeOrgRole(org?.role) === "owner"), [orgs]);
   const ownedOrganizations = useMemo(
     () => orgs.filter((org) => normalizeOrgRole(org?.role) === "owner"),
     [orgs],
@@ -139,7 +140,7 @@ function OrganizationPage() {
     }
     if (status === "expired") return "Táto pozvánka už vypršala. Vygeneruj novú.";
     if (status === "revoked") return "Táto pozvánka bola zrušená po vygenerovaní novšej pozvánky.";
-    if (status === "used") return "Táto pozvánka už bola použitá a nie je možné ju použiť znovu.";
+    if (status === "used") return "Táto pozvánka už bola použitá a nedá sa použiť znovu.";
     return "Zatiaľ nemáš vytvorenú žiadnu pozvánku.";
   };
 
@@ -201,7 +202,7 @@ function OrganizationPage() {
       setActivityItems(Array.isArray(response?.items) ? response.items : []);
     } catch (e) {
       setActivityItems([]);
-      setActivityError(e?.message || "Nepodarilo sa nacitat aktivitu.");
+      setActivityError(e?.message || "Nepodarilo sa načítať aktivitu.");
     } finally {
       setActivityLoading(false);
     }
@@ -244,7 +245,7 @@ function OrganizationPage() {
     setCreateInfo("");
     try {
       const created = await createOrg(trimmed);
-      setCreateInfo("Organizacia bola vytvorena.");
+      setCreateInfo("Organizácia bola vytvorená.");
       setNewOrgName("");
       await refreshOrgs(created?.id || "");
     } catch (e) {
@@ -296,7 +297,7 @@ function OrganizationPage() {
       setInviteLink(`${origin}/join-org/${token}`);
     } catch (e) {
       setInviteMeta(null);
-      setInviteError(e?.message || "Nepodarilo sa získať invite link.");
+      setInviteError(e?.message || "Nepodarilo sa získať pozývací link.");
       setInviteLink("");
     } finally {
       setInviteLoading(false);
@@ -351,19 +352,22 @@ function OrganizationPage() {
     const targetEmail = String(memberActionModal.targetEmail || "").trim().toLowerCase();
     const typedEmail = String(memberActionModal.typedEmail || "").trim().toLowerCase();
     const action = String(memberActionModal.action || "");
+
     if (!targetEmail || !typedEmail || typedEmail !== targetEmail) {
-      setMemberActionModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš presnú emailovú adresu." }));
+      setMemberActionModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš presnú e-mailovú adresu." }));
       return;
     }
     if (!activeOrgId) {
       setMemberActionModal((prev) => ({ ...prev, error: "Najprv vyber aktívnu organizáciu." }));
       return;
     }
+
     setMemberActionModal((prev) => ({ ...prev, loading: true, error: "" }));
+
     try {
       if (action === "promote") {
         await updateOrgMemberRole(targetEmail, activeOrgId, "owner");
-        setAddMemberInfo(`Používateľ ${targetEmail} bol povýšený na ownera.`);
+        setAddMemberInfo(`Používateľ ${targetEmail} bol zmenený na vlastníka.`);
       } else if (action === "demote") {
         await updateOrgMemberRole(targetEmail, activeOrgId, "member");
         setAddMemberInfo(`Používateľ ${targetEmail} bol zmenený na člena.`);
@@ -371,6 +375,7 @@ function OrganizationPage() {
         await removeOrgMember(targetEmail, activeOrgId);
         setAddMemberInfo(`Používateľ ${targetEmail} bol odstránený z organizácie.`);
       }
+
       await refreshOrgs(activeOrgId);
       await refreshMembers();
       closeMemberActionModal();
@@ -380,22 +385,23 @@ function OrganizationPage() {
   };
 
   const describeActivity = (item) => {
-    const actor = item?.actor_email || "Neznamy pouzivatel";
-    const name = item?.entity_name || item?.entity_id || "polozka";
+    const actor = item?.actor_email || "Neznámy používateľ";
+    const name = item?.entity_name || item?.entity_id || "položka";
     const type = String(item?.event_type || "").toLowerCase();
+
     if (type === "process_created") return `${actor} vytvoril proces "${name}".`;
     if (type === "process_renamed") return `${actor} premenoval proces na "${name}".`;
     if (type === "process_moved") return `${actor} presunul proces "${name}".`;
-    if (type === "process_deleted") return `${actor} odstranil proces "${name}".`;
-    if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizacie.`;
-    if (type === "member_added") return `${actor} pridal clena "${name}".`;
-    if (type === "member_removed") return `${actor} odstranil clena "${name}".`;
-    if (type === "member_role_updated") return `${actor} zmenil rolu clena "${name}".`;
-    if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
-    if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
-    if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
-    if (type === "delete_request_approved") return `${actor} schvalil odstranenie procesu "${name}".`;
-    if (type === "delete_request_rejected") return `${actor} zamietol odstranenie procesu "${name}".`;
+    if (type === "process_deleted") return `${actor} odstránil proces "${name}".`;
+    if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizácie.`;
+    if (type === "member_added") return `${actor} pridal člena "${name}".`;
+    if (type === "member_removed") return `${actor} odstránil člena "${name}".`;
+    if (type === "member_role_updated") return `${actor} zmenil rolu člena "${name}".`;
+    if (type === "invite_link_created") return `${actor} vytvoril pozývací link.`;
+    if (type === "invite_link_regenerated") return `${actor} regeneroval pozývací link.`;
+    if (type === "delete_requested") return `${actor} požiadal o odstránenie procesu "${name}".`;
+    if (type === "delete_request_approved") return `${actor} schválil odstránenie procesu "${name}".`;
+    if (type === "delete_request_rejected") return `${actor} zamietol odstránenie procesu "${name}".`;
     return `${actor} vykonal akciu "${type || "unknown"}".`;
   };
 
@@ -419,31 +425,32 @@ function OrganizationPage() {
       }).length,
     [activityItems, resolvedDeleteRequestIds],
   );
+
   const memberCount = members.length;
-  const activeOrgStatusLabel = activeOrgCapabilities.canManageMembers ? "Owner workspace" : "Clensky workspace";
+  const activeOrgStatusLabel = activeOrgCapabilities.canManageMembers ? "Priestor vlastníka" : "Členský priestor";
 
   const getMemberActionMeta = () => {
     const action = String(memberActionModal.action || "");
     if (action === "promote") {
       return {
-        title: "Potvrdenie povysenia na ownera",
-        hint: "Pre potvrdenie povysenia prepíš presný email používateľa:",
-        submitLabel: memberActionModal.loading ? "Povysujem..." : "Povysit na ownera",
+        title: "Potvrdenie zmeny na vlastníka",
+        hint: "Pre potvrdenie zmeny prepíš presný e-mail používateľa:",
+        submitLabel: memberActionModal.loading ? "Mením rolu..." : "Zmeniť na vlastníka",
         submitClass: "btn btn-primary",
       };
     }
     if (action === "demote") {
       return {
-        title: "Potvrdenie zmeny na clena",
-        hint: "Pre potvrdenie zmeny roly prepíš presný email používateľa:",
-        submitLabel: memberActionModal.loading ? "Menim rolu..." : "Zmenit na clena",
+        title: "Potvrdenie zmeny na člena",
+        hint: "Pre potvrdenie zmeny prepíš presný e-mail používateľa:",
+        submitLabel: memberActionModal.loading ? "Mením rolu..." : "Zmeniť na člena",
         submitClass: "btn btn-danger",
       };
     }
     return {
-      title: "Potvrdenie vyhodenia clena",
-      hint: "Pre potvrdenie odstránenia člena prepíš presný email:",
-      submitLabel: memberActionModal.loading ? "Odstraňujem..." : "Vyhodit z organizacie",
+      title: "Potvrdenie vyhodenia člena",
+      hint: "Pre potvrdenie odstránenia prepíš presný e-mail používateľa:",
+      submitLabel: memberActionModal.loading ? "Odstraňujem..." : "Vyhodiť z organizácie",
       submitClass: "btn btn-danger",
     };
   };
@@ -453,6 +460,7 @@ function OrganizationPage() {
       <div className="auth-card organization-card organization-hero">
         <div className="account-card-head">
           <div>
+            <p className="auth-eyebrow">Tímový priestor</p>
             <h1>Organizácie</h1>
             <p className="organization-intro">Tu spravuješ aktívnu organizáciu, členov, pozvánky a tímovú aktivitu.</p>
           </div>
@@ -485,6 +493,7 @@ function OrganizationPage() {
           </div>
           <div className="organization-summary-status">{activeOrgStatusLabel}</div>
         </div>
+
         {!loading && orgs.length ? (
           <div className="organization-summary-grid">
             <div className="organization-summary-stat">
@@ -514,6 +523,7 @@ function OrganizationPage() {
             {orgs.length > 1 ? "Vyber aktívny pracovný priestor." : "Máš jednu organizáciu."}
           </span>
         </div>
+
         {orgs.length ? (
           <div className="organization-table-wrap">
             <table className="wizard-models-table">
@@ -535,7 +545,7 @@ function OrganizationPage() {
                       <td>{org.name || org.id}</td>
                       <td>
                         <span className={`organization-chip ${orgCapabilities.isOwner ? "is-owned" : "is-joined"}`}>
-                          {orgCapabilities.isOwner ? "Moja organizácia" : "Pozvaná organizácia"}
+                          {orgCapabilities.isOwner ? "Moja organizácia" : "Prizvaná organizácia"}
                         </span>
                       </td>
                       <td>{getOrgRoleLabel(org.role)}</td>
@@ -559,6 +569,7 @@ function OrganizationPage() {
         ) : (
           <p className="organization-hint">Zatiaľ nemáš žiadne organizácie.</p>
         )}
+
         {ownedOrganizations.length ? (
           <p className="organization-hint organization-inline-note">
             Vlastná organizácia: <strong>{ownedOrganizations[0]?.name || "-"}</strong>
@@ -566,7 +577,7 @@ function OrganizationPage() {
         ) : null}
         {joinedOrganizations.length ? (
           <p className="organization-hint organization-inline-note">
-            Pozvané organizácie: <strong>{joinedOrganizations.length}</strong>
+            Prizvané organizácie: <strong>{joinedOrganizations.length}</strong>
           </p>
         ) : null}
       </div>
@@ -576,19 +587,21 @@ function OrganizationPage() {
           <h2>Členovia aktívnej organizácie</h2>
           <span className="organization-section-subtle">
             {activeOrgCapabilities.canManageMembers
-              ? "Ako owner spravuješ prístupy a roly."
-              : "Zoznam členov je len na čítanie. Správu členov rieši owner."}
+              ? "Ako vlastník spravuješ prístupy a roly."
+              : "Zoznam členov je len na čítanie. Správu členov rieši vlastník."}
           </span>
         </div>
+
         {!activeOrgId ? <p className="organization-hint">Najprv si vyber aktívnu organizáciu.</p> : null}
         {membersLoading ? <p className="organization-hint">Načítavam členov...</p> : null}
         {membersError ? <p className="auth-message auth-message--error">{membersError}</p> : null}
+
         {!membersLoading && !membersError && activeOrgId ? (
           <div className="organization-table-wrap">
             <table className="wizard-models-table">
               <thead>
                 <tr>
-                  <th>Email</th>
+                  <th>E-mail</th>
                   <th>Rola</th>
                   {activeOrgCapabilities.canManageMembers ? <th>Akcia</th> : null}
                 </tr>
@@ -610,7 +623,7 @@ function OrganizationPage() {
                                   className="btn btn--small"
                                   onClick={() => openMemberActionModal("promote", member.email, member.role)}
                                 >
-                                  Povyšit na ownera
+                                  Zmeniť na vlastníka
                                 </button>
                               ) : (
                                 <button
@@ -618,7 +631,7 @@ function OrganizationPage() {
                                   className="btn btn--small"
                                   onClick={() => openMemberActionModal("demote", member.email, member.role)}
                                 >
-                                  Zmenit na clena
+                                  Zmeniť na člena
                                 </button>
                               )}
                               <button
@@ -626,7 +639,7 @@ function OrganizationPage() {
                                 className="btn btn--small btn-danger organization-remove-member-btn"
                                 onClick={() => openMemberActionModal("remove", member.email, member.role)}
                               >
-                                {memberRole === "owner" ? "Vyhodit ownera" : "Vyhodit clena"}
+                                {memberRole === "owner" ? "Vyhodiť vlastníka" : "Vyhodiť člena"}
                               </button>
                             </div>
                           </td>
@@ -636,21 +649,24 @@ function OrganizationPage() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={activeOrgCapabilities.canManageMembers ? 3 : 2}>V tejto organizácii zatiaľ nie sú žiadni členovia.</td>
+                    <td colSpan={activeOrgCapabilities.canManageMembers ? 3 : 2}>
+                      V tejto organizácii zatiaľ nie sú žiadni členovia.
+                    </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         ) : null}
+
         {activeOrgCapabilities.canManageMembers ? (
           <form className="organization-form organization-owner-tools" onSubmit={handleAddMember}>
             <h3>Pridať člena</h3>
-            <p className="organization-hint">Zadaj email existujúceho používateľa BPMN.Gen.</p>
+            <p className="organization-hint">Zadaj e-mail existujúceho používateľa BPMN.GEN.</p>
             <input
               type="email"
               className="wizard-models-search"
-              placeholder="Email používateľa"
+              placeholder="E-mail používateľa"
               value={addMemberEmail}
               onChange={(event) => setAddMemberEmail(event.target.value)}
             />
@@ -668,13 +684,16 @@ function OrganizationPage() {
           <h2>Pozvánky do organizácie</h2>
           <span className="organization-section-subtle">Vytvor link pre nového člena tímu.</span>
         </div>
+
         {activeOrgCapabilities.canManageInvites ? (
           <div className="organization-invite-panel">
             <p className="organization-hint">
               Pozvánka patrí k aktívnej organizácii. Pri regenerovaní vznikne nový link.
             </p>
             <div className="organization-invite-status">
-              <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>{inviteStatusLabel(inviteStatus)}</span>
+              <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>
+                {inviteStatusLabel(inviteStatus)}
+              </span>
               <span className="organization-hint">{inviteStatusHint(inviteStatus)}</span>
             </div>
             {inviteMeta?.expires_at ? (
@@ -718,14 +737,14 @@ function OrganizationPage() {
             {inviteError ? <p className="auth-message auth-message--error">{inviteError}</p> : null}
           </div>
         ) : (
-          <p className="organization-hint">Pozvánky môže spravovať iba owner aktívnej organizácie.</p>
+          <p className="organization-hint">Pozvánky môže spravovať iba vlastník aktívnej organizácie.</p>
         )}
       </div>
 
       <div className="auth-card organization-card organization-card--activity">
         <div className="organization-section-head">
           <h2>
-            Aktivita organizacie
+            Aktivita organizácie
             {pendingDeleteRequestCount > 0 ? (
               <span className="project-activity-badge is-pending project-activity-badge--count">
                 {pendingDeleteRequestCount}
@@ -734,11 +753,13 @@ function OrganizationPage() {
           </h2>
           <span className="organization-section-subtle">Posledné zmeny v tíme a modeloch.</span>
         </div>
+
         {!activityLoading && !activityError && pendingDeleteRequestCount === 0 ? (
-          <p className="organization-hint">Ziadne poziadavky na odstranenie.</p>
+          <p className="organization-hint">Žiadne požiadavky na odstránenie.</p>
         ) : null}
-        {activityLoading ? <p className="organization-hint">Nacitavam aktivitu...</p> : null}
+        {activityLoading ? <p className="organization-hint">Načítavam aktivitu...</p> : null}
         {activityError ? <p className="auth-message auth-message--error">{activityError}</p> : null}
+
         {!activityLoading && !activityError ? (
           <div className="organization-info-box organization-info-box--activity">
             {activityItems.length ? (
@@ -751,7 +772,7 @@ function OrganizationPage() {
                 ))}
               </div>
             ) : (
-              <p className="organization-hint">Zatial tu nie su ziadne zaznamenane udalosti.</p>
+              <p className="organization-hint">Zatiaľ tu nie sú žiadne zaznamenané udalosti.</p>
             )}
           </div>
         ) : null}
@@ -762,6 +783,7 @@ function OrganizationPage() {
           <h2>Vytvorenie organizácie</h2>
           <span className="organization-section-subtle">Každý používateľ môže vlastniť jednu organizáciu.</span>
         </div>
+
         {ownsAnyOrg ? (
           <div className="organization-info-box">
             <p className="organization-hint">
@@ -806,7 +828,7 @@ function OrganizationPage() {
             <input
               type="email"
               className="wizard-models-search"
-              placeholder="Zadaj email člena"
+              placeholder="Zadaj e-mail člena"
               value={memberActionModal.typedEmail}
               onChange={(event) => setMemberActionModal((prev) => ({ ...prev, typedEmail: event.target.value, error: "" }))}
               autoFocus

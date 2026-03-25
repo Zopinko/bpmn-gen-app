@@ -15,7 +15,7 @@ function ForgotPasswordPage() {
       setStatus({
         loading: false,
         error: "",
-        success: "Ak účet s týmto emailom existuje, poslali sme odkaz na reset hesla.",
+        success: "Ak účet s týmto e-mailom existuje, poslali sme odkaz na reset hesla.",
       });
     } catch {
       setStatus({
@@ -29,8 +29,13 @@ function ForgotPasswordPage() {
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
+        <p className="auth-eyebrow">Obnova prístupu</p>
         <h1>Zabudnuté heslo</h1>
-        <label htmlFor="forgot-password-email">Email</label>
+        <p className="auth-intro">
+          Zadaj svoj e-mail a pošleme ti link, cez ktorý si nastavíš nové heslo.
+        </p>
+
+        <label htmlFor="forgot-password-email">E-mail</label>
         <input
           id="forgot-password-email"
           type="email"

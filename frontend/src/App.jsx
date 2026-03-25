@@ -89,7 +89,7 @@ function AppLayout() {
 
   const renderProtected = (element) => {
     if (authState.loading) {
-      return <div style={{ padding: 16 }}>Načítavam...</div>;
+      return <div className="app-shell-loading">Načítavam workspace...</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -99,7 +99,7 @@ function AppLayout() {
 
   const renderPublicOnly = (element) => {
     if (authState.loading) {
-      return <div style={{ padding: 16 }}>Načítavam...</div>;
+      return <div className="app-shell-loading">Načítavam workspace...</div>;
     }
     if (authState.user) {
       return <Navigate to="/" replace />;
@@ -109,7 +109,7 @@ function AppLayout() {
 
   const renderSuperAdminOnly = (element) => {
     if (authState.loading) {
-      return <div style={{ padding: 16 }}>Načítavam...</div>;
+      return <div className="app-shell-loading">Načítavam workspace...</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -161,10 +161,10 @@ function AppLayout() {
             ) : !authState.user ? (
               <>
                 <Link to="/login" className="app-nav__link">
-                  Prihlasenie
+                  Prihlásenie
                 </Link>
                 <Link to="/register" className="app-nav__link">
-                  Registracia
+                  Registrácia
                 </Link>
               </>
             ) : (
@@ -179,13 +179,13 @@ function AppLayout() {
                 <div className="app-nav__auth-meta">
                   <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
                   {activeOrgLabel ? (
-                    <span className="app-nav__auth-status">Aktivna organizacia: {activeOrgLabel}</span>
+                    <span className="app-nav__auth-status">Aktívna organizácia: {activeOrgLabel}</span>
                   ) : (
-                    <span className="app-nav__auth-status">Zatial nemas aktivnu organizaciu</span>
+                    <span className="app-nav__auth-status">Zatiaľ nemáš aktívnu organizáciu</span>
                   )}
                 </div>
                 <Link to="/organization" className="btn app-nav__profile">
-                  Organizacia
+                  Organizácia
                 </Link>
                 <Link to="/account" className="btn app-nav__profile">
                   Profil

@@ -73,14 +73,16 @@ function ResetPasswordPage() {
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
+        <p className="auth-eyebrow">Bezpečnosť účtu</p>
         <h1>Obnova hesla</h1>
+        <p className="auth-intro">
+          Nastav si nové heslo a hneď potom sa môžeš vrátiť späť do aplikácie.
+        </p>
 
         {hasSuccess ? (
           <div className="auth-success-panel">
             <p className="auth-message auth-message--success">{status.success}</p>
-            <p className="auth-success-hint">
-              Presmerovanie na prihlásenie prebehne o {redirectSeconds} s.
-            </p>
+            <p className="auth-success-hint">Presmerovanie na prihlásenie prebehne o {redirectSeconds} s.</p>
             <button type="button" onClick={() => navigate("/login", { replace: true })}>
               Prihlásiť sa teraz
             </button>

@@ -7,7 +7,7 @@ const PENDING_INVITE_STORAGE_KEY = "PENDING_ORG_INVITE_TOKEN";
 
 function mapLoginErrorMessage(statusCode) {
   if (statusCode === 401) {
-    return "Nesprávny email alebo heslo.";
+    return "Nesprávny e-mail alebo heslo.";
   }
   if (statusCode === 429) {
     return "Príliš veľa pokusov. Skús to znovu o minútu.";
@@ -25,13 +25,10 @@ function LoginPage({ onLoginSuccess }) {
     event.preventDefault();
     setStatus({ loading: true, error: "" });
     try {
-      console.warn("[login] POST /api/auth/login start");
       await loginAuth({ email, password });
-      console.warn("[login] POST /api/auth/login success", { status: 200 });
       let loggedInUser = null;
       if (typeof onLoginSuccess === "function") {
         loggedInUser = await onLoginSuccess();
-        console.warn("[login] auth state refresh result", { authenticated: Boolean(loggedInUser) });
         if (!loggedInUser) {
           throw new Error("Auth state was not established after login.");
         }
@@ -44,15 +41,12 @@ function LoginPage({ onLoginSuccess }) {
       const pendingInviteToken =
         typeof window !== "undefined" ? window.localStorage.getItem(PENDING_INVITE_STORAGE_KEY) : "";
       if (pendingInviteToken) {
-        console.warn("[login] redirect", { target: `/join-org/${pendingInviteToken}` });
         navigate(`/join-org/${pendingInviteToken}`, { replace: true });
       } else {
-        console.warn("[login] redirect", { target: "/" });
         navigate("/", { replace: true });
       }
     } catch (error) {
       const statusCode = Number.isInteger(error?.status) ? error.status : 0;
-      console.error("[login] flow failed", { status: statusCode, message: error?.message });
       setStatus({ loading: false, error: mapLoginErrorMessage(statusCode) });
     }
   };
@@ -60,8 +54,13 @@ function LoginPage({ onLoginSuccess }) {
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1>Prihlasenie</h1>
-        <label htmlFor="login-email">Email</label>
+        <p className="auth-eyebrow">BPMN.GEN</p>
+        <h1>Prihlásenie</h1>
+        <p className="auth-intro">
+          Pokračuj do svojho pracovného priestoru a nadviaž na rozpracované procesy.
+        </p>
+
+        <label htmlFor="login-email">E-mail</label>
         <input
           id="login-email"
           type="email"
@@ -80,18 +79,19 @@ function LoginPage({ onLoginSuccess }) {
           onChange={(event) => setPassword(event.target.value)}
           required
         />
+
         <p className="auth-link-row">
           <Link to="/forgot-password">Zabudnuté heslo?</Link>
         </p>
 
         <button type="submit" disabled={status.loading}>
-          {status.loading ? "Prihlasujem..." : "Prihlasit sa"}
+          {status.loading ? "Prihlasujem..." : "Prihlásiť sa"}
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
 
         <p className="auth-footer">
-          Nemas ucet? <Link to="/register">Zaregistruj sa</Link>
+          Nemáš účet? <Link to="/register">Zaregistruj sa</Link>
         </p>
       </form>
     </section>

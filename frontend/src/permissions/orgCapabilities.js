@@ -35,7 +35,7 @@ export function getOrgCapabilities(role) {
 
 export function getOrgRoleLabel(role) {
   const normalizedRole = normalizeOrgRole(role);
-  if (normalizedRole === "owner") return "Owner";
-  if (normalizedRole === "viewer") return "Viewer";
+  if (normalizedRole === "owner") return "Vlastník";
+  if (normalizedRole === "viewer") return "Pozorovateľ";
   return "Člen";
 }

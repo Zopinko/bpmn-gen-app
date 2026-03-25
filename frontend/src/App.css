@@ -33,16 +33,19 @@ body {
   flex-direction: column;
   width: 100%;
   height: 100vh;
-  background: #05070c;
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 28%),
+    linear-gradient(180deg, #05070c 0%, #070b13 100%);
 }
 
 .app-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 14px 22px;
   border-bottom: 1px solid var(--border-subtle);
-  background: #0b0f17;
+  background: rgba(11, 15, 23, 0.88);
+  backdrop-filter: blur(14px);
 }
 
 .app-nav__left {
@@ -70,7 +73,7 @@ body {
 
 .app-nav__brand-text {
   font-family: "Plus Jakarta Sans", "Space Grotesk", "Sora", "Segoe UI", sans-serif;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: #f8fafc;
@@ -87,6 +90,7 @@ body {
   gap: 12px;
   flex-shrink: 0;
   align-items: center;
+  min-width: 0;
 }
 
 .header-stepper {
@@ -210,6 +214,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .app-nav__auth-meta {
@@ -217,11 +223,15 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.62);
 }
 
 .app-nav__auth-status {
   color: #cbd5e1;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 
 .app-nav__logout {
@@ -236,6 +246,97 @@ body {
 .app-shell__body {
   flex: 1;
   min-height: 0;
+}
+
+.app-shell-loading {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #cbd5e1;
+  font-size: 0.98rem;
+}
+
+@media (max-width: 1180px) {
+  .app-nav {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .app-nav__left,
+  .app-nav__links {
+    width: 100%;
+  }
+
+  .app-nav__links {
+    justify-content: space-between;
+  }
+
+  .app-nav__auth {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .app-nav__auth-meta {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-nav {
+    padding: 12px 14px;
+  }
+
+  .app-nav__left {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .header-stepper {
+    width: 100%;
+    max-width: none;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .header-stepper__label {
+    display: none;
+  }
+
+  .app-nav__links {
+    gap: 10px;
+  }
+
+  .app-nav__auth {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-nav__auth-meta {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-nav__links {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app-nav__profile,
+  .app-nav__logout,
+  .app-nav__link {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .app-nav__brand-text {
+    font-size: 22px;
+  }
 }
 
 .app-layout {
@@ -5040,46 +5141,81 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: #05070c;
+  padding: 32px 24px;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 26%),
+    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.08), transparent 22%),
+    linear-gradient(180deg, #05070c 0%, #07101b 100%);
 }
 
 .auth-card {
   width: min(420px, 100%);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 20px;
-  border: 1px solid #1f2937;
-  border-radius: 12px;
-  background: #0f1623;
+  gap: 12px;
+  padding: 28px;
+  border: 1px solid rgba(51, 65, 85, 0.86);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(15, 22, 35, 0.96), rgba(10, 15, 26, 0.96));
+  box-shadow:
+    0 24px 48px rgba(2, 6, 23, 0.45),
+    inset 0 1px 0 rgba(148, 163, 184, 0.08);
+}
+
+.auth-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #93c5fd;
+}
+
+.auth-intro {
+  margin: -2px 0 2px;
+  font-size: 0.94rem;
+  line-height: 1.55;
+  color: #94a3b8;
 }
 
 .auth-card h1 {
-  margin: 0 0 6px;
-  font-size: 1.4rem;
-  color: #e5e7eb;
+  margin: 0;
+  font-size: 1.9rem;
+  line-height: 1.05;
+  color: #f8fafc;
 }
 
 .auth-card label {
   font-size: 0.92rem;
-  color: #cbd5e1;
+  color: #dbe4f0;
+  font-weight: 600;
 }
 
 .auth-card input {
-  border-radius: 8px;
-  border: 1px solid #334155;
-  background: #0b1220;
+  border-radius: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.95);
+  background: rgba(8, 13, 24, 0.92);
   color: #e5e7eb;
-  padding: 10px;
+  padding: 12px 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.auth-card input:focus {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.95);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+  background: rgba(10, 16, 30, 0.96);
 }
 
 .auth-card button {
   margin-top: 8px;
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid #2563eb;
-  background: #2563eb;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
   color: #ffffff;
+  font-weight: 700;
+  min-height: 44px;
 }
 
 .auth-card button:disabled {
@@ -5132,9 +5268,14 @@ body {
 }
 
 .auth-footer {
-  margin: 4px 0 0;
+  margin: 8px 0 0;
   color: #9ca3af;
   font-size: 0.9rem;
+}
+
+.auth-footer a,
+.auth-link-row a {
+  font-weight: 600;
 }
 
 .account-page {
@@ -5143,8 +5284,10 @@ body {
   gap: 16px;
   justify-content: center;
   align-content: center;
-  padding: 24px;
-  background: #05070c;
+  padding: 32px 24px;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.08), transparent 22%),
+    linear-gradient(180deg, #05070c 0%, #07101b 100%);
 }
 
 .account-card {
@@ -5172,6 +5315,10 @@ body {
 
 .account-card-head h1 {
   margin: 0;
+}
+
+.account-card-head .auth-eyebrow {
+  margin-bottom: 6px;
 }
 
 .auth-card .account-section-toggle {
@@ -5244,10 +5391,10 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  background: #0b1220;
+  padding: 10px 12px;
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 12px;
+  background: rgba(8, 13, 24, 0.74);
 }
 
 .account-info-row span {
