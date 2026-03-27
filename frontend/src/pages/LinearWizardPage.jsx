@@ -1034,14 +1034,29 @@ const determineInlineHint = (lines) => {
     const hasTak = /\btak\b/.test(afterTrigger);
     const hasInak = /\binak\b/.test(afterTrigger);
     const beforeTak = hasTak ? afterTrigger.split(/\btak\b/i)[0] || "" : afterTrigger;
+    const afterTak = hasTak ? (afterTrigger.split(/\btak\b/i)[1] || "") : "";
+    const beforeInak = hasInak ? (afterTrigger.split(/\binak\b/i)[0] || "") : afterTak;
+    const afterInak = hasInak ? (afterTrigger.split(/\binak\b/i)[1] || "") : "";
+    const trimmedAfterTrigger = afterTrigger.trim();
     const conditionLen = beforeTak.replace(/[,\s]+/g, "").length;
     const isTooShort = conditionLen < 2;
+    const yesStepText = String(beforeInak || "")
+      .replace(/^(\s*[,;:-]\s*)+/, "")
+      .trim();
+    const noStepText = String(afterInak || "")
+      .replace(/^(\s*[,;:-]\s*)+/, "")
+      .trim();
+    const yesHasMultiple = /,\s*\S/.test(yesStepText);
+    const noHasMultiple = /,\s*\S/.test(noStepText);
     if (isTooShort) {
       return {
         kind: "decision",
         state: "D0",
         complete: false,
-        message: "Vyzerá to na rozhodnutie. Dopíš podmienku a potom obe vetvy: „tak“ aj „inak“.",
+        message:
+          trimmedAfterTrigger.length <= 2
+            ? "Vyzerá to na rozhodnutie. Najprv dopíš, kedy sa to stane. Napríklad: „Ak je žiadosť úplná ...“."
+            : "Dobre. Teraz pokračuj slovom „tak“, aby bolo jasné, čo sa stane potom.",
       };
     }
     if (!hasTak) {
@@ -1049,7 +1064,15 @@ const determineInlineHint = (lines) => {
         kind: "decision",
         state: "D1",
         complete: false,
-        message: "Máme podmienku. Teraz doplň vetvu „tak“, aby bolo jasné, čo sa stane v prvom prípade.",
+        message: "Teraz dopíš „tak“ a hneď zaň prvý krok. Napríklad: „tak schválim žiadosť“.",
+      };
+    }
+    if (!yesStepText) {
+      return {
+        kind: "decision",
+        state: "D1A",
+        complete: false,
+        message: "Za „tak“ dopíš prvý krok, ktorý sa má stať potom.",
       };
     }
     if (!hasInak) {
@@ -1057,14 +1080,26 @@ const determineInlineHint = (lines) => {
         kind: "decision",
         state: "D2",
         complete: false,
-        message: "Ešte doplň vetvu „inak“, aby bolo jasné, čo sa stane v opačnom prípade.",
+        message: yesHasMultiple
+          ? "Táto časť vyzerá dobre. Teraz dopíš „inak“ a potom prvý krok v druhom prípade."
+          : "Ak po „tak“ nasledujú ešte ďalšie kroky, oddeľ ich čiarkou. Keď máš túto časť hotovú, dopíš „inak“.",
+      };
+    }
+    if (!noStepText) {
+      return {
+        kind: "decision",
+        state: "D2A",
+        complete: false,
+        message: "Za „inak“ dopíš prvý krok. Napríklad: „inak vrátim žiadosť na doplnenie“.",
       };
     }
     return {
       kind: "decision",
       state: "D3",
       complete: true,
-      message: "Rozhodnutie je OK ✅ Môžeš ešte upraviť podmienku alebo spresniť obe vetvy.",
+      message: noHasMultiple
+        ? "Rozhodnutie je OK ✅ Obe časti sú vyplnené a môžeš ich ešte spresniť."
+        : "Rozhodnutie je OK ✅ Ak po „inak“ nasledujú ešte ďalšie kroky, oddeľ ich čiarkou.",
     };
   })();
 
@@ -1138,18 +1173,10 @@ const analyzeLaneLine = (lineText) => {
       .replace(/^naraz/, "")
       .replace(/^popritom/, "")
       .replace(/^popri/, "");
-    let stepCount = 0;
-    if (ascii.startsWith("paralelne")) {
-      stepCount = parts
-        .split(";")
-        .map((part) => part.trim())
-        .filter(Boolean).length;
-    } else {
-      stepCount = parts
-        .split(/,|\ba\b/)
-        .map((part) => part.trim())
-        .filter(Boolean).length;
-    }
+    const stepCount = parts
+      .split(/\s*;\s*|\s*,\s*|\s+\ba\b\s+/i)
+      .map((part) => part.trim())
+      .filter(Boolean).length;
     const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky (oddeľ ich ;, , alebo slovom „a“)." : "";
     return {
       type: "and",

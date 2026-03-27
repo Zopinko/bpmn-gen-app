@@ -325,6 +325,7 @@ export function applyIncrementalAppend({
   const TASK_TO_TASK_GAP = FLOW_GAP;
   const GATEWAY_TO_TASK_GAP = FLOW_GAP;
   const XOR_GATEWAY_TO_TASK_GAP = GATEWAY_TO_TASK_GAP + 40;
+  const XOR_BRANCH_TASK_GAP = Math.max(TASK_TO_TASK_GAP, TASK_BOX_WIDTH + 40);
   const BRANCH_OFFSET = 120;
   const LANE_BOTTOM_PADDING_DEFAULT = 50;
   const BOTTOM_MARGIN_XOR = 40;
@@ -716,6 +717,30 @@ export function applyIncrementalAppend({
       let isXorJoin = false;
       let xorJoinSplitId = "";
 
+      const incomingBranchMeta = incomingFlowsForNode
+        .map((flow) => findElementByEngineId(flow?.source))
+        .filter(Boolean)
+        .map((srcEl) => {
+          const attrs = srcEl?.businessObject?.$attrs || {};
+          return {
+            splitId: String(attrs["data-parallel-split-id"] || ""),
+            branchIndex: String(attrs["data-parallel-branch-index"] || ""),
+            source: srcEl,
+          };
+        })
+        .filter((meta) => meta.splitId && meta.branchIndex !== "");
+      const incomingXorMeta = incomingFlowsForNode
+        .map((flow) => findElementByEngineId(flow?.source))
+        .filter(Boolean)
+        .map((srcEl) => {
+          const attrs = srcEl?.businessObject?.$attrs || {};
+          return {
+            splitId: String(attrs["data-xor-split-id"] || ""),
+            branchIndex: String(attrs["data-xor-branch-index"] || ""),
+            source: srcEl,
+          };
+        })
+        .filter((meta) => meta.splitId && meta.branchIndex !== "");
       const isNewLaneFirstNode = Boolean(laneForPlacement && !findLastFlowShapeInLane(laneForPlacement));
       const nodeTypeLower = String(node?.type || "").toLowerCase();
       const nodeIsGateway = nodeTypeLower.includes("gateway");
@@ -726,7 +751,9 @@ export function applyIncrementalAppend({
           return srcType.includes("Gateway");
         }),
       );
-      const allowBranchPlacement = !isNewLaneFirstNode && (nodeIsGateway || incomingFromGateway);
+      const hasIncomingBranchContext = incomingBranchMeta.length > 0 || incomingXorMeta.length > 0;
+      const allowBranchPlacement =
+        !isNewLaneFirstNode && (nodeIsGateway || incomingFromGateway || hasIncomingBranchContext);
 
       if (sourceEl) {
         // Baseline deterministic spacing rule for append in lane.
@@ -758,30 +785,6 @@ export function applyIncrementalAppend({
           forceBranchColumn = true;
         }
       }
-      const incomingBranchMeta = incomingFlowsForNode
-        .map((flow) => findElementByEngineId(flow?.source))
-        .filter(Boolean)
-        .map((srcEl) => {
-          const attrs = srcEl?.businessObject?.$attrs || {};
-          return {
-            splitId: String(attrs["data-parallel-split-id"] || ""),
-            branchIndex: String(attrs["data-parallel-branch-index"] || ""),
-            source: srcEl,
-          };
-        })
-        .filter((meta) => meta.splitId && meta.branchIndex !== "");
-      const incomingXorMeta = incomingFlowsForNode
-        .map((flow) => findElementByEngineId(flow?.source))
-        .filter(Boolean)
-        .map((srcEl) => {
-          const attrs = srcEl?.businessObject?.$attrs || {};
-          return {
-            splitId: String(attrs["data-xor-split-id"] || ""),
-            branchIndex: String(attrs["data-xor-branch-index"] || ""),
-            source: srcEl,
-          };
-        })
-        .filter((meta) => meta.splitId && meta.branchIndex !== "");
       if (incomingBranchMeta.length >= 2) {
         const bySplit = new Map();
         incomingBranchMeta.forEach((meta) => {
@@ -854,7 +857,7 @@ export function applyIncrementalAppend({
           const src = incomingXorMeta[0].source;
           targetMidY = (src.y || 0) + (src.height || 0) / 2;
           if (sourceEl) {
-            x = getNextXAfterElement(sourceEl, FLOW_GAP);
+            x = getNextXAfterElement(sourceEl, XOR_BRANCH_TASK_GAP);
             forceBranchColumn = true;
           }
         } else if (allowBranchPlacement && isXorJoin) {
