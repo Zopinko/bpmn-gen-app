@@ -141,7 +141,7 @@ function AppLayout() {
                     }
                   }}
                 >
-                  Demo info
+                  Ako demo funguje
                 </button>
                 <button
                   type="button"
@@ -155,7 +155,7 @@ function AppLayout() {
                   Reset demo
                 </button>
                 <Link to="/register" className="app-nav__link">
-                  Create account
+                  Vytvoriť účet
                 </Link>
               </div>
             ) : !authState.user ? (

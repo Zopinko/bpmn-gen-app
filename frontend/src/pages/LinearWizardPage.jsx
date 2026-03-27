@@ -252,30 +252,26 @@ const LANE_TEMPLATES = [
     text:
       "Prijmem žiadosť\n" +
       "Overím identitu\n" +
-      "Paralelne: overím bonitu; skontrolujem register dlžníkov; pripravím návrh podmienok\n" +
-      "Ak identita nie je platná tak zamietnem žiadosť, inak pokračujem v spracovaní\n" +
-      "Spracujem žiadosť\n" +
-      "Oznámim výsledok žiadateľovi",
+      "Ak identita nesedí tak zamietnem žiadosť, inak pokračujem\n" +
+      "Oznámim výsledok",
   },
   {
     id: "complaint_basic",
     label: "Reklamácia",
     text:
       "Prijmem reklamáciu\n" +
-      "Overím doklad o kúpe\n" +
+      "Overím doklad\n" +
       "Ak doklad chýba tak vyžiadam doplnenie, inak pokračujem\n" +
-      "Posúdim stav výrobku\n" +
-      "Oznámim výsledok zákazníkovi",
+      "Oznámim výsledok",
   },
   {
     id: "order_basic",
     label: "Objednávka",
     text:
       "Prijmem objednávku\n" +
-      "Skontrolujem dostupnosť\n" +
-      "Ak nie je skladom tak ponúknem alternatívu, inak pokračujem\n" +
-      "Pripravím zásielku\n" +
-      "Odošlem zásielku zákazníkovi",
+      "Skontrolujem sklad\n" +
+      "Ak nie je skladom tak ponúknem alternatívu, inak pripravím zásielku\n" +
+      "Odošlem zásielku",
   },
   {
     id: "invoice_basic",
@@ -283,27 +279,23 @@ const LANE_TEMPLATES = [
     text:
       "Skontrolujem podklady\n" +
       "Vystavím faktúru\n" +
-      "Ak sú údaje neúplné tak vyžiadam doplnenie, inak pokračujem\n" +
-      "Odošlem faktúru\n" +
-      "Zaznamenám odoslanie",
+      "Ak údaje chýbajú tak vyžiadam doplnenie, inak odošlem faktúru",
   },
   {
     id: "onboarding_basic",
     label: "Nástup",
     text:
-      "Pripravím onboarding plán\n" +
+      "Pripravím plán nástupu\n" +
       "Zriadim prístupy\n" +
-      "Ak chýbajú podklady tak vyžiadam doplnenie, inak pokračujem\n" +
-      "Zabezpečím školenie\n" +
-      "Potvrdím nástup",
+      "Ak chýbajú podklady tak vyžiadam doplnenie, inak potvrdím nástup",
   },
   {
     id: "parallel_only_basic",
     label: "Paralelný blok",
     text:
       "Prijmem podnet\n" +
-      "Paralelne: skontrolujem dokumenty; overím údaje; pripravím návrh riešenia\n" +
-      "Zlúčim výsledky paralelných krokov\n" +
+      "Paralelne: skontrolujem dokumenty; overím údaje; pripravím návrh\n" +
+      "Zlúčim výsledky\n" +
       "Ukončím spracovanie",
   },
 ];
@@ -922,6 +914,18 @@ const pickGuideCard = ({
 
   const isPersistedOrOrg =
     uiContext?.modelSourceKind === "org" || uiContext?.hasUnsavedChanges === false;
+  const isDemoFlow = uiContext?.isDemoMode === true;
+  if (phase === "ready" && isDemoFlow) {
+    return {
+      key: "demo_process_complete",
+      phase,
+      scope: "global",
+      title: "Ukážka je hotová",
+      message:
+        "Máme ucelený procesný tok. V deme si si vyskúšal kostru, kroky, prepojenia aj ukončenie procesu. Ak chceš pokračovať bez limitov a model si uložiť, vytvor si účet.",
+      primary: { label: "Vytvoriť účet", action: "OPEN_DEMO_SIGNUP" },
+    };
+  }
   if (phase === "ready" && !isPersistedOrOrg) {
     return {
       key: "process_ready_for_save",
@@ -1292,11 +1296,11 @@ const mapGeneratorInputToPayload = (generatorInput) => {
 
 const DEMO_LIMITS = {
   maxRoles: 2,
-  maxStepsPerLane: 5,
-  maxObjectsPerLane: 5,
-  maxDecisions: 1,
-  maxNodes: 12,
-  maxFlows: 15,
+  maxStepsPerLane: 8,
+  maxObjectsPerLane: 10,
+  maxDecisions: 2,
+  maxNodes: 24,
+  maxFlows: 30,
 };
 
 const DEMO_DEFAULTS = {
@@ -1307,6 +1311,14 @@ const DEMO_DEFAULTS = {
 };
 
 const DEMO_TEMPLATES = [
+  {
+    id: "custom",
+    label: "Vlastný",
+    processName: "",
+    roles: "",
+    trigger: "",
+    output: "",
+  },
   {
     id: "approval",
     label: "Schválenie žiadosti",
@@ -2065,7 +2077,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         activeLaneId: laneId || activeLaneId,
         lastEditedLaneId,
         modelSnapshot: options.modelSnapshot || null,
-        uiContext: { mentorOpen, storyOpen, hasUnsavedChanges, modelSourceKind: modelSource?.kind },
+        uiContext: {
+          mentorOpen,
+          storyOpen,
+          hasUnsavedChanges,
+          modelSourceKind: modelSource?.kind,
+          isDemoMode,
+        },
       });
       if (!card) {
         setGuideState(null);
@@ -2078,7 +2096,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setGuideState(card);
       return card;
     },
-    [engineJson, activeLaneId, lastEditedLaneId, mentorOpen, storyOpen, hasUnsavedChanges, modelSource?.kind],
+    [engineJson, activeLaneId, lastEditedLaneId, mentorOpen, storyOpen, hasUnsavedChanges, modelSource?.kind, isDemoMode],
   );
 
   const runGuideReview = useCallback(
@@ -2447,6 +2465,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       console.log("[Guide] handleGuideAction click", { actionId, payload });
     }
     if (!guideState || !actionId) return;
+    if (actionId === "OPEN_DEMO_SIGNUP") {
+      navigate("/register");
+      return;
+    }
     if (isDemoMode && (actionId === "SAVE_PROCESS" || actionId === "MOVE_TO_ORG" || actionId === "STAY_IN_SANDBOX")) {
       setInfo("DEMO režim: uloženie a organizácie sú dostupné až po registrácii.");
       setGuideState(null);
@@ -3270,7 +3292,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isDemoMode && field === "roles") {
       const lines = String(value || "").split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxRoles) {
-        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+        setInfo(`V ukážke zatiaľ stačia maximálne ${DEMO_LIMITS.maxRoles} roly.`);
       }
       value = lines.slice(0, DEMO_LIMITS.maxRoles).join("\n");
     }
@@ -3344,7 +3366,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isDemoMode) {
       const lines = String(value || "").split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
-        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+        setInfo(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
       }
       value = lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     }
@@ -3366,7 +3388,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (!isDemoMode) return next;
       const lines = next.split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
-        setInfo(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+        setInfo(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
       }
       return lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     });
@@ -3724,7 +3746,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (roleLines.length > DEMO_LIMITS.maxRoles) {
-      setDemoIntroError(`DEMO limit: maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+      setDemoIntroError(`V ukážke zatiaľ stačia maximálne ${DEMO_LIMITS.maxRoles} roly.`);
       return;
     }
 
@@ -3759,8 +3781,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setGuideState({
         key: "demo_skeleton_ready",
         scope: "global",
-        title: "Skeleton ready ✅",
-        message: "Klikni na rolu a doplň kroky (max 5 objektov na rolu). Potom daj „Vytvoriť aktivity“.",
+        title: "Kostra je pripravená",
+        message: `Teraz klikni na jednu rolu a doplň 2 až 3 krátke kroky. Ak sa proces rozhoduje, začni vetu slovom „ak“ alebo „keď“.`,
       });
       setDemoSetupOpen(false);
       setHasUnsavedChanges(true);
@@ -3794,7 +3816,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       },
     }));
     setDemoIntroError("");
-    setInfo(`Doplnený vzor: ${template.label}`);
+    setInfo(template.id === "custom" ? "Môžeš začať vlastným procesom." : `Doplnený vzor: ${template.label}`);
   }, []);
 
   useEffect(() => {
@@ -5367,7 +5389,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     const laneLines = splitLines(laneDescription);
     if (isDemoMode && laneLines.length > DEMO_LIMITS.maxStepsPerLane) {
-      setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxStepsPerLane} kroky na rolu.`);
+      setError(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
       return;
     }
     cancelPendingRelayouts();
@@ -5383,7 +5405,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         const existingDecisions = countExclusiveGateways(currentEngine);
         const typedDecisions = laneLines.filter((line) => detectDecision(line)).length;
         if (existingDecisions + typedDecisions > DEMO_LIMITS.maxDecisions) {
-          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutie (XOR) v celom modeli.`);
+          setError(`V ukážke si zatiaľ skús maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutia.`);
           setIsLoading(false);
           return;
         }
@@ -5426,22 +5448,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (isDemoMode) {
         const laneObjects = countLaneObjects(updatedEngine, laneId);
         if (laneObjects > DEMO_LIMITS.maxObjectsPerLane) {
-          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxObjectsPerLane} objektov v jednej role.`);
+          setError(`Na ukážku stačí menšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxObjectsPerLane} objektov v jednej role.`);
           return;
         }
         const nodesCount = Array.isArray(updatedEngine?.nodes) ? updatedEngine.nodes.length : 0;
         const flowsCount = Array.isArray(updatedEngine?.flows) ? updatedEngine.flows.length : 0;
         const decisionsCount = countExclusiveGateways(updatedEngine);
         if (nodesCount > DEMO_LIMITS.maxNodes) {
-          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxNodes} objektov v modeli.`);
+          setError(`Ukážka je nastavená na menší proces. Ak chceš pokračovať vo väčšom modeli, otvor plnú verziu.`);
           return;
         }
         if (flowsCount > DEMO_LIMITS.maxFlows) {
-          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxFlows} prepojení.`);
+          setError(`Ukážka je nastavená na menší proces. Ak chceš pokračovať vo väčšom modeli, otvor plnú verziu.`);
           return;
         }
         if (decisionsCount > DEMO_LIMITS.maxDecisions) {
-          setError(`DEMO limit: maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutie (XOR).`);
+          setError(`V ukážke si zatiaľ skús maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutia.`);
           return;
         }
       }
@@ -5557,14 +5579,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 key: `demo_next_lane:${nextLane.id}`,
                 scope: "global",
                 title: "Pokračuj na druhú rolu",
-                message: `Hotovo ✅ Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a pridaj jej kroky.`,
+                message: `Máme prvú rolu. Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a doplň, čo sa v nej deje.`,
               });
             } else {
               setGuideState({
                 key: "demo_finish_hint",
                 scope: "global",
-                title: "Demo hotové",
-                message: "Model je pripravený. Pre plnú verziu (uloženie, export, organizácie) si vytvor účet.",
+                title: "Poďme prepojiť tok procesu",
+                message:
+                  "Máme doplnené kroky v rolách. Teraz klikni na krok, z ktorého má proces pokračovať, daj „Prepojiť“ a potiahni spojenie na ďalší objekt. Ak sa proces na niektorom kroku končí, klikni naň a použi „Koniec sem“.",
               });
             }
           }
@@ -5605,7 +5628,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 key: `demo_next_lane:${nextLane.id}`,
                 scope: "global",
                 title: "Pokračuj na druhú rolu",
-                message: `Hotovo ✅ Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a pridaj jej kroky.`,
+                message: `Máme prvú rolu. Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a doplň, čo sa v nej deje.`,
+              });
+            } else {
+              setGuideState({
+                key: "demo_finish_hint",
+                scope: "global",
+                title: "Poďme prepojiť tok procesu",
+                message:
+                  "Máme doplnené kroky v rolách. Teraz klikni na krok, z ktorého má proces pokračovať, daj „Prepojiť“ a potiahni spojenie na ďalší objekt. Ak sa proces na niektorom kroku končí, klikni naň a použi „Koniec sem“.",
               });
             }
           }
@@ -8517,7 +8548,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         Píš stručne a vecne. Stačí opísať, čo táto rola robí a v akom poradí to nasleduje.
                       </div>
                       {isDemoMode ? (
-                        <div className="wizard-lane-v2__section-sub">Demo limit: max {DEMO_LIMITS.maxObjectsPerLane} objektov na rolu.</div>
+                        <div className="wizard-lane-v2__section-sub">
+                          Na ukážku stačí menšia rola. Zameraj sa na pár jasných krokov a jeden menší decision alebo paralelu.
+                        </div>
                       ) : null}
                       <textarea
                         ref={laneTextareaRef}
@@ -8563,6 +8596,29 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         </button>
                         {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">1 tip</span> : null}
                       </div>
+                      {isDemoMode ? (
+                        <div className="wizard-lane-v2__demo-templates">
+                          <div className="wizard-lane-v2__section-sub">
+                            Nechce sa ti začínať od nuly? Klikni na vzor a dopíš si ho podľa seba.
+                          </div>
+                          <div className="wizard-lane-v2__templates-grid">
+                            {LANE_TEMPLATES.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                className="btn btn--small wizard-lane-v2__template-chip"
+                                onClick={() => {
+                                  setLaneTemplateChoice(template.id);
+                                  applyLaneTemplate(template);
+                                }}
+                                disabled={isLoading}
+                              >
+                                {template.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                       {lanePlaceholderWarning && !inlineLaneHint ? (
                         <div className="wizard-lane-v2__control-warning">{lanePlaceholderWarning}</div>
                       ) : null}
@@ -8818,14 +8874,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           {isDemoMode ? (
             <div className="demo-banner">
               <div className="demo-banner__text">
-                <strong>DEMO MODE</strong> - nic sa neuklada. Limity: 2 role, max 5 objektov na rolu, max 1 rozhodnutie.
+                <strong>Ukážka produktu</strong> · nič sa neukladá. Stačí menší proces do {DEMO_LIMITS.maxRoles} rolí, aby si si vyskúšal, ako sa z textu skladá mapa.
               </div>
               <div className="demo-banner__actions">
                 <button className="btn btn--small" type="button" onClick={resetDemoState}>
                   Reset demo
                 </button>
                 <a className="btn btn--small btn-primary" href="/register">
-                  Create account
+                  Pokračovať naplno
                 </a>
               </div>
             </div>
@@ -9069,9 +9125,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel demo-setup-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div>
-                  <h3 style={{ margin: 0 }}>Guided lightweight sandbox</h3>
+                  <h3 style={{ margin: 0 }}>Vyskúšaj si tvorbu procesu na malej ukážke</h3>
                   <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                    Zadaj názov procesu a max 2 roly. Potom vytvoríme skeleton mapy.
+                    Stačí názov procesu, 1 až 2 roly a krátka veta, čo proces spúšťa. Potom spolu vytvoríme kostru mapy a doplníš pár krokov.
                   </div>
                 </div>
                 {xml ? (
@@ -9092,7 +9148,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Role (každá na nový riadok, max 2)</span>
+                    <span>Roly (každá na nový riadok, max {DEMO_LIMITS.maxRoles})</span>
                     <textarea
                       value={processCard.generatorInput.roles}
                       onChange={(e) => updateGeneratorInput("roles", e.target.value)}
@@ -9100,17 +9156,32 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       disabled={demoBuilding}
                     />
                   </label>
+                  <label className="wizard-field">
+                    <span>Čo proces spúšťa</span>
+                    <input
+                      value={processCard.generatorInput.trigger}
+                      onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
+                      placeholder="Napr. Prišla nová žiadosť"
+                      disabled={demoBuilding}
+                    />
+                  </label>
+                  <div className="wizard-dialog-section">
+                    <strong style={{ display: "block", marginBottom: 6 }}>Čo si tu vyskúšaš</strong>
+                    <div className="wizard-dialog-subtitle" style={{ fontSize: 13 }}>
+                      Vytvoríš kostru procesu, klikneš na rolu a doplníš pár krokov. Ak sa proces rozhoduje, začni vetu slovom <code>ak</code> alebo <code>keď</code>. Ak sa deje viac vecí naraz, začni vetu slovom <code>paralelne</code>.
+                    </div>
+                  </div>
                   {demoIntroError ? <div className="wizard-error">{demoIntroError}</div> : null}
                   {demoBuilding ? (
                     <div className="demo-build-steps">
-                      <div className={demoBuildStep >= 0 ? "is-active" : ""}>1. Creating skeleton...</div>
-                      <div className={demoBuildStep >= 1 ? "is-active" : ""}>2. Adding roles...</div>
-                      <div className={demoBuildStep >= 2 ? "is-active" : ""}>3. Generating BPMN...</div>
+                      <div className={demoBuildStep >= 0 ? "is-active" : ""}>1. Pripravujeme kostru procesu...</div>
+                      <div className={demoBuildStep >= 1 ? "is-active" : ""}>2. Dopĺňame roly...</div>
+                      <div className={demoBuildStep >= 2 ? "is-active" : ""}>3. Kreslíme mapu...</div>
                     </div>
                   ) : null}
                   <div className="demo-setup-actions">
                     <button className="btn btn-primary" type="button" onClick={() => void runDemoGenerate()} disabled={demoBuilding}>
-                      {demoBuilding ? "Building..." : "Generate demo model"}
+                      {demoBuilding ? "Pripravujem ukážku..." : "Vytvoriť ukážkový model"}
                     </button>
                   </div>
                 </div>
