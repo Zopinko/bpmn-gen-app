@@ -33,6 +33,10 @@ services:
         sync: false
       - key: SESSION_COOKIE_DOMAIN
         sync: false
+      - key: ADMIN_PANEL_AVAILABLE
+        sync: false
+      - key: SUPER_ADMIN_EMAILS
+        sync: false
       - key: AUTH_DB_PATH
         value: /var/data/auth.db
     disk:
