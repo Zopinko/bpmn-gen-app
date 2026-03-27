@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
@@ -6,12 +6,14 @@ import {
   createOrg,
   deleteOrg,
   getOrgInviteLink,
+  leaveOrg,
   listMyOrgs,
   listOrgActivity,
   listOrgMembers,
   removeOrgMember,
   updateOrgMemberRole,
 } from "../api/wizard";
+import { getMe } from "../api/auth";
 import { getOrgCapabilities, getOrgRoleLabel, normalizeOrgRole } from "../permissions/orgCapabilities";
 
 function OrganizationPage() {
@@ -19,6 +21,7 @@ function OrganizationPage() {
   const [activeOrgId, setActiveOrgId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
 
   const [members, setMembers] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -58,6 +61,14 @@ function OrganizationPage() {
     action: "",
     targetEmail: "",
     targetRole: "",
+    typedEmail: "",
+    loading: false,
+    error: "",
+  });
+  const [leaveOrgModal, setLeaveOrgModal] = useState({
+    open: false,
+    orgId: "",
+    orgName: "",
     typedEmail: "",
     loading: false,
     error: "",
@@ -221,6 +232,22 @@ function OrganizationPage() {
   useEffect(() => {
     void refreshOrgs();
   }, [refreshOrgs]);
+
+  useEffect(() => {
+    let ignore = false;
+    const loadCurrentUser = async () => {
+      try {
+        const response = await getMe();
+        if (!ignore) setCurrentUserEmail(String(response?.user?.email || ""));
+      } catch {
+        if (!ignore) setCurrentUserEmail("");
+      }
+    };
+    void loadCurrentUser();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     setInviteLink("");
@@ -416,6 +443,64 @@ function OrganizationPage() {
       loading: false,
       error: "",
     });
+  };
+
+  const openLeaveOrgModal = (org) => {
+    setLeaveOrgModal({
+      open: true,
+      orgId: String(org?.id || ""),
+      orgName: String(org?.name || org?.id || ""),
+      typedEmail: "",
+      loading: false,
+      error: "",
+    });
+  };
+
+  const closeLeaveOrgModal = () => {
+    if (leaveOrgModal.loading) return;
+    setLeaveOrgModal({
+      open: false,
+      orgId: "",
+      orgName: "",
+      typedEmail: "",
+      loading: false,
+      error: "",
+    });
+  };
+
+  const handleConfirmLeaveOrg = async () => {
+    const orgId = String(leaveOrgModal.orgId || "").trim();
+    const typedEmail = String(leaveOrgModal.typedEmail || "").trim().toLowerCase();
+    const ownEmail = String(currentUserEmail || "").trim().toLowerCase();
+
+    if (!orgId) {
+      setLeaveOrgModal((prev) => ({ ...prev, error: "Organizácia sa nepodarila identifikovať." }));
+      return;
+    }
+    if (!ownEmail || typedEmail !== ownEmail) {
+      setLeaveOrgModal((prev) => ({ ...prev, error: "Pre potvrdenie prepíš svoj presný e-mail." }));
+      return;
+    }
+
+    setLeaveOrgModal((prev) => ({ ...prev, loading: true, error: "" }));
+    setCreateError("");
+    setCreateInfo("");
+
+    try {
+      await leaveOrg(orgId);
+      setCreateInfo(`Odišiel si z organizácie "${leaveOrgModal.orgName}".`);
+      closeLeaveOrgModal();
+      await refreshOrgs(String(activeOrgId) === orgId ? "" : activeOrgId);
+      if (String(activeOrgId) !== orgId) {
+        await refreshMembers();
+      }
+    } catch (e) {
+      setLeaveOrgModal((prev) => ({
+        ...prev,
+        loading: false,
+        error: e?.message || "Odchod z organizácie zlyhal.",
+      }));
+    }
   };
 
   const handleConfirmMemberAction = async () => {
@@ -622,6 +707,7 @@ function OrganizationPage() {
                   const isActive = String(org.id) === String(activeOrgId);
                   const orgCapabilities = getOrgCapabilities(org.role);
                   const canDelete = orgCapabilities.isOwner;
+                  const canLeave = !orgCapabilities.isOwner;
                   return (
                     <tr key={org.id}>
                       <td>{org.name || org.id}</td>
@@ -649,6 +735,15 @@ function OrganizationPage() {
                               onClick={() => openDeleteOrgModal(org)}
                             >
                               Vymazať organizáciu
+                            </button>
+                          ) : null}
+                          {canLeave ? (
+                            <button
+                              type="button"
+                              className="btn btn--small"
+                              onClick={() => openLeaveOrgModal(org)}
+                            >
+                              Odísť z organizácie
                             </button>
                           ) : null}
                         </div>
@@ -1026,8 +1121,62 @@ function OrganizationPage() {
           </div>
         </div>
       ) : null}
+
+      {leaveOrgModal.open ? (
+        <div className="wizard-models-modal" onClick={closeLeaveOrgModal}>
+          <div className="wizard-models-panel wizard-models-panel--compact" onClick={(event) => event.stopPropagation()}>
+            <div className="wizard-models-header">
+              <div className="wizard-dialog-copy">
+                <p className="wizard-dialog-kicker">Organizácia</p>
+                <h3 className="wizard-dialog-title">Odísť z organizácie</h3>
+                <p className="wizard-dialog-subtitle">Pre potvrdenie prepíš svoj presný e-mail.</p>
+              </div>
+            </div>
+            <div className="wizard-dialog-meta">
+              <div className="wizard-dialog-meta__chip">
+                <span className="wizard-dialog-meta__label">Organizácia</span>
+                <strong>{leaveOrgModal.orgName}</strong>
+              </div>
+              <div className="wizard-dialog-meta__chip">
+                <span className="wizard-dialog-meta__label">Tvoj e-mail</span>
+                <strong>{currentUserEmail || "-"}</strong>
+              </div>
+            </div>
+            <div className="organization-info-box">
+              <p className="organization-hint">
+                Po odchode stratíš prístup k modelom, poznámkam a tímovej aktivite tejto organizácie.
+              </p>
+            </div>
+            <input
+              type="email"
+              className="wizard-models-search"
+              placeholder="Prepíš svoj e-mail"
+              value={leaveOrgModal.typedEmail}
+              onChange={(event) => setLeaveOrgModal((prev) => ({ ...prev, typedEmail: event.target.value, error: "" }))}
+              autoFocus
+            />
+            {leaveOrgModal.error ? <p className="auth-message auth-message--error">{leaveOrgModal.error}</p> : null}
+            <div className="wizard-dialog-actions">
+              <button type="button" className="btn" onClick={closeLeaveOrgModal} disabled={leaveOrgModal.loading}>
+                Zrušiť
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleConfirmLeaveOrg}
+                disabled={leaveOrgModal.loading}
+              >
+                {leaveOrgModal.loading ? "Odchádzam..." : "Odísť z organizácie"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 export default OrganizationPage;
+
+
+

@@ -252,6 +252,54 @@ def test_owner_can_manage_other_owners_but_last_owner_is_protected(tmp_path):
         _restore_env(previous)
 
 
+def test_member_can_leave_joined_org(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        register_user("member@example.com", "password123")
+
+        owner_client = _authed_client("owner@example.com")
+        member_client = _authed_client("member@example.com")
+
+        created = owner_client.post("/api/orgs", json={"name": "Org Main"})
+        assert created.status_code == 201
+        org_id = created.json()["id"]
+
+        add_member = owner_client.post(
+            "/api/orgs/members",
+            json={"email": "member@example.com", "org_id": org_id, "role": "member"},
+        )
+        assert add_member.status_code == 200
+
+        leave_org = member_client.post("/api/orgs/leave", json={"org_id": org_id})
+        assert leave_org.status_code == 200
+
+        members_after = owner_client.get(f"/api/orgs/members?org_id={org_id}")
+        assert members_after.status_code == 200
+        assert all((row.get("email") or "").lower() != "member@example.com" for row in members_after.json())
+    finally:
+        _restore_env(previous)
+
+
+def test_last_owner_cannot_leave_org(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+
+        owner_client = _authed_client("owner@example.com")
+        created = owner_client.post("/api/orgs", json={"name": "Org Main"})
+        assert created.status_code == 201
+        org_id = created.json()["id"]
+
+        leave_org = owner_client.post("/api/orgs/leave", json={"org_id": org_id})
+        assert leave_org.status_code == 400
+        assert "owner" in (leave_org.json().get("detail") or "").lower()
+    finally:
+        _restore_env(previous)
+
+
 def test_org_scoped_endpoints_validate_membership_and_selected_org(tmp_path):
     previous = _set_env(tmp_path)
     try:

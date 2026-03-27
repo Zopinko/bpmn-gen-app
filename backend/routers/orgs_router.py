@@ -20,6 +20,7 @@ from auth.service import (
     list_org_members,
     regenerate_org_invite,
     remove_org_member_by_email,
+    leave_org,
     update_org_member_role_by_email,
     resolve_accessible_org_id,
 )
@@ -68,6 +69,10 @@ class AcceptOrgInviteResponse(BaseModel):
 
 class RemoveOrgMemberRequest(BaseModel):
     email: str
+    org_id: str | None = None
+
+
+class LeaveOrgRequest(BaseModel):
     org_id: str | None = None
 
 
@@ -185,6 +190,28 @@ def remove_org_member_endpoint(payload: RemoveOrgMemberRequest, current_user: Au
         entity_type="member",
         entity_id="",
         entity_name=str(result.get("email") or payload.email or ""),
+        metadata={},
+    )
+    return {"ok": True, **result}
+
+
+@router.post("/leave")
+def leave_org_endpoint(payload: LeaveOrgRequest, current_user: AuthUser = Depends(require_user)):
+    org_id = _resolve_org_id(current_user, payload.org_id)
+    try:
+        result = leave_org(org_id=org_id, user_id=current_user.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    record_org_event(
+        org_id,
+        actor_user_id=current_user.id,
+        actor_email=current_user.email,
+        event_type="member_left",
+        entity_type="member",
+        entity_id=current_user.id,
+        entity_name=str(result.get("email") or current_user.email or ""),
         metadata={},
     )
     return {"ok": True, **result}

@@ -663,6 +663,24 @@ export default function MapViewer({
     let contextPadElement = null;
     let contextPadContainer = null;
     let contextPadSuppressed = false;
+    let contextPadHovered = false;
+    let contextPadCloseTimer = null;
+
+    const cancelContextPadClose = () => {
+      if (contextPadCloseTimer) {
+        clearTimeout(contextPadCloseTimer);
+        contextPadCloseTimer = null;
+      }
+    };
+
+    const scheduleContextPadClose = () => {
+      cancelContextPadClose();
+      contextPadCloseTimer = setTimeout(() => {
+        if (!contextPadHovered) {
+          clearContextPad();
+        }
+      }, 140);
+    };
 
     const clearLaneHandles = () => {
       if (!overlays) return;
@@ -749,12 +767,14 @@ export default function MapViewer({
     };
 
     const clearContextPad = () => {
+      cancelContextPadClose();
       if (!overlays || contextPadOverlayId === null) return;
       overlays.remove(contextPadOverlayId);
       contextPadOverlayId = null;
       contextPadElement = null;
       contextPadContainer = null;
       contextPadSuppressed = false;
+      contextPadHovered = false;
     };
 
     const shouldShowContextPad = (element) => {
@@ -786,8 +806,21 @@ export default function MapViewer({
 
       contextPadContainer = container;
       contextPadSuppressed = false;
+      contextPadHovered = false;
+      container.addEventListener("mouseenter", () => {
+        contextPadHovered = true;
+        cancelContextPadClose();
+      });
+      container.addEventListener("mouseleave", () => {
+        contextPadHovered = false;
+        scheduleContextPadClose();
+      });
 
-      const makeButton = (title, iconClass, { onClick, onStart, className, hideOnAction }) => {
+      const makeButton = (
+        title,
+        iconClass,
+        { onClick, onStart, className, hideOnAction, closeOnClick = false, label },
+      ) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = `custom-context-pad__btn${className ? ` ${className}` : ""}`;
@@ -796,6 +829,12 @@ export default function MapViewer({
         const icon = document.createElement("span");
         icon.className = `custom-context-pad__icon ${iconClass}`;
         btn.appendChild(icon);
+        if (label) {
+          const text = document.createElement("span");
+          text.className = "custom-context-pad__label";
+          text.textContent = label;
+          btn.appendChild(text);
+        }
         const handlePointerDown = (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -813,6 +852,9 @@ export default function MapViewer({
             event.preventDefault();
             event.stopPropagation();
             onClick(event);
+            if (closeOnClick) {
+              clearContextPad();
+            }
           });
         }
         return btn;
@@ -840,12 +882,16 @@ export default function MapViewer({
           makeButton("Add lane above", "bpmn-icon-lane-insert-above", {
             onClick: () => addLaneWithPrompt("top"),
             hideOnAction: false,
+            closeOnClick: true,
+            label: "Rola nad",
           }),
         );
         container.appendChild(
           makeButton("Add lane below", "bpmn-icon-lane-insert-below", {
             onClick: () => addLaneWithPrompt("bottom"),
             hideOnAction: false,
+            closeOnClick: true,
+            label: "Rola pod",
           }),
         );
         container.appendChild(
@@ -853,6 +899,7 @@ export default function MapViewer({
             onStart: (event) => startLaneDrag?.(event),
             className: "custom-context-pad__btn--drag",
             hideOnAction: true,
+            label: "Presunúť",
           }),
         );
       } else if (isSequenceFlow) {
@@ -872,6 +919,7 @@ export default function MapViewer({
               },
               className: "custom-context-pad__btn--danger",
               hideOnAction: false,
+              label: "Zmazať",
             }),
           );
         }
@@ -918,6 +966,7 @@ export default function MapViewer({
             onStart: (event) => connect.start(event, element),
             className: "custom-context-pad__btn--accent",
             hideOnAction: true,
+            label: "Prepojiť",
           }),
         );
 
@@ -929,7 +978,14 @@ export default function MapViewer({
         addButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
         addButton.setAttribute("aria-label", "Pridať prvok");
         addButton.title = "Pridať prvok";
-        addButton.textContent = "+";
+        const addIcon = document.createElement("span");
+        addIcon.className = "custom-context-pad__icon";
+        addIcon.textContent = "+";
+        addButton.appendChild(addIcon);
+        const addLabel = document.createElement("span");
+        addLabel.className = "custom-context-pad__label";
+        addLabel.textContent = "Pridať";
+        addButton.appendChild(addLabel);
         addMenu.appendChild(addButton);
 
         const menu = document.createElement("div");
@@ -939,7 +995,9 @@ export default function MapViewer({
           makeButton("Úloha", "bpmn-icon-task", {
             onClick: () => appendShape("bpmn:Task", 100, 80),
             hideOnAction: false,
+            closeOnClick: true,
             className: "custom-context-pad__btn--menu",
+            label: "Krok",
           }),
         );
 
@@ -947,7 +1005,9 @@ export default function MapViewer({
           makeButton("Rozhodnutie", "bpmn-icon-gateway-xor", {
             onClick: () => appendShape("bpmn:ExclusiveGateway"),
             hideOnAction: false,
+            closeOnClick: true,
             className: "custom-context-pad__btn--menu",
+            label: "Rozhodnutie",
           }),
         );
 
@@ -955,7 +1015,9 @@ export default function MapViewer({
           makeButton("Začiatok", "bpmn-icon-start-event-none", {
             onClick: () => appendShape("bpmn:StartEvent"),
             hideOnAction: false,
+            closeOnClick: true,
             className: "custom-context-pad__btn--menu",
+            label: "Začiatok",
           }),
         );
 
@@ -963,7 +1025,9 @@ export default function MapViewer({
           makeButton("Koniec", "bpmn-icon-end-event-none", {
             onClick: () => appendShape("bpmn:EndEvent"),
             hideOnAction: false,
+            closeOnClick: true,
             className: "custom-context-pad__btn--menu",
+            label: "Koniec",
           }),
         );
 
@@ -977,6 +1041,7 @@ export default function MapViewer({
               create.start(event, shape, { source: element });
             },
             hideOnAction: true,
+            label: "Poznámka",
           }),
         );
 
@@ -996,6 +1061,7 @@ export default function MapViewer({
               },
               className: "custom-context-pad__btn--danger",
               hideOnAction: false,
+              label: "Zmazať",
             }),
           );
         }
@@ -1056,6 +1122,9 @@ export default function MapViewer({
 
     const handleElementHover = (event) => {
       const { element } = event;
+      if (contextPadElement && element && contextPadElement.id === element.id) {
+        cancelContextPadClose();
+      }
       if (element?.waypoints) {
         // Disable connection hover styling/handles; keep hover for shapes/lanes.
         try {
@@ -1072,6 +1141,9 @@ export default function MapViewer({
     };
 
     const handleElementOut = (event) => {
+      if (contextPadElement && event?.element && contextPadElement.id === event.element.id) {
+        scheduleContextPadClose();
+      }
       if (event?.element?.waypoints) {
         try {
           canvas.removeMarker(event.element, "hover");
@@ -1448,6 +1520,7 @@ export default function MapViewer({
       }
       clearLaneHandles();
       clearContextPad();
+      cancelContextPadClose();
       stopGhostStyling();
       hideLaneHandles();
       modeler.__rerouteConnection = null;

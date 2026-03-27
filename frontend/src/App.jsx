@@ -124,9 +124,9 @@ function AppLayout() {
       <div className="app-shell">
         <header className="app-nav">
             <div className="app-nav__left">
-            <div className="app-nav__brand">
+            <Link to="/" className="app-nav__brand" aria-label="Prejsť na hlavné menu">
               <span className="app-nav__brand-text">BPMN.Gen</span>
-            </div>
+            </Link>
           <HeaderStepper />
           </div>
           <nav className="app-nav__links">

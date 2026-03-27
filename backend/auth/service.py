@@ -556,6 +556,31 @@ def remove_org_member_by_email(org_id: str, email: str) -> dict:
     return {"email": row["email"], "removed": True}
 
 
+def leave_org(org_id: str, user_id: str) -> dict:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT m.id AS membership_id, m.role AS role, u.email AS email
+            FROM organization_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.organization_id = ? AND m.user_id = ?
+            LIMIT 1
+            """,
+            (org_id, user_id),
+        ).fetchone()
+        if not row:
+            raise LookupError("Pouzivatel nie je clenom organizacie.")
+        role = normalize_org_role(row["role"])
+        if role == "owner" and count_org_owners(org_id) <= 1:
+            raise ValueError("Posledny owner nemoze odist z organizacie.")
+        conn.execute(
+            "DELETE FROM organization_members WHERE id = ?",
+            (row["membership_id"],),
+        )
+        conn.commit()
+    return {"email": row["email"], "removed": True}
+
+
 def get_org_by_id(org_id: str) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
