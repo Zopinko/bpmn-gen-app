@@ -3693,12 +3693,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setHasUnsavedChanges(false);
     setPreviewVersionTag("");
     setMentorNotes([]);
-    setMentorDoneIds([]);
-    setMentorAppliedIds([]);
-    setMentorLoading(false);
-    setMentorError(null);
-    setMentorApplyingId(null);
-    setMentorStatus(null);
     setMentorLastRunAt(null);
     setLastSavedAt(null);
     setLastExportedAt(null);
