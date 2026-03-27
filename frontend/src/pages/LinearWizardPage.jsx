@@ -1015,7 +1015,7 @@ const countParallelHintItems = (line) => {
   );
   if (!body.trim()) return 0;
   return body
-    .split(/\s*;\s*|\s*,\s*|\s+\ba\b\s+/i)
+    .split(/\s*;\s*|\s*,\s*/i)
     .map((part) => part.trim())
     .filter(Boolean).length;
 };
@@ -1174,14 +1174,14 @@ const analyzeLaneLine = (lineText) => {
       .replace(/^popritom/, "")
       .replace(/^popri/, "");
     const stepCount = parts
-      .split(/\s*;\s*|\s*,\s*|\s+\ba\b\s+/i)
+      .split(/\s*;\s*|\s*,\s*/i)
       .map((part) => part.trim())
       .filter(Boolean).length;
-    const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky (oddeľ ich ;, , alebo slovom „a“)." : "";
+    const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky a oddeľ ich ; alebo ,." : "";
     return {
       type: "and",
       badge: "PARALELNE",
-      hint: "Paralela: „Paralelne: krok; krok; krok“ alebo „Zároveň krok, krok a krok“.",
+      hint: "Paralela: „Paralelne: krok; krok; krok“ alebo „Paralelne: krok, krok, krok“.",
       warning,
       success: warning ? "" : "Super, toto je paralelné rozdelenie.",
     };
@@ -1196,12 +1196,69 @@ const analyzeLaneLine = (lineText) => {
   };
 };
 
+const splitLinearLaneSteps = (lineText) =>
+  String(lineText || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+const splitInlineSpecialLaneStep = (lineText) => {
+  const text = String(lineText || "").trim();
+  if (!text) return { prefixSteps: [], specialStep: null };
+  const specialMatch = text.match(
+    /\b(Ak|Keď|Ked|paralelne|zároveň|zaroven|súčasne|sucasne|súbežne|subezne|naraz|popri tom|popritom)\b/i,
+  );
+  if (!specialMatch || typeof specialMatch.index !== "number" || specialMatch.index <= 0) {
+    return { prefixSteps: [], specialStep: null };
+  }
+  const prefix = text.slice(0, specialMatch.index).trim().replace(/,+\s*$/, "");
+  if (!prefix) return { prefixSteps: [], specialStep: null };
+  return {
+    prefixSteps: splitLinearLaneSteps(prefix),
+    specialStep: text.slice(specialMatch.index).trim() || null,
+  };
+};
+
 const analyzeLaneLines = (text) =>
   (text || "")
     .split(/\r?\n/)
-    .map((line, idx) => {
+    .flatMap((line, idx) => {
+      const { prefixSteps, specialStep } = splitInlineSpecialLaneStep(line);
+      if (prefixSteps.length && specialStep) {
+        const prefixItems = prefixSteps.map((taskText, taskIdx) => ({
+          id: `${idx}-prefix-${taskIdx}-${taskText.length}`,
+          lineNumber: idx + 1,
+          text: taskText,
+          type: "task",
+          badge: "KROK",
+          hint: "Toto bude bežný krok v procese.",
+          warning: "",
+          success: "",
+        }));
+        const specialAnalysis = analyzeLaneLine(specialStep);
+        if (!specialAnalysis) return prefixItems;
+        return [
+          ...prefixItems,
+          {
+            id: `${idx}-special-${specialStep.length}`,
+            lineNumber: idx + 1,
+            text: specialStep.trim(),
+            ...specialAnalysis,
+          },
+        ];
+      }
       const analysis = analyzeLaneLine(line);
-      if (!analysis) return null;
+      if (!analysis) return [];
+      if (analysis.type === "task") {
+        const taskSteps = splitLinearLaneSteps(line);
+        const items = (taskSteps.length ? taskSteps : [line.trim()]).map((taskText, taskIdx) => ({
+          id: `${idx}-${taskIdx}-${taskText.length}`,
+          lineNumber: idx + 1,
+          text: taskText,
+          ...analysis,
+        }));
+        return items;
+      }
       return {
         id: `${idx}-${line.length}`,
         lineNumber: idx + 1,
@@ -8557,7 +8614,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <div className="wizard-lane-v2__title">{laneRoleDisplayName}</div>
                   <div className="wizard-lane-v2__subtitle">{laneSubtitle}</div>
                   <div className="wizard-lane-v2__hint">
-                    Tu doplníš kroky tejto roly. 1 riadok znamená 1 krok v procese.
+                    Tu doplníš kroky tejto roly. Ďalší krok môžeš oddeliť čiarkou alebo pokračovať na novom riadku.
                   </div>
                 </div>
                 <div className="wizard-lane-v2__header-actions">
@@ -8586,65 +8643,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="process-card-body wizard-lane-v2__body" ref={lanePanelScrollRef}>
                 <div className="wizard-lane-v2__card">
-                    {showGuideBanners &&
-                    guideState?.scope === "lane" &&
-                    guideState?.laneId &&
-                    selectedLane?.id === guideState.laneId ? (
-                      <div className="guide-panel">
-                        {guideState?.title ? (
-                          <div className="guide-panel__title">{guideState.title}</div>
-                        ) : null}
-                        <div className="guide-panel__text">{guideState.message}</div>
-                        <div className="guide-panel__actions">
-                          {guideState?.primary ? (
-                            <button
-                              className="btn btn--small btn-primary"
-                              type="button"
-                              onClick={() =>
-                                handleGuideAction(
-                                  guideState.primary.action,
-                                  guideState.primary.payload,
-                                )
-                              }
-                            >
-                              {guideState.primary.label}
-                            </button>
-                          ) : null}
-                          {guideState?.secondary && guideState.secondary.action !== "NOT_NOW" ? (
-                            <button
-                              className="btn btn--small"
-                              type="button"
-                              onClick={() =>
-                                handleGuideAction(
-                                  guideState.secondary.action,
-                                  guideState.secondary.payload,
-                                )
-                              }
-                            >
-                              {guideState.secondary.label}
-                            </button>
-                          ) : null}
-                          {guideState?.tertiary ? (
-                            <button
-                              className={`btn btn--small ${guideState?.tertiary?.action === "CONNECT_END_HERE" ? "btn-guide-cta" : ""}`}
-                              type="button"
-                              onClick={() => {
-                                console.log("[Guide] tertiary click", {
-                                  action: guideState?.tertiary?.action,
-                                  payload: guideState?.tertiary?.payload || null,
-                                });
-                                handleGuideAction(
-                                  guideState.tertiary.action,
-                                  guideState.tertiary.payload,
-                                );
-                              }}
-                            >
-                              {guideState.tertiary.label}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
                     <div className="wizard-lane-v2__onboarding">
                       <div className="wizard-lane-v2__onboarding-title">Ako písať kroky v role</div>
                       <div className="wizard-lane-v2__onboarding-list">
@@ -8688,7 +8686,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     </div>
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
-                      <div className="wizard-lane-v2__section-sub">Píš stručne. 1 riadok = 1 krok v procese.</div>
+                      <div className="wizard-lane-v2__section-sub">
+                        Píš stručne. Čiarka oddelí ďalší krok, takže môžeš napísať viac krokov aj v jednom riadku.
+                      </div>
                       {isDemoMode ? (
                         <div className="wizard-lane-v2__section-sub">Demo limit: max {DEMO_LIMITS.maxObjectsPerLane} objektov na rolu.</div>
                       ) : null}
@@ -8698,7 +8698,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         onChange={(e) => updateLaneDescription(e.target.value)}
                         rows={9}
                         placeholder={
-                          "Prijmem žiadosť\nOverím identitu\nAk identita nie je platná, zamietnem žiadosť, inak pokračujem..."
+                          "Prijmem žiadosť, overím identitu\nAk identita nie je platná, zamietnem žiadosť, inak pokračujem..."
                         }
                         onKeyDown={(e) => {
                           if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {

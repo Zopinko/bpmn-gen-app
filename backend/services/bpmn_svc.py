@@ -112,12 +112,49 @@ def _expand_conditional_step(
     if not cond or not then_part:
         return None, [], []
 
+    def _looks_like_step_start(word: str) -> bool:
+        token = re.sub(r"[^0-9A-Za-zÀ-ž]+", "", str(word or "").strip().lower())
+        if len(token) < 3:
+            return False
+        return token.endswith(
+            (
+                "im",
+                "ím",
+                "am",
+                "ám",
+                "em",
+                "iem",
+                "ujem",
+                "ujem",
+                "nem",
+                "nim",
+            )
+        )
+
+    def _split_branch_tail_and_step(part: str) -> list[str]:
+        text = str(part or "").strip().rstrip(".")
+        if not text or " a " not in text.lower():
+            return [text] if text else []
+        left, right = re.split(r"\s+a\s+", text, maxsplit=1, flags=re.IGNORECASE)
+        right = right.strip()
+        if not left.strip() or not right:
+            return [text]
+        right_first_word = right.split()[0] if right.split() else ""
+        if not _looks_like_step_start(right_first_word):
+            return [text]
+        return [left.strip().rstrip("."), right.rstrip(".")]
+
     def _split_branch_steps(raw: str | None) -> list[str]:
         text = str(raw or "").strip()
         if not text:
             return []
         parts = [part.strip().rstrip(".") for part in text.split(",")]
-        return [part for part in parts if part]
+        expanded: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            expanded.extend(_split_branch_tail_and_step(part))
+        return [part for part in expanded if part]
 
     then_part = then_part or "Krok"
     gw_id = make_gateway_id()
@@ -211,21 +248,12 @@ def _expand_parallel_step(
                 cleaned.append(text)
         return cleaned
 
-    def _split_with_and(raw: str) -> list[str]:
-        # split by " a " / " aj " between words
-        chunks = re.split(r"\s+(?:a|aj)\s+", raw, flags=re.IGNORECASE)
-        return _clean_parts(chunks)
-
     def _split_items(raw: str) -> list[str]:
         if ";" in raw:
             return _clean_parts(raw.split(";"))
         if "," in raw:
-            parts = _clean_parts(raw.split(","))
-            merged: list[str] = []
-            for part in parts:
-                merged.extend(_split_with_and(part))
-            return _clean_parts(merged)
-        return _split_with_and(raw)
+            return _clean_parts(raw.split(","))
+        return _clean_parts([raw])
 
     # Allow "Paralelne: ..." explicitly
     m = re.match(r"^\s*paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
@@ -538,11 +566,63 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
     if not steps:
         return postprocess_engine_json(engine, locale="sk")
 
+    def _split_linear_steps(raw: str) -> list[str]:
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        return [part.strip().rstrip(".") for part in text.split(",") if part.strip()]
+
+    def _split_inline_special_step(raw: str) -> tuple[list[str], str | None]:
+        text = str(raw or "").strip()
+        if not text:
+            return [], None
+        special_match = re.search(
+            r"\b(Ak|Keď|Ked|paralelne|zároveň|zaroven|súčasne|sucasne|súbežne|subezne|naraz|popri tom|popritom)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not special_match or special_match.start() <= 0:
+            return [], None
+        prefix = text[: special_match.start()].strip().rstrip(",")
+        if not prefix:
+            return [], None
+        special = text[special_match.start() :].strip()
+        return _split_linear_steps(prefix), special or None
+
+    def _append_linear_step(step_text: str) -> None:
+        nonlocal prev_id, nodes, flows
+        created_id = _new_task_id()
+        node_payload: Dict[str, Any] = {
+            "id": created_id,
+            "type": "task",
+            "name": step_text,
+            "laneId": target_lane_id,
+        }
+        if align_global_x:
+            node_payload["_align_global_x"] = True
+
+        nodes.append(node_payload)
+        if prev_id:
+            flows.append(
+                {
+                    "id": _new_flow_id(prev_id, created_id),
+                    "source": prev_id,
+                    "target": created_id,
+                }
+            )
+        prev_id = created_id
+
     if end_flow_id:
         flows = [flow for flow in flows if flow.get("id") != end_flow_id]
         flow_ids.discard(end_flow_id)
 
     for step in steps:
+        prefix_steps, inline_special_step = _split_inline_special_step(step)
+        if prefix_steps and inline_special_step:
+            for prefix_step in prefix_steps:
+                _append_linear_step(prefix_step)
+            step = inline_special_step
+
         par_counter = {"i": 0}
         new_prev, new_nodes, new_flows = _expand_parallel_step(
             step=step,
@@ -580,26 +660,9 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             prev_id = new_prev or prev_id
             continue
 
-        created_id = _new_task_id()
-        node_payload: Dict[str, Any] = {
-            "id": created_id,
-            "type": "task",
-            "name": step,
-            "laneId": target_lane_id,
-        }
-        if align_global_x:
-            node_payload["_align_global_x"] = True
-
-        nodes.append(node_payload)
-        if prev_id:
-            flows.append(
-                {
-                    "id": _new_flow_id(prev_id, created_id),
-                    "source": prev_id,
-                    "target": created_id,
-                }
-            )
-        prev_id = created_id
+        linear_steps = _split_linear_steps(step) or [step]
+        for linear_step in linear_steps:
+            _append_linear_step(linear_step)
 
     if end_node_id and prev_id:
         has_link = any(

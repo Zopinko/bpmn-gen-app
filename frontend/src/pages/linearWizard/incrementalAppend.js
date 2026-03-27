@@ -1000,12 +1000,12 @@ export function applyIncrementalAppend({
               Boolean(tgtAttrs["data-xor-split-id"] || tgtAttrs["data-xor-join-id"]) ||
               tgtAttrs["data-branch"] === "alt" ||
               Number.isFinite(xorBranchIndex);
-            modeling.updateProperties(connection, { name: hasYes ? "Nie" : "횁no" });
+            modeling.updateProperties(connection, { name: hasYes ? "Nie" : "햚o" });
             if (hasXorMeta) {
               const isNoBranch =
                 tgtAttrs["data-branch"] === "alt" ||
                 (Number.isFinite(xorBranchIndex) && xorBranchIndex > 0);
-              modeling.updateProperties(connection, { name: isNoBranch ? "Nie" : "훯혖no" });
+              modeling.updateProperties(connection, { name: isNoBranch ? "Nie" : "햚o" });
             }
           }
         }
