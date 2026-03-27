@@ -25,7 +25,6 @@ import {
   approveOrgDeleteRequest,
   rejectOrgDeleteRequest,
   mentorReview,
-  mentorApply,
 } from "../api/wizard";
 import {
   createOrgFolder,
@@ -1502,16 +1501,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [processPanelHeight, setProcessPanelHeight] = useState(620);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
   const [mentorNotes, setMentorNotes] = useState([]);
-  const [mentorDoneIds, setMentorDoneIds] = useState([]);
-  const [mentorAppliedIds, setMentorAppliedIds] = useState([]);
-  const [mentorLoading, setMentorLoading] = useState(false);
-  const [mentorError, setMentorError] = useState(null);
-  const [mentorApplyingId, setMentorApplyingId] = useState(null);
-  const [mentorStatus, setMentorStatus] = useState(null);
-  const [mentorStale, setMentorStale] = useState(false);
   const [mentorLastRunAt, setMentorLastRunAt] = useState(null);
-  const mentorHighlightRef = useRef(null);
-  const mentorReviewedEngineRef = useRef(null);
   const storyEngineRef = useRef(null);
   const guidePatchTimerRef = useRef(null);
   const guideHighlightTimerRef = useRef(null);
@@ -7771,151 +7761,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         event.target.value = "";
       }
     }
-  };
-
-  const buildMentorText = () => {
-    const parts = [];
-    const laneText = laneDescription.trim();
-    if (laneText) parts.push(laneText);
-    return parts.join("\n");
-  };
-
-  const runMentorReview = async () => {
-    if (!engineJson) {
-      setMentorError("Najprv vygeneruj alebo naimportuj diagram.");
-      return;
-    }
-    setMentorLoading(true);
-    setMentorError(null);
-    setMentorStatus(null);
-    try {
-      let currentEngine = engineJson;
-      const modeler = modelerRef.current;
-      if (modeler?.saveXML) {
-        try {
-          const { xml: diagramXml } = await modeler.saveXML({ format: true });
-          if (diagramXml && diagramXml.trim()) {
-            const file = new File([diagramXml], "diagram.bpmn", {
-              type: "application/bpmn+xml",
-            });
-            const importResp = await importBpmn(file);
-            const importedEngine = importResp?.engine_json || importResp;
-            if (importedEngine) {
-              currentEngine = importedEngine;
-            }
-          }
-        } catch {
-          // Keep current engine_json if sync fails.
-        }
-      }
-      const payload = {
-        text: buildMentorText(),
-        engine_json: currentEngine,
-        kb_version: null,
-        telemetry: null,
-        telemetry_id: null,
-      };
-      const response = await mentorReview(payload);
-      const findings = response?.findings || [];
-      setMentorNotes(findings);
-      setMentorDoneIds([]);
-      setMentorAppliedIds([]);
-      setMentorLastRunAt(Date.now());
-      mentorReviewedEngineRef.current = currentEngine;
-      setMentorStale(false);
-      const meta = response?.meta || {};
-      const nodes = meta?.node_count ?? "?";
-      const flows = meta?.flow_count ?? "?";
-      const lanes = meta?.lane_count ?? "?";
-      setMentorStatus(
-        `Mentor: ${findings.length} nálezov (nodes: ${nodes}, flows: ${flows}, lanes: ${lanes})`,
-      );
-      window.setTimeout(() => setMentorStatus(null), 2400);
-    } catch (e) {
-      const message = e?.message || "Nepodarilo sa spustit mentor kontrolu.";
-      setMentorError(message);
-    } finally {
-      setMentorLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!mentorReviewedEngineRef.current) return;
-    if (engineJson !== mentorReviewedEngineRef.current) {
-      setMentorStale(true);
-    }
-  }, [engineJson]);
-
-  const toggleMentorDone = (proposalId) => {
-    setMentorDoneIds((prev) =>
-      prev.includes(proposalId) ? prev.filter((id) => id !== proposalId) : [...prev, proposalId],
-    );
-  };
-
-  const handleMentorApply = async (proposal) => {
-    if (!engineJson) {
-      setMentorError("Najprv vygeneruj alebo naimportuj diagram.");
-      return;
-    }
-    setMentorError(null);
-    setMentorStatus(null);
-    setMentorApplyingId(proposal.id);
-    try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
-      }
-      const payload = {
-        engine_json: engineJson,
-        acceptedFindingIds: [proposal.id],
-        findings: [proposal],
-      };
-      const response = await mentorApply(payload);
-      const updatedEngine = response?.engine_json || engineJson;
-      setEngineJson(updatedEngine);
-      const updatedXml = await renderEngineXml(updatedEngine);
-      setXmlFull(updatedXml, "mentorApplyFix");
-      setMentorAppliedIds((prev) => (prev.includes(proposal.id) ? prev : [...prev, proposal.id]));
-      setMentorDoneIds((prev) => (prev.includes(proposal.id) ? prev : [...prev, proposal.id]));
-      setMentorStatus("Oprava bola aplikovana.");
-      window.setTimeout(() => setMentorStatus(null), 2400);
-    } catch (e) {
-      const message = e?.message || "Nepodarilo sa aplikovat opravu.";
-      setMentorError(message);
-    } finally {
-      setMentorApplyingId(null);
-    }
-  };
-
-  const focusMentorTarget = (proposal) => {
-    const targetId = proposal?.target?.id;
-    if (!targetId) return;
-    const modeler = modelerRef.current;
-    if (!modeler) return;
-    const elementRegistry = modeler.get("elementRegistry");
-    const canvas = modeler.get("canvas");
-    const selection = modeler.get("selection");
-    const element = elementRegistry?.get(targetId);
-    if (!element || !canvas) {
-      setMentorError("Nenasiel som ciel na mape.");
-      return;
-    }
-    selection?.select(element);
-    if (typeof canvas.scrollToElement === "function") {
-      canvas.scrollToElement(element);
-    } else {
-      canvas.zoom("fit-viewport", "auto");
-    }
-    if (mentorHighlightRef.current) {
-      canvas.removeMarker(mentorHighlightRef.current, "mentor-highlight");
-    }
-    canvas.addMarker(element.id, "mentor-highlight");
-    mentorHighlightRef.current = element.id;
-    window.setTimeout(() => {
-      if (mentorHighlightRef.current === element.id) {
-        canvas.removeMarker(element.id, "mentor-highlight");
-        mentorHighlightRef.current = null;
-      }
-    }, 1800);
   };
 
   const generatorInput = processCard.generatorInput;
