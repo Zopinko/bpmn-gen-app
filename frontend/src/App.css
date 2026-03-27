@@ -4879,13 +4879,48 @@ body {
 }
 
 .wizard-lane-v2__control-item {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  border: 1px solid transparent;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-  padding-bottom: 6px;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 10px 7px;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.wizard-lane-v2__control-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+.wizard-lane-v2__control-item:focus-visible {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+
+.wizard-lane-v2__control-item.is-warning {
+  border-color: rgba(251, 146, 60, 0.26);
+  background: rgba(251, 146, 60, 0.07);
+}
+
+.wizard-lane-v2__control-item.is-warning:hover {
+  background: rgba(251, 146, 60, 0.1);
+  border-color: rgba(251, 146, 60, 0.34);
+}
+
+.wizard-lane-v2__control-item {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  padding-bottom: 7px;
 }
 
 .wizard-lane-v2__control-item:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+  margin-bottom: 0;
 }
 
 .wizard-lane-v2__control-warning {
@@ -4973,6 +5008,24 @@ body {
   font-size: 12px;
   line-height: 1.5;
   color: rgba(148, 163, 184, 0.92);
+}
+
+.wizard-lane-v2__control-meta {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.88);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.wizard-lane-v2__control-item.is-warning .wizard-lane-v2__control-meta {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fed7aa;
 }
 
 .wizard-help-card-hint--modal {

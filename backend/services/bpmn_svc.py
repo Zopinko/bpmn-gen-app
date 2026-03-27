@@ -240,6 +240,24 @@ def _expand_parallel_step(
     """Return (new_prev, nodes, flows) for parallel patterns or fallback."""
     items: list[str] = []
 
+    def _looks_like_step_start(word: str) -> bool:
+        token = re.sub(r"[^0-9A-Za-zÀ-ž]+", "", str(word or "").strip().lower())
+        if len(token) < 3:
+            return False
+        return token.endswith(
+            (
+                "im",
+                "ím",
+                "am",
+                "ám",
+                "em",
+                "iem",
+                "ujem",
+                "nem",
+                "nim",
+            )
+        )
+
     def _clean_parts(parts: list[str]) -> list[str]:
         cleaned = []
         for part in parts:
@@ -248,12 +266,32 @@ def _expand_parallel_step(
                 cleaned.append(text)
         return cleaned
 
+    def _split_tail_and_step(part: str) -> list[str]:
+        text = str(part or "").strip().rstrip(".")
+        if not text or " a " not in text.lower():
+            return [text] if text else []
+        left, right = re.split(r"\s+a\s+", text, maxsplit=1, flags=re.IGNORECASE)
+        right = right.strip()
+        if not left.strip() or not right:
+            return [text]
+        right_first_word = right.split()[0] if right.split() else ""
+        if not _looks_like_step_start(right_first_word):
+            return [text]
+        return [left.strip().rstrip("."), right.rstrip(".")]
+
     def _split_items(raw: str) -> list[str]:
         if ";" in raw:
-            return _clean_parts(raw.split(";"))
-        if "," in raw:
-            return _clean_parts(raw.split(","))
-        return _clean_parts([raw])
+            parts = _clean_parts(raw.split(";"))
+        elif "," in raw:
+            parts = _clean_parts(raw.split(","))
+        else:
+            parts = _clean_parts([raw])
+        expanded: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            expanded.extend(_split_tail_and_step(part))
+        return [part for part in expanded if part]
 
     # Allow "Paralelne: ..." explicitly
     m = re.match(r"^\s*paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
@@ -534,6 +572,8 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
     prev_id = None
     if end_node_id:
         incoming_to_end = [flow for flow in flows if flow.get("target") == end_node_id]
+        gateway_prev_id = None
+        gateway_end_flow_id = None
         for flow in incoming_to_end:
             src_id = flow.get("source")
             src_node = nodes_by_id.get(src_id)
@@ -541,18 +581,38 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
                 continue
             src_type = _normalize_node_type(src_node)
             if src_type in gateway_types:
+                if src_node.get("laneId") == target_lane_id:
+                    gateway_prev_id = src_id
+                    gateway_end_flow_id = flow.get("id")
                 continue
             if src_node.get("laneId") == target_lane_id and src_type != "endEvent":
                 prev_id = src_id
                 end_flow_id = flow.get("id")
                 break
+        if prev_id is None and gateway_prev_id is not None:
+            prev_id = gateway_prev_id
+            end_flow_id = gateway_end_flow_id
         if prev_id is None:
             for node in reversed(lane_nodes):
                 if node.get("id") != end_node_id and _normalize_node_type(node) != "endEvent":
                     prev_id = node.get("id")
                     break
     elif lane_nodes:
-        prev_id = lane_nodes[-1].get("id")
+        sink_candidates = [
+            node
+            for node in lane_nodes
+            if _normalize_node_type(node) != "endEvent"
+            and not any(flow.get("source") == node.get("id") for flow in flows)
+        ]
+        gateway_sink_candidates = [
+            node for node in sink_candidates if _normalize_node_type(node) in gateway_types
+        ]
+        if gateway_sink_candidates:
+            prev_id = gateway_sink_candidates[-1].get("id")
+        elif len(sink_candidates) == 1:
+            prev_id = sink_candidates[0].get("id")
+        else:
+            prev_id = lane_nodes[-1].get("id")
 
     if end_node_id and prev_id and end_flow_id is None:
         for flow in flows:
@@ -560,9 +620,20 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
                 end_flow_id = flow.get("id")
                 break
 
-    steps = [
-        line.strip() for line in (data.description or "").splitlines() if line.strip()
-    ]
+    def _split_description_blocks(raw: str) -> list[str]:
+        blocks: list[str] = []
+        for line in str(raw or "").splitlines():
+            text = str(line or "").strip()
+            if not text:
+                continue
+            parts = re.split(r"\.\s+", text)
+            for part in parts:
+                cleaned = str(part or "").strip().rstrip(".")
+                if cleaned:
+                    blocks.append(cleaned)
+        return blocks
+
+    steps = _split_description_blocks(data.description or "")
     if not steps:
         return postprocess_engine_json(engine, locale="sk")
 

@@ -319,11 +319,13 @@ export function applyIncrementalAppend({
   const FLOW_GAP = Math.round(TASK_BOX_WIDTH * 0.8);
   const H_SPACING = FLOW_GAP;
   const H_GAP = H_SPACING;
-  const PARALLEL_BRANCH_GAP = 95;
+  const PARALLEL_BRANCH_GAP = 118;
   const XOR_BRANCH_GAP = 120;
   const PAD_Y = 40;
   const TASK_TO_TASK_GAP = FLOW_GAP;
   const GATEWAY_TO_TASK_GAP = FLOW_GAP;
+  const PARALLEL_GATEWAY_TO_TASK_GAP = GATEWAY_TO_TASK_GAP + 28;
+  const PARALLEL_BRANCH_BUS_GAP = 42;
   const XOR_GATEWAY_TO_TASK_GAP = GATEWAY_TO_TASK_GAP + 40;
   const XOR_BRANCH_TASK_GAP = Math.max(TASK_TO_TASK_GAP, TASK_BOX_WIDTH + 40);
   const BRANCH_OFFSET = 120;
@@ -401,7 +403,7 @@ export function applyIncrementalAppend({
       const targetJoinSplitId = String(tgtAttrs["data-parallel-join-id"] || "");
       const isSplitToBranch = Boolean(targetSplitId && parallelSplitId && targetSplitId === parallelSplitId);
       const isBranchToJoin = Boolean(targetJoinSplitId && parallelSplitId && targetJoinSplitId === parallelSplitId);
-      const splitExitX = srcRight + 30;
+      const splitExitX = srcRight + PARALLEL_BRANCH_BUS_GAP;
       if (isSplitToBranch) {
         return [
           { x: srcRight, y: srcMidY },
@@ -411,7 +413,7 @@ export function applyIncrementalAppend({
         ];
       }
       if (isBranchToJoin) {
-        const joinBusX = tgtLeft - 30;
+        const joinBusX = tgtLeft - PARALLEL_BRANCH_BUS_GAP;
         return [
           { x: srcRight, y: srcMidY },
           { x: joinBusX, y: srcMidY },
@@ -609,6 +611,25 @@ export function applyIncrementalAppend({
     return Math.round(baseY + offset);
   };
 
+  const hasBranchContext = (attrs) =>
+    Boolean(
+      attrs?.["data-branch"] === "alt" ||
+        attrs?.["data-parallel-split-id"] ||
+        attrs?.["data-parallel-join-id"] ||
+        attrs?.["data-xor-split-id"] ||
+        attrs?.["data-xor-join-id"] ||
+        attrs?.["data-parallel-branch-index"] !== undefined ||
+        attrs?.["data-xor-branch-index"] !== undefined,
+    );
+  const computeParallelBranchMidYFromSplit = (splitEl, laneEl, branchIndex) => {
+    const splitAttrs = splitEl?.businessObject?.$attrs || {};
+    if (splitEl && hasBranchContext(splitAttrs)) {
+      const splitMidY = Number(splitEl.y || 0) + Number(splitEl.height || 0) / 2;
+      return Math.round(splitMidY + branchIndex * PARALLEL_BRANCH_GAP);
+    }
+    return computeParallelBranchMidY(laneEl, branchIndex);
+  };
+
   const getConnectionLabel = (sourceEl, targetEl) => {
     if (!sourceEl || !targetEl) return "";
     const outgoing = Array.isArray(sourceEl.outgoing) ? sourceEl.outgoing : [];
@@ -773,7 +794,7 @@ export function applyIncrementalAppend({
       if (allowBranchPlacement && parallelBranchInfo?.splitId) {
         const splitEl = findElementByEngineId(parallelBranchInfo.splitId);
         if (splitEl) {
-          x = getNextXAfterElement(splitEl, FLOW_GAP);
+          x = getNextXAfterElement(splitEl, PARALLEL_GATEWAY_TO_TASK_GAP);
           forceBranchColumn = true;
         }
       }
@@ -821,9 +842,17 @@ export function applyIncrementalAppend({
         const laneBottom = laneForPlacement.y + laneForPlacement.height - (shape.height || 80) - PAD_Y;
         const baselineMidY = getBaselineMidY(laneForPlacement);
         const branchMidY = getBranchMidY(laneForPlacement, shape.height || 80);
+        const sourceAttrs = sourceEl?.businessObject?.$attrs || {};
+        const sourceIsParallelJoin = Boolean(
+          sourceEl &&
+            String(sourceEl?.businessObject?.$type || sourceEl?.type || "").includes("ParallelGateway") &&
+            sourceAttrs["data-parallel-join-id"],
+        );
         let targetMidY = isAltBranch ? branchMidY : baselineMidY;
         if (allowBranchPlacement && parallelBranchInfo) {
-          targetMidY = computeParallelBranchMidY(
+          const splitEl = findElementByEngineId(parallelBranchInfo.splitId);
+          targetMidY = computeParallelBranchMidYFromSplit(
+            splitEl,
             laneForPlacement,
             parallelBranchInfo.branchIndex,
           );
@@ -841,7 +870,7 @@ export function applyIncrementalAppend({
             forceBranchColumn = true;
           }
         } else if (allowBranchPlacement && isParallelJoin) {
-          targetMidY = baselineMidY;
+          targetMidY = sourceEl ? (sourceEl.y || 0) + (sourceEl.height || 0) / 2 : baselineMidY;
           const branchSources = incomingBranchMeta
             .filter((meta) => meta.splitId === parallelJoinSplitId)
             .map((meta) => meta.source);
@@ -849,10 +878,17 @@ export function applyIncrementalAppend({
             (maxX, src) => Math.max(maxX, getElementRight(src)),
             0,
           );
-          if (maxSourceRight > 0) {
+          if (sourceEl) {
+            x = getNextXAfterElement(sourceEl, FLOW_GAP);
+            forceBranchColumn = true;
+          } else if (maxSourceRight > 0) {
             x = maxSourceRight + FLOW_GAP;
             forceBranchColumn = true;
           }
+        } else if (allowBranchPlacement && sourceIsParallelJoin) {
+          targetMidY = (sourceEl.y || 0) + (sourceEl.height || 0) / 2;
+          x = getNextXAfterElement(sourceEl, FLOW_GAP);
+          forceBranchColumn = true;
         } else if (allowBranchPlacement && incomingXorMeta.length === 1 && !isXorJoin) {
           const src = incomingXorMeta[0].source;
           targetMidY = (src.y || 0) + (src.height || 0) / 2;
@@ -874,7 +910,19 @@ export function applyIncrementalAppend({
             forceBranchColumn = true;
           }
         }
-        y = Math.min(laneBottom, Math.max(laneTop, targetMidY - (shape.height || 80) / 2));
+        const desiredY = targetMidY - (shape.height || 80) / 2;
+        const isBranchAwarePlacement = Boolean(
+          parallelBranchInfo ||
+            xorBranchInfo ||
+            (incomingBranchMeta.length === 1 && !isParallelJoin) ||
+            (incomingXorMeta.length === 1 && !isXorJoin) ||
+            isParallelJoin ||
+            sourceIsParallelJoin ||
+            isXorJoin,
+        );
+        y = isBranchAwarePlacement
+          ? Math.max(laneTop, desiredY)
+          : Math.min(laneBottom, Math.max(laneTop, desiredY));
         x = x ?? cursorX;
         const nextCursor = Math.max(cursorX, x + (shape.width || 100) + H_GAP);
         setLaneCursor(laneKey, nextCursor);
@@ -900,6 +948,7 @@ export function applyIncrementalAppend({
           attrs["data-branch"] = "alt";
         }
         if (attrs) {
+          const sourceAttrs = sourceEl?.businessObject?.$attrs || {};
           if (parallelBranchInfo?.splitId) {
             attrs["data-parallel-split-id"] = parallelBranchInfo.splitId;
             attrs["data-parallel-branch-index"] = String(parallelBranchInfo.branchIndex);
@@ -908,6 +957,8 @@ export function applyIncrementalAppend({
             attrs["data-parallel-branch-index"] = incomingBranchMeta[0].branchIndex;
           } else if (isParallelJoin && parallelJoinSplitId) {
             attrs["data-parallel-join-id"] = parallelJoinSplitId;
+          } else if (sourceAttrs["data-parallel-join-id"]) {
+            attrs["data-parallel-join-id"] = String(sourceAttrs["data-parallel-join-id"]);
           }
           if (xorBranchInfo?.splitId) {
             attrs["data-xor-split-id"] = xorBranchInfo.splitId;
@@ -1000,12 +1051,12 @@ export function applyIncrementalAppend({
               Boolean(tgtAttrs["data-xor-split-id"] || tgtAttrs["data-xor-join-id"]) ||
               tgtAttrs["data-branch"] === "alt" ||
               Number.isFinite(xorBranchIndex);
-            modeling.updateProperties(connection, { name: hasYes ? "Nie" : "Áno" });
+            modeling.updateProperties(connection, { name: hasYes ? "Nie" : "\u00C1no" });
             if (hasXorMeta) {
               const isNoBranch =
                 tgtAttrs["data-branch"] === "alt" ||
                 (Number.isFinite(xorBranchIndex) && xorBranchIndex > 0);
-              modeling.updateProperties(connection, { name: isNoBranch ? "Nie" : "Áno" });
+              modeling.updateProperties(connection, { name: isNoBranch ? "Nie" : "\u00C1no" });
             }
           }
         }
@@ -1158,6 +1209,7 @@ export function applyIncrementalAppend({
       const incomingConns = Array.isArray(el.incoming) ? el.incoming : [];
       let shouldRerouteAfterSnap = false;
       let preferredSourceRowMidY = null;
+      const parallelJoinId = String(attrs["data-parallel-join-id"] || "");
       if (
         !elType.includes("Gateway") &&
         !elType.includes("StartEvent") &&
@@ -1175,20 +1227,26 @@ export function applyIncrementalAppend({
           preferredSourceRowMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
           targetMidY = preferredSourceRowMidY;
           shouldRerouteAfterSnap = true;
+        } else if (src && parallelJoinId && srcType.includes("ParallelGateway")) {
+          preferredSourceRowMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
+          targetMidY = preferredSourceRowMidY;
+          shouldRerouteAfterSnap = true;
         }
       }
       const parallelSplitId = String(attrs["data-parallel-split-id"] || "");
+      let resolvedByParallelBranch = false;
       const parallelBranchIndexRaw = attrs["data-parallel-branch-index"];
       if (parallelSplitId && parallelBranchIndexRaw !== undefined && parallelBranchIndexRaw !== null) {
         const branchIndex = Number(parallelBranchIndexRaw);
         const branchCount = (parallelSplitTargetsById.get(parallelSplitId) || []).length;
         if (Number.isFinite(branchIndex) && branchCount > 1) {
-          targetMidY = computeParallelBranchMidY(laneEl, branchIndex);
+          targetMidY = computeParallelBranchMidYFromSplit(findElementByEngineId(parallelSplitId), laneEl, branchIndex);
+          resolvedByParallelBranch = true;
         }
       }
       const xorSplitId = String(attrs["data-xor-split-id"] || "");
       const xorBranchIndexRaw = attrs["data-xor-branch-index"];
-      if (xorSplitId && xorBranchIndexRaw !== undefined && xorBranchIndexRaw !== null) {
+      if (!resolvedByParallelBranch && xorSplitId && xorBranchIndexRaw !== undefined && xorBranchIndexRaw !== null) {
         const branchIndex = Number(xorBranchIndexRaw);
         const branchCount = (xorSplitTargetsById.get(xorSplitId) || []).length;
         if (Number.isFinite(branchIndex) && branchCount > 1) {

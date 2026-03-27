@@ -1202,6 +1202,16 @@ const splitLinearLaneSteps = (lineText) =>
     .map((part) => part.trim())
     .filter(Boolean);
 
+const splitLaneBlocks = (text) =>
+  String(text || "")
+    .split(/\r?\n/)
+    .flatMap((line) =>
+      String(line || "")
+        .split(/\.\s+/)
+        .map((part) => part.trim().replace(/\.$/, ""))
+        .filter(Boolean),
+    );
+
 const splitInlineSpecialLaneStep = (lineText) => {
   const text = String(lineText || "").trim();
   if (!text) return { prefixSteps: [], specialStep: null };
@@ -1220,8 +1230,7 @@ const splitInlineSpecialLaneStep = (lineText) => {
 };
 
 const analyzeLaneLines = (text) =>
-  (text || "")
-    .split(/\r?\n/)
+  splitLaneBlocks(text)
     .flatMap((line, idx) => {
       const { prefixSteps, specialStep } = splitInlineSpecialLaneStep(line);
       if (prefixSteps.length && specialStep) {
@@ -1626,6 +1635,26 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [laneHelpTipDismissed, setLaneHelpTipDismissed] = useState(false);
   const [laneTemplateFlash, setLaneTemplateFlash] = useState(false);
   const laneTemplateFlashTimerRef = useRef(null);
+  const focusLaneLine = useCallback((lineNumber) => {
+    const textarea = laneTextareaRef.current;
+    if (!textarea || !Number.isFinite(lineNumber) || lineNumber < 1) return;
+    const rawLines = String(laneDescription || "").split(/\r?\n/);
+    const targetIndex = Math.min(rawLines.length, Math.max(1, lineNumber)) - 1;
+    let start = 0;
+    for (let i = 0; i < targetIndex; i += 1) {
+      start += rawLines[i].length + 1;
+    }
+    const targetLine = rawLines[targetIndex] || "";
+    const end = start + targetLine.length;
+    try {
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+      const lineHeight = 26;
+      textarea.scrollTop = Math.max(0, targetIndex * lineHeight - lineHeight);
+    } catch {
+      // ignore focus/selection errors
+    }
+  }, [laneDescription]);
   const logRenderMode = (mode, reason) => {
     if (!window.__BPMNGEN_DEBUG_RENDER) return;
     console.log("[render]", mode, reason || "");
@@ -8646,48 +8675,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     <div className="wizard-lane-v2__onboarding">
                       <div className="wizard-lane-v2__onboarding-title">Ako písať kroky v role</div>
                       <div className="wizard-lane-v2__onboarding-list">
-                        <div className="wizard-lane-v2__type-row">
-                          <button
-                            type="button"
-                            className="wizard-lane-v2__type-link"
-                            onClick={() => openLaneHelper({ type: "TASK" })}
-                          >
-                            KROK
-                          </button>
-                          <span className="wizard-lane-v2__type-copy">
-                            {" - bežná činnosť. Každý riadok je jeden samostatný krok."}
-                          </span>
+                        <div className="wizard-lane-v2__type-copy">
+                          Píš jednoducho to, čo táto rola robí. Ďalší krok môžeš oddeliť čiarkou alebo pokračovať na novom riadku.
                         </div>
-                        <div className="wizard-lane-v2__type-row">
-                          <button
-                            type="button"
-                            className="wizard-lane-v2__type-link"
-                            onClick={() => openLaneHelper({ type: "XOR" })}
-                          >
-                            ROZHODNUTIE
-                          </button>
-                          <span className="wizard-lane-v2__type-copy">
-                            {" - vetvenie. Použi formát „ak/keď ... tak ..., inak ...“."}
-                          </span>
+                        <div className="wizard-lane-v2__type-copy">
+                          Keď sa proces rozhoduje, začni vetu slovom <strong>ak</strong> alebo <strong>keď</strong>. Modrý pomocník pod poľom ti potom napovie, ako pokračovať.
                         </div>
-                        <div className="wizard-lane-v2__type-row">
-                          <button
-                            type="button"
-                            className="wizard-lane-v2__type-link"
-                            onClick={() => openLaneHelper({ type: "AND" })}
-                          >
-                            PARALELA
-                          </button>
-                          <span className="wizard-lane-v2__type-copy">
-                            {" - kroky súčasne. Použi „paralelne“, „súčasne“ alebo „naraz“."}
-                          </span>
+                        <div className="wizard-lane-v2__type-copy">
+                          Keď sa deje viac vecí naraz, začni vetu slovom <strong>paralelne</strong>, <strong>súčasne</strong> alebo <strong>naraz</strong>.
+                        </div>
+                        <div className="wizard-lane-v2__type-copy">
+                          Ak si nie si istý, napíš to vlastnými slovami. Kontrola zápisu dole ti priebežne ukáže, ako textu rozumie.
                         </div>
                       </div>
                     </div>
                     <div className="wizard-lane-v2__section">
                       <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
                       <div className="wizard-lane-v2__section-sub">
-                        Píš stručne. Čiarka oddelí ďalší krok, takže môžeš napísať viac krokov aj v jednom riadku.
+                        Píš stručne a vecne. Stačí opísať, čo táto rola robí a v akom poradí to nasleduje.
                       </div>
                       {isDemoMode ? (
                         <div className="wizard-lane-v2__section-sub">Demo limit: max {DEMO_LIMITS.maxObjectsPerLane} objektov na rolu.</div>
@@ -8821,14 +8826,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           laneHelperItems.length ? (
                             <div className="wizard-lane-v2__control-list">
                               {laneHelperItems.map((item) => (
-                                <div key={item.id} className="wizard-lane-v2__control-item">
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className={`wizard-lane-v2__control-item ${item.warning ? "is-warning" : ""}`}
+                                  onClick={() => focusLaneLine(item.lineNumber)}
+                                >
                                   <div className="wizard-lane-v2__control-line">
+                                    <span className="wizard-lane-v2__control-meta">Riadok {item.lineNumber}</span>
                                     <strong>{item.badge}</strong> - {item.text}
                                   </div>
                                   {item.warning && !inlineLaneHint ? (
                                     <div className="wizard-lane-v2__control-warning">{item.warning}</div>
                                   ) : null}
-                                </div>
+                                </button>
                               ))}
                             </div>
                           ) : (
