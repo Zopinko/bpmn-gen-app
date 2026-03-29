@@ -9165,6 +9165,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       disabled={demoBuilding}
                     />
                   </label>
+                  <label className="wizard-field">
+                    <span>Čo má byť na konci</span>
+                    <input
+                      value={processCard.generatorInput.output}
+                      onChange={(e) => updateGeneratorInput("output", e.target.value)}
+                      placeholder="Napr. Žiadosť je schválená alebo zamietnutá"
+                      disabled={demoBuilding}
+                    />
+                  </label>
                   <div className="wizard-dialog-section">
                     <strong style={{ display: "block", marginBottom: 6 }}>Čo si tu vyskúšaš</strong>
                     <div className="wizard-dialog-subtitle" style={{ fontSize: 13 }}>
