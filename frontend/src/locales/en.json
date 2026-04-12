@@ -35,30 +35,44 @@
   "register": {
     "title": "Register",
     "eyebrow": "BPMN.GEN",
-    "intro": "Create an account and start modelling processes.",
+    "intro": "Create an account and set up your space for processes, team, and organization.",
     "email": "E-mail",
     "password": "Password",
+    "confirm_password": "Confirm password",
     "submit": "Create account",
     "submitting": "Registering...",
     "has_account": "Already have an account?",
     "login_link": "Log in",
+    "passwords_mismatch": "Passwords do not match.",
     "success_generic": "Registration successful."
   },
   "forgot_password": {
     "title": "Forgot password",
-    "intro": "Enter your e-mail and we will send you a password reset link.",
+    "eyebrow": "Password recovery",
+    "intro": "Enter your e-mail and we will send you a link to set a new password.",
     "email": "E-mail",
-    "submit": "Send link",
+    "submit": "Send reset link",
     "submitting": "Sending...",
     "back_to_login": "Back to login",
-    "success": "Check your inbox."
+    "success": "If an account with this e-mail exists, we sent a password reset link.",
+    "error_generic": "Request failed. Please try again."
   },
   "reset_password": {
-    "title": "Reset password",
+    "title": "Password recovery",
+    "eyebrow": "Account security",
+    "intro": "Set your new password and get back to the app right away.",
     "new_password": "New password",
-    "submit": "Save password",
-    "submitting": "Saving...",
-    "back_to_login": "Back to login"
+    "confirm_password": "Confirm password",
+    "submit": "Reset password",
+    "submitting": "Resetting...",
+    "back_to_login": "Back to login",
+    "missing_token": "Reset token is missing.",
+    "passwords_mismatch": "Passwords do not match.",
+    "password_too_short": "Password must be at least 8 characters.",
+    "success": "Password successfully reset.",
+    "error_generic": "Password reset failed. Please request a new link.",
+    "redirect_hint": "Redirecting to login in {{seconds}} s.",
+    "login_now": "Log in now"
   },
   "story": {
     "connectors": ["Then", "Next", "After that", "In the next step"],

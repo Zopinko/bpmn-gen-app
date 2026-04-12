@@ -35,30 +35,44 @@
   "register": {
     "title": "Registrácia",
     "eyebrow": "BPMN.GEN",
-    "intro": "Vytvor si účet a začni modelovať procesy.",
+    "intro": "Vytvor si účet a priprav si priestor pre vlastné procesy, tím a organizáciu.",
     "email": "E-mail",
     "password": "Heslo",
+    "confirm_password": "Potvrď heslo",
     "submit": "Vytvoriť účet",
     "submitting": "Registrujem...",
     "has_account": "Už máš účet?",
     "login_link": "Prihlás sa",
+    "passwords_mismatch": "Heslá sa nezhodujú.",
     "success_generic": "Registrácia bola úspešná."
   },
   "forgot_password": {
     "title": "Zabudnuté heslo",
-    "intro": "Zadaj svoj e-mail a pošleme ti odkaz na obnovenie hesla.",
+    "eyebrow": "Obnova prístupu",
+    "intro": "Zadaj svoj e-mail a pošleme ti link, cez ktorý si nastavíš nové heslo.",
     "email": "E-mail",
-    "submit": "Odoslať odkaz",
+    "submit": "Poslať reset link",
     "submitting": "Odosielam...",
     "back_to_login": "Späť na prihlásenie",
-    "success": "Skontroluj svoju e-mailovú schránku."
+    "success": "Ak účet s týmto e-mailom existuje, poslali sme odkaz na reset hesla.",
+    "error_generic": "Požiadavka zlyhala. Skús to znova."
   },
   "reset_password": {
-    "title": "Obnoviť heslo",
+    "title": "Obnova hesla",
+    "eyebrow": "Bezpečnosť účtu",
+    "intro": "Nastav si nové heslo a hneď potom sa môžeš vrátiť späť do aplikácie.",
     "new_password": "Nové heslo",
-    "submit": "Uložiť heslo",
-    "submitting": "Ukladám...",
-    "back_to_login": "Späť na prihlásenie"
+    "confirm_password": "Potvrď heslo",
+    "submit": "Obnoviť heslo",
+    "submitting": "Obnovujem...",
+    "back_to_login": "Späť na prihlásenie",
+    "missing_token": "Reset token chýba.",
+    "passwords_mismatch": "Heslá sa nezhodujú.",
+    "password_too_short": "Heslo musí mať aspoň 8 znakov.",
+    "success": "Heslo bolo úspešne obnovené.",
+    "error_generic": "Obnova hesla zlyhala. Vyžiadaj nový odkaz.",
+    "redirect_hint": "Presmerovanie na prihlásenie prebehne o {{seconds}} s.",
+    "login_now": "Prihlásiť sa teraz"
   },
   "story": {
     "connectors": ["Potom", "Nasledne", "Dalej", "V dalsom kroku"],
