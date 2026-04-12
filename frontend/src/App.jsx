@@ -1,5 +1,6 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import HeaderStepper from "./components/HeaderStepper";
 import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { getMe, logoutAuth } from "./api/auth";
@@ -30,6 +31,8 @@ function AppLayout() {
   const [authState, setAuthState] = useState({ user: null, loading: true });
   const [activeOrgLabel, setActiveOrgLabel] = useState("");
   const isDemoRoute = location.pathname === "/demo";
+  const { t, i18n } = useTranslation();
+  const toggleLang = () => i18n.changeLanguage(i18n.language === "sk" ? "en" : "sk");
 
   const refreshAuthState = useCallback(async () => {
     setAuthState((prev) => ({ ...prev, loading: true }));
@@ -89,7 +92,7 @@ function AppLayout() {
 
   const renderProtected = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -99,7 +102,7 @@ function AppLayout() {
 
   const renderPublicOnly = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (authState.user) {
       return <Navigate to="/" replace />;
@@ -109,7 +112,7 @@ function AppLayout() {
 
   const renderSuperAdminOnly = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -124,12 +127,20 @@ function AppLayout() {
       <div className="app-shell">
         <header className="app-nav">
             <div className="app-nav__left">
-            <Link to="/" className="app-nav__brand" aria-label="Prejsť na hlavné menu">
+            <Link to="/" className="app-nav__brand" aria-label={t("app.brand_label")}>
               <span className="app-nav__brand-text">BPMN.Gen</span>
             </Link>
           <HeaderStepper />
           </div>
           <nav className="app-nav__links">
+            <button
+              type="button"
+              className="btn app-nav__lang"
+              onClick={toggleLang}
+              aria-label="Switch language"
+            >
+              {i18n.language === "sk" ? "EN" : "SK"}
+            </button>
             {isDemoRoute ? (
               <div className="app-nav__auth">
                 <button
@@ -141,7 +152,7 @@ function AppLayout() {
                     }
                   }}
                 >
-                  Ako demo funguje
+                  {t("app.nav.demo_info")}
                 </button>
                 <button
                   type="button"
@@ -152,19 +163,19 @@ function AppLayout() {
                     }
                   }}
                 >
-                  Reset demo
+                  {t("app.nav.demo_reset")}
                 </button>
                 <Link to="/register" className="app-nav__link">
-                  Vytvoriť účet
+                  {t("app.nav.create_account")}
                 </Link>
               </div>
             ) : !authState.user ? (
               <>
                 <Link to="/login" className="app-nav__link">
-                  Prihlásenie
+                  {t("app.nav.login")}
                 </Link>
                 <Link to="/register" className="app-nav__link">
-                  Registrácia
+                  {t("app.nav.register")}
                 </Link>
               </>
             ) : (
@@ -173,22 +184,22 @@ function AppLayout() {
                 authState.user?.admin_panel_available === true &&
                 authState.user?.is_super_admin === true ? (
                   <Link to="/admin" className="app-nav__link">
-                    Admin
+                    {t("app.nav.admin")}
                   </Link>
                 ) : null}
                 <div className="app-nav__auth-meta">
-                  <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
+                  <span className="app-nav__auth-status">{t("app.nav.logged_in_as", { email: authState.user.email })}</span>
                   {activeOrgLabel ? (
-                    <span className="app-nav__auth-status">Aktívna organizácia: {activeOrgLabel}</span>
+                    <span className="app-nav__auth-status">{t("app.nav.active_org", { name: activeOrgLabel })}</span>
                   ) : (
-                    <span className="app-nav__auth-status">Zatiaľ nemáš aktívnu organizáciu</span>
+                    <span className="app-nav__auth-status">{t("app.nav.no_active_org")}</span>
                   )}
                 </div>
                 <Link to="/organization" className="btn app-nav__profile">
-                  Organizácia
+                  {t("app.nav.organization")}
                 </Link>
                 <Link to="/account" className="btn app-nav__profile">
-                  Profil
+                  {t("app.nav.profile")}
                 </Link>
               </div>
             )}
@@ -223,6 +234,3 @@ function AppLayout() {
 }
 
 export default App;
-
-
-
