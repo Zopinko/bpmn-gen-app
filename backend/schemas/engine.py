@@ -10,6 +10,7 @@ SCHEMA = {
     "properties": {
         "processId": {"type": "string", "minLength": 1},
         "name": {"type": "string", "minLength": 1},
+        "locale": {"type": "string", "minLength": 2},
         "lanes": {
             "type": "array",
             "items": {
