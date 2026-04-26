@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { getAdminModels, getAdminOrgs, getAdminUsers } from "../api/admin";
 import "./AdminPanelPage.css";
 
 const TABS = [
-  { id: "users", label: "Používatelia", loader: getAdminUsers },
-  { id: "orgs", label: "Organizácie", loader: getAdminOrgs },
-  { id: "models", label: "Modely", loader: getAdminModels },
+  { id: "users", loader: getAdminUsers },
+  { id: "orgs", loader: getAdminOrgs },
+  { id: "models", loader: getAdminModels },
 ];
 
 const EMPTY_TAB = { loading: false, error: "", count: 0, items: [], loaded: false };
 const RECENT_MODELS_LIMIT = 30;
 
 function AdminPanelPage() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState("users");
   const [search, setSearch] = useState("");
   const [selectedItem, setSelectedItem] = useState(null);
@@ -58,11 +60,8 @@ function AdminPanelPage() {
         },
       }));
     } catch (error) {
-      const rawMessage = error?.message || "Nepodarilo sa načítať admin dáta.";
-      const hint =
-        error?.status === 404
-          ? " Admin API pravdepodobne nie je zapnuté alebo tvoj účet nie je v SUPER_ADMIN_EMAILS."
-          : "";
+      const rawMessage = error?.message || t("admin.error_load");
+      const hint = error?.status === 404 ? t("admin.error_api_hint") : "";
       setTabState((prev) => ({
         ...prev,
         [tabId]: {
@@ -73,7 +72,7 @@ function AdminPanelPage() {
         },
       }));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     TABS.forEach((tab) => {
@@ -102,15 +101,16 @@ function AdminPanelPage() {
     const activeSessions = tabState.users.items.reduce((sum, row) => sum + Number(row?.session_count || 0), 0);
     const verifiedUsers = tabState.users.items.filter((row) => Boolean(row?.email_verified_at)).length;
     return [
-      { id: "users", label: "Používatelia", value: tabState.users.count },
-      { id: "orgs", label: "Organizácie", value: tabState.orgs.count },
-      { id: "models", label: "Modely", value: tabState.models.count },
-      { id: "sessions", label: "Aktívne sessions", value: activeSessions },
-      { id: "verified", label: "Overené účty", value: verifiedUsers },
+      { id: "users", value: tabState.users.count },
+      { id: "orgs", value: tabState.orgs.count },
+      { id: "models", value: tabState.models.count },
+      { id: "sessions", value: activeSessions },
+      { id: "verified", value: verifiedUsers },
     ];
   }, [tabState.models.count, tabState.orgs.count, tabState.users.count, tabState.users.items]);
 
-  const currentLabel = TABS.find((tab) => tab.id === activeTab)?.label || "";
+  const currentLabel = t(`admin.tab_${activeTab}`);
+
   const relatedContext = useMemo(() => {
     if (!selectedItem) return null;
     if (activeTab === "users") {
@@ -136,17 +136,14 @@ function AdminPanelPage() {
       <header className="admin-monitor__header">
         <div>
           <h1>Admin panel</h1>
-          <p>
-            Prehľad ľudí, organizácií a modelov na jednom mieste. Panel je dostupný len pre super admin
-            allowlist a dnes slúži hlavne na monitoring a rýchlu orientáciu.
-          </p>
+          <p>{t("admin.intro")}</p>
         </div>
       </header>
 
       <div className="admin-monitor__summary">
         {summary.map((item) => (
           <article key={item.id} className="admin-summary-card">
-            <p className="admin-summary-card__label">{item.label}</p>
+            <p className="admin-summary-card__label">{t(`admin.summary_${item.id}`)}</p>
             <p className="admin-summary-card__value">{item.value}</p>
           </article>
         ))}
@@ -162,7 +159,7 @@ function AdminPanelPage() {
             className={`admin-monitor__tab ${activeTab === tab.id ? "is-active" : ""}`}
             onClick={() => setActiveTab(tab.id)}
           >
-            {tab.label}
+            {t(`admin.tab_${tab.id}`)}
             <span className="admin-monitor__tab-count">{tabState[tab.id].count}</span>
           </button>
         ))}
@@ -174,10 +171,10 @@ function AdminPanelPage() {
             <h2>{currentLabel}</h2>
             {activeTab === "models" && tabState.models.count > visibleModels.length ? (
               <div className="admin-monitor__count">
-                Zobrazené: posledných {visibleModels.length} / {tabState.models.count}
+                {t("admin.count_recent", { shown: visibleModels.length, total: tabState.models.count })}
               </div>
             ) : (
-              <div className="admin-monitor__count">Count: {current.count}</div>
+              <div className="admin-monitor__count">{t("admin.count_all", { count: current.count })}</div>
             )}
           </div>
           <div className="admin-monitor__tools">
@@ -186,7 +183,7 @@ function AdminPanelPage() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={getSearchPlaceholder(activeTab)}
+              placeholder={t(`admin.search_${activeTab}`)}
             />
             <button
               type="button"
@@ -194,24 +191,24 @@ function AdminPanelPage() {
               onClick={() => void loadTab(activeTab, { force: true })}
               disabled={current.loading}
             >
-              {current.loading ? "Načítavam..." : "Obnoviť"}
+              {current.loading ? t("admin.loading") : t("admin.refresh")}
             </button>
           </div>
         </div>
 
-        {current.loading ? <p className="admin-monitor__muted">Načítavam dáta...</p> : null}
+        {current.loading ? <p className="admin-monitor__muted">{t("admin.loading_data")}</p> : null}
         {!current.loading && current.error ? <p className="admin-monitor__error">{current.error}</p> : null}
         {!current.loading && !current.error ? (
           <div className="admin-monitor__content">
             <div className="admin-monitor__table-column">
               {activeTab === "users" ? (
-                <UsersTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} />
+                <UsersTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} t={t} />
               ) : null}
               {activeTab === "orgs" ? (
-                <OrgsTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} />
+                <OrgsTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} t={t} />
               ) : null}
               {activeTab === "models" ? (
-                <ModelsTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} />
+                <ModelsTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} t={t} />
               ) : null}
             </div>
             <aside className="admin-detail">
@@ -221,10 +218,11 @@ function AdminPanelPage() {
                   item={selectedItem}
                   relatedContext={relatedContext}
                   onClose={() => setSelectedItem(null)}
+                  t={t}
                 />
               ) : (
                 <div className="admin-detail__empty">
-                  Klikni na riadok a otvorí sa detail s kontextom.
+                  {t("admin.empty_detail")}
                 </div>
               )}
             </aside>
@@ -235,7 +233,7 @@ function AdminPanelPage() {
   );
 }
 
-function UsersTable({ rows, onSelect, selectedItem }) {
+function UsersTable({ rows, onSelect, selectedItem, t }) {
   return (
     <div className="admin-table-wrap">
       <table className="admin-table">
@@ -268,7 +266,7 @@ function UsersTable({ rows, onSelect, selectedItem }) {
           ) : (
             <tr>
               <td colSpan={6} className="admin-table__empty">
-                Nenašli sa žiadni používatelia.
+                {t("admin.empty_users")}
               </td>
             </tr>
           )}
@@ -278,7 +276,7 @@ function UsersTable({ rows, onSelect, selectedItem }) {
   );
 }
 
-function OrgsTable({ rows, onSelect, selectedItem }) {
+function OrgsTable({ rows, onSelect, selectedItem, t }) {
   return (
     <div className="admin-table-wrap">
       <table className="admin-table">
@@ -311,7 +309,7 @@ function OrgsTable({ rows, onSelect, selectedItem }) {
           ) : (
             <tr>
               <td colSpan={6} className="admin-table__empty">
-                Nenašli sa žiadne organizácie.
+                {t("admin.empty_orgs")}
               </td>
             </tr>
           )}
@@ -321,7 +319,7 @@ function OrgsTable({ rows, onSelect, selectedItem }) {
   );
 }
 
-function ModelsTable({ rows, onSelect, selectedItem }) {
+function ModelsTable({ rows, onSelect, selectedItem, t }) {
   return (
     <div className="admin-table-wrap">
       <table className="admin-table admin-table--models">
@@ -350,7 +348,7 @@ function ModelsTable({ rows, onSelect, selectedItem }) {
           ) : (
             <tr>
               <td colSpan={4} className="admin-table__empty">
-                Nenašli sa žiadne modely.
+                {t("admin.empty_models")}
               </td>
             </tr>
           )}
@@ -360,41 +358,41 @@ function ModelsTable({ rows, onSelect, selectedItem }) {
   );
 }
 
-function AdminDetailDrawer({ activeTab, item, relatedContext, onClose }) {
+function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, t }) {
   if (activeTab === "users") {
     return (
       <div className="admin-detail__card">
         <div className="admin-detail__head">
           <div>
-            <div className="admin-detail__kicker">Používateľ</div>
+            <div className="admin-detail__kicker">{t("admin.kicker_user")}</div>
             <h3>{item.email}</h3>
           </div>
           <button type="button" className="admin-detail__close" onClick={onClose}>
-            Zavrieť
+            {t("admin.close")}
           </button>
         </div>
         <DetailList
           items={[
-            ["Rola", item.role || "-"],
-            ["Sessions", String(item.session_count ?? 0)],
-            ["Vytvorený", formatDateTimeValue(item.created_at)],
-            ["Posledné prihlásenie", formatDateTimeValue(item.last_login_at)],
-            ["Overený email", item.email_verified_at ? "Áno" : "Nie"],
-            ["User ID", item.id || "-"],
+            [t("admin.detail_role"), item.role || "-"],
+            [t("admin.detail_sessions"), String(item.session_count ?? 0)],
+            [t("admin.detail_created"), formatDateTimeValue(item.created_at)],
+            [t("admin.detail_last_login"), formatDateTimeValue(item.last_login_at)],
+            [t("admin.detail_verified"), item.email_verified_at ? t("admin.yes") : t("admin.no")],
+            [t("admin.detail_user_id"), item.id || "-"],
           ]}
         />
         <DetailPills
-          title="Organizácie"
+          title={t("admin.pills_orgs")}
           items={(item.org_names || []).map((name) => ({ key: name, label: name }))}
-          emptyLabel="Používateľ zatiaľ nie je v žiadnej organizácii."
+          emptyLabel={t("admin.pills_user_empty")}
         />
         <DetailPills
-          title="Načítané organizácie z adminu"
+          title={t("admin.pills_admin_orgs")}
           items={(relatedContext?.orgs || []).map((org) => ({
             key: org.id,
             label: `${org.name} · ${org.member_count ?? 0} členov`,
           }))}
-          emptyLabel="K tejto osobe zatiaľ nemáme ďalší kontext."
+          emptyLabel={t("admin.pills_user_context_empty")}
         />
       </div>
     );
@@ -405,30 +403,30 @@ function AdminDetailDrawer({ activeTab, item, relatedContext, onClose }) {
       <div className="admin-detail__card">
         <div className="admin-detail__head">
           <div>
-            <div className="admin-detail__kicker">Organizácia</div>
+            <div className="admin-detail__kicker">{t("admin.kicker_org")}</div>
             <h3>{item.name}</h3>
           </div>
           <button type="button" className="admin-detail__close" onClick={onClose}>
-            Zavrieť
+            {t("admin.close")}
           </button>
         </div>
         <DetailList
           items={[
-            ["Členovia", String(item.member_count ?? 0)],
-            ["Owneri", String(item.owner_count ?? 0)],
-            ["Modely", String(item.model_count ?? 0)],
-            ["Vytvoril", item.created_by_email || item.created_by_user_id || "-"],
-            ["Vytvorená", formatDateTimeValue(item.created_at)],
-            ["Org ID", item.id || "-"],
+            [t("admin.detail_members"), String(item.member_count ?? 0)],
+            [t("admin.detail_owners"), String(item.owner_count ?? 0)],
+            [t("admin.detail_models"), String(item.model_count ?? 0)],
+            [t("admin.detail_created_by"), item.created_by_email || item.created_by_user_id || "-"],
+            [t("admin.detail_created_f"), formatDateTimeValue(item.created_at)],
+            [t("admin.detail_org_id"), item.id || "-"],
           ]}
         />
         <DetailPills
-          title="Načítané modely tejto organizácie"
+          title={t("admin.pills_org_models")}
           items={(relatedContext?.models || []).map((model) => ({
             key: model.id,
             label: model.name || model.id,
           }))}
-          emptyLabel="K tejto organizácii sa v načítaných admin dátach zatiaľ nenašli modely."
+          emptyLabel={t("admin.pills_org_models_empty")}
         />
       </div>
     );
@@ -438,28 +436,28 @@ function AdminDetailDrawer({ activeTab, item, relatedContext, onClose }) {
     <div className="admin-detail__card">
       <div className="admin-detail__head">
         <div>
-          <div className="admin-detail__kicker">Model</div>
+          <div className="admin-detail__kicker">{t("admin.kicker_model")}</div>
           <h3>{item.name || item.id}</h3>
         </div>
         <button type="button" className="admin-detail__close" onClick={onClose}>
-          Zavrieť
+          {t("admin.close")}
         </button>
       </div>
       <DetailList
         items={[
-          ["Organizácia", item.org_name || item.org_id || "-"],
-          ["Aktualizovaný", formatDateTimeValue(item.updated_at)],
-          ["Vytvorený", formatDateTimeValue(item.created_at)],
-          ["Model ID", item.id || "-"],
+          [t("admin.detail_org"), item.org_name || item.org_id || "-"],
+          [t("admin.detail_updated"), formatDateTimeValue(item.updated_at)],
+          [t("admin.detail_created"), formatDateTimeValue(item.created_at)],
+          [t("admin.detail_model_id"), item.id || "-"],
         ]}
       />
       <DetailPills
-        title="Organizácia"
+        title={t("admin.pills_model_org")}
         items={(relatedContext?.orgs || []).map((org) => ({
           key: org.id,
           label: `${org.name} · ${org.member_count ?? 0} členov`,
         }))}
-        emptyLabel="K modelu sa zatiaľ nenašiel ďalší org kontext."
+        emptyLabel={t("admin.pills_model_empty")}
       />
     </div>
   );
@@ -509,12 +507,6 @@ function matchRow(tabId, row, needle) {
     );
   }
   return [row.name, row.org_name, row.org_id].some((value) => String(value || "").toLowerCase().includes(needle));
-}
-
-function getSearchPlaceholder(tabId) {
-  if (tabId === "users") return "Hľadať podľa e-mailu alebo organizácie";
-  if (tabId === "orgs") return "Hľadať podľa názvu organizácie";
-  return "Hľadať podľa názvu modelu alebo organizácie";
 }
 
 function formatOrgContext(row) {

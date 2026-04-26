@@ -21,6 +21,7 @@ from auth.service import (
     register_user,
     revoke_session,
     update_last_login,
+    update_user_language,
 )
 from core.auth_config import get_auth_config
 
@@ -58,6 +59,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateMeRequest(BaseModel):
+    language: str | None = None
+
+
 def _get_client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
@@ -92,6 +97,7 @@ def _user_payload(user: AuthUser) -> dict:
         "org_id": org["id"] if org else None,
         "org_name": org["name"] if org else None,
         "role": user.role,
+        "language": user.language,
         "admin_panel_available": is_admin_panel_available(),
         "is_super_admin": is_super_admin_user(user),
         "email_verified": bool(user.email_verified_at),
@@ -237,6 +243,18 @@ def reset_password(payload: ResetPasswordRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"message": "Password was reset successfully."}
+
+
+@router.patch("/me")
+def update_me(payload: UpdateMeRequest, request: Request):
+    user = _require_authenticated_user(request)
+    if payload.language is not None:
+        try:
+            update_user_language(user.id, payload.language)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    updated_user = find_user_by_session(request.cookies.get(get_auth_config().cookie_name))
+    return {"user": _user_payload(updated_user)}
 
 
 @router.post("/change-password")

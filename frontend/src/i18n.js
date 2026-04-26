@@ -4,18 +4,18 @@ import sk from "./locales/sk.json";
 import en from "./locales/en.json";
 
 const savedLang = typeof window !== "undefined"
-  ? (window.localStorage.getItem("APP_LANG") || "sk")
-  : "sk";
+  ? (window.localStorage.getItem("APP_LANG") || "en")
+  : "en";
 
 i18n
   .use(initReactI18next)
   .init({
     resources: {
-      sk: { translation: sk },
-      en: { translation: en },
+      sk: { translation: sk, map_viewer: sk.map_viewer },
+      en: { translation: en, map_viewer: en.map_viewer },
     },
     lng: savedLang,
-    fallbackLng: "sk",
+    fallbackLng: "en",
     interpolation: { escapeValue: false },
   });
 

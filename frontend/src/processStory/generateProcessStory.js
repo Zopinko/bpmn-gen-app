@@ -1,4 +1,6 @@
-const DEFAULT_CONNECTORS = ["Potom", "Nasledne", "Dalej", "V dalsom kroku"];
+import i18n from "../i18n.js";
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalizeType = (value) => {
   const raw = String(value || "");
@@ -56,20 +58,22 @@ const indentPrefix = (depth) => "  ".repeat(Math.max(0, depth));
 
 const bulletLine = (text, depth) => `${indentPrefix(depth)}- ${text}`;
 
-const applyMainFlowConnectors = (lines, laneNames, lineTypes) =>
-  lines.map((line, index) => {
+const applyMainFlowConnectors = (lines, laneNames, lineTypes) => {
+  const connectors = i18n.t("story.connectors", { returnObjects: true });
+  const endPrefix = i18n.t("story.end_prefix");
+  return lines.map((line, index) => {
     const raw = String(line.text || "").trim();
     if (!raw) return line;
     const type = lineTypes[index] || "";
     if (type === "end") {
-      if (raw.startsWith("Na zaver ")) return line;
-      return { ...line, text: `Na zaver ${raw}` };
+      if (raw.startsWith(`${endPrefix} `)) return line;
+      return { ...line, text: `${endPrefix} ${raw}` };
     }
     if (index === 0) {
       return line;
     }
-    const prefix = DEFAULT_CONNECTORS[(index - 1) % DEFAULT_CONNECTORS.length];
-    const startsWithPrefix = DEFAULT_CONNECTORS.some((p) => raw.startsWith(`${p} `));
+    const prefix = connectors[(index - 1) % connectors.length];
+    const startsWithPrefix = connectors.some((p) => raw.startsWith(`${p} `));
     if (startsWithPrefix) return line;
     const startsWithLane = laneNames.some((lane) => raw.startsWith(`${lane} `));
     if (startsWithLane) {
@@ -77,6 +81,7 @@ const applyMainFlowConnectors = (lines, laneNames, lineTypes) =>
     }
     return { ...line, text: `${prefix} ${raw}` };
   });
+};
 
 const dedupeSentences = (sentences) => {
   const seen = new Set();
@@ -91,8 +96,9 @@ const dedupeSentences = (sentences) => {
 
 const buildSummary = ({ startLine, taskLines, endLine, mainFlowTexts }) => {
   const sentences = [];
+  const summaryConnector = i18n.t("story.summary_connector");
   if (startLine && taskLines[0]) {
-    const merged = `${startLine.replace(/\.$/, "")}, nasledne ${taskLines[0].replace(/\.$/, "")}.`;
+    const merged = `${startLine.replace(/\.$/, "")}, ${summaryConnector} ${taskLines[0].replace(/\.$/, "")}.`;
     sentences.push(merged);
   } else if (startLine) {
     sentences.push(startLine);
@@ -105,8 +111,15 @@ const buildSummary = ({ startLine, taskLines, endLine, mainFlowTexts }) => {
   }
   const mainSet = new Set((mainFlowTexts || []).map((s) => String(s || "").trim()));
   const filtered = dedupeSentences(sentences).filter((s) => !mainSet.has(String(s || "").trim()));
+  const endPrefix = i18n.t("story.end_prefix");
+  const processEndsActionSample = i18n.t("story.process_ends_action", { name: "§§§" });
+  const processEndsPrefix = processEndsActionSample.split("§§§")[0].trim().toLowerCase();
   const endSentence =
-    filtered.find((s) => s.startsWith("Na zaver") || s.toLowerCase().includes("proces sa konci")) || "";
+    filtered.find(
+      (s) =>
+        s.startsWith(endPrefix) ||
+        (processEndsPrefix && s.toLowerCase().startsWith(processEndsPrefix))
+    ) || "";
   const nonEnd = filtered.filter((s) => s !== endSentence);
   const paragraphs = [];
   if (nonEnd.length) {
@@ -130,12 +143,17 @@ const postProcessText = (doc, laneNames, lineTypes) => {
 const cleanNarrativeLine = (value) => {
   const raw = String(value || "").trim().replace(/^\s*-\s*/, "");
   if (!raw) return "";
-  const nestedDecision = raw.match(/^\(Nasleduje rozhodnutie\)\s+(.+)$/);
+  const nextDecisionBulletSample = i18n.t("story.next_decision_bullet", { title: "§§§" });
+  const decisionBulletPrefix = nextDecisionBulletSample.split("§§§")[0].trim();
+  const nestedDecision = raw.match(
+    new RegExp(`^${escapeRegex(decisionBulletPrefix)}\\s+(.+)$`)
+  );
   if (nestedDecision) {
-    return `V tejto casti sa nasledne rozhoduje: ${nestedDecision[1].trim()}.`;
+    return i18n.t("story.nested_decision", { title: nestedDecision[1].trim() });
   }
-  if (/^Nasleduje dalsia paralela\.?$/i.test(raw)) {
-    return "V tejto casti sa proces dalej vetvi do subeznych cinnosti.";
+  const nextParallelBase = i18n.t("story.next_parallel").replace(/\.$/, "");
+  if (new RegExp(`^${escapeRegex(nextParallelBase)}\\.?$`, "i").test(raw)) {
+    return i18n.t("story.nested_parallel");
   }
   return raw;
 };
@@ -143,8 +161,10 @@ const cleanNarrativeLine = (value) => {
 const stripGatewayPlaceholder = (value) => {
   const raw = cleanNarrativeLine(value);
   if (!raw) return "";
-  if (/^V tomto bode nasleduje rozhodnutie\.?$/i.test(raw)) return "";
-  if (/^Potom sa proces rozdeli na paralelne kroky\.?$/i.test(raw)) return "";
+  const decisionPH = i18n.t("story.decision_placeholder").replace(/\.$/, "");
+  if (new RegExp(`^${escapeRegex(decisionPH)}\\.?$`, "i").test(raw)) return "";
+  const parallelPH = i18n.t("story.parallel_placeholder").replace(/\.$/, "");
+  if (new RegExp(`^${escapeRegex(parallelPH)}\\.?$`, "i").test(raw)) return "";
   return raw;
 };
 
@@ -154,25 +174,30 @@ const joinNarrativeSentences = (items) =>
     .filter(Boolean)
     .join(" ");
 
-const cleanStoryHeading = (value) =>
-  String(value || "")
+const cleanStoryHeading = (value) => {
+  const decisionPrefixSample = i18n.t("story.decision_title_prefix", { title: "§§§" });
+  const parallelPrefixSample = i18n.t("story.parallel_title_prefix", { title: "§§§" });
+  const decisionPrefix = decisionPrefixSample.split("§§§")[0].trim();
+  const parallelPrefix = parallelPrefixSample.split("§§§")[0].trim();
+  return String(value || "")
     .trim()
-    .replace(/^Rozhodnutie:\s*/i, "")
-    .replace(/^Paralela:\s*/i, "")
+    .replace(new RegExp(`^${escapeRegex(decisionPrefix)}\\s*`, "i"), "")
+    .replace(new RegExp(`^${escapeRegex(parallelPrefix)}\\s*`, "i"), "")
     .trim();
+};
 
 const buildDecisionNarrative = (decision) => {
-  const title = cleanStoryHeading(decision?.title) || "rozhodnutie";
+  const title = cleanStoryHeading(decision?.title) || i18n.t("story.decision_default_title");
   const branches = (decision?.branches || [])
     .map((branch) => {
-      const label = String(branch?.label || "").trim() || "dana moznost";
+      const label = String(branch?.label || "").trim() || i18n.t("story.branch_default_label");
       const steps = joinNarrativeSentences((branch?.steps || []).map((step) => step?.text));
-      if (!steps) return `Ak ${label}, proces pokracuje dalsou castou.`;
-      return `Ak ${label}, potom ${steps}`;
+      if (!steps) return i18n.t("story.branch_if_no_steps", { label });
+      return `${i18n.t("story.branch_if", { label })} ${steps}`;
     })
     .filter(Boolean);
   if (!branches.length) return "";
-  return `V procese nasleduje rozhodnutie: ${title}. ${branches.join(" ")}`.trim();
+  return `${i18n.t("story.decision_intro", { title })} ${branches.join(" ")}`.trim();
 };
 
 const buildParallelNarrative = (parallel) => {
@@ -187,8 +212,8 @@ const buildParallelNarrative = (parallel) => {
     .filter(Boolean);
   if (!branches.length) return "";
   const intro = title
-    ? `V tomto bode prebieha paralelna cast procesu: ${title}.`
-    : "V tomto bode prebiehaju subezne tieto cinnosti:";
+    ? i18n.t("story.parallel_intro_named", { title })
+    : i18n.t("story.parallel_intro_unnamed");
   const outro = cleanNarrativeLine(parallel?.outro);
   return [intro, branches.join(" "), outro].filter(Boolean).join(" ").trim();
 };
@@ -246,8 +271,8 @@ const pickStartNode = (nodes, notes, selectedStartId) => {
     const selectedIdx = startsSorted.findIndex((n) => n.id === selectedStartId);
     const selectedNode = selectedIdx >= 0 ? startsSorted[selectedIdx] : null;
     const name = String(selectedNode?.name || "").trim();
-    const label = name || (selectedIdx >= 0 ? `Start ${selectedIdx + 1}` : "hlavny start");
-    notes.push(buildNote(`Proces ma viac startov - pribeh je generovany zo startu: ${label}.`, "warn"));
+    const label = name || (selectedIdx >= 0 ? `Start ${selectedIdx + 1}` : i18n.t("story.warn_default_start"));
+    notes.push(buildNote(i18n.t("story.warn_multiple_starts", { label }), "warn"));
   }
   if (selectedStartId) {
     const selected = startsSorted.find((node) => node.id === selectedStartId);
@@ -301,32 +326,32 @@ const findJoinNode = ({ splitId, outgoing, incoming, nodeById, type }) => {
 const buildNodeSentence = (node, laneById, options, laneCount) => {
   const type = normalizeType(node?.type);
   if (type === "start") {
-    const name = withFallback(node?.name, "spustenim udalosti");
-    return toSentence(`Proces sa zacne, ked ${name}`);
+    const name = withFallback(node?.name, i18n.t("story.start_fallback_name"));
+    return toSentence(i18n.t("story.process_starts", { name }));
   }
   if (type === "end") {
-    const name = withFallback(node?.name, "proces sa tymto krokom uzatvori");
     if (!node?.name) {
-      return toSentence("Na zaver sa proces uzatvara.");
+      return toSentence(i18n.t("story.process_ends_default"));
     }
+    const name = String(node.name).trim();
     if (isStateLike(name)) {
-      return toSentence(`Na zaver sa proces uzatvara: ${name}`);
+      return toSentence(i18n.t("story.process_ends_state", { name }));
     }
-    return toSentence(`Proces sa konci tym, ze ${name}`);
+    return toSentence(i18n.t("story.process_ends_action", { name }));
   }
   if (type === "task") {
-    const taskName = withFallback(node?.name, "Nespecifikovany krok");
+    const taskName = withFallback(node?.name, i18n.t("story.unspecified_step"));
     const lead = laneLead(node, laneById, options, laneCount);
     const adjusted = lead ? taskName.charAt(0).toLowerCase() + taskName.slice(1) : taskName;
     return toSentence(`${lead}${adjusted}`);
   }
   if (type === "xor") {
-    return toSentence("V tomto bode nasleduje rozhodnutie");
+    return toSentence(i18n.t("story.decision_placeholder"));
   }
   if (type === "and") {
-    return toSentence("Potom sa proces rozdeli na paralelne kroky");
+    return toSentence(i18n.t("story.parallel_placeholder"));
   }
-  return toSentence(withFallback(node?.name, "Nespecifikovany krok"));
+  return toSentence(withFallback(node?.name, i18n.t("story.unspecified_step")));
 };
 
 const buildDecisionLines = ({
@@ -344,14 +369,16 @@ const buildDecisionLines = ({
   fallbackStopId,
 }) => {
   const lines = [];
-  const title = `(Nasleduje rozhodnutie) ${withFallback(gatewayNode?.name, "Rozhodnutie")}`;
+  const title = i18n.t("story.next_decision_bullet", {
+    title: withFallback(gatewayNode?.name, i18n.t("story.decision_fallback")),
+  });
   lines.push(buildLine({ text: toSentence(bulletLine(title, depth)), nodeIds: [gatewayNode.id] }));
   const flows = outgoing.get(gatewayNode.id) || [];
   const joinNode = findJoinNode({ splitId: gatewayNode.id, outgoing, incoming, nodeById, type: "xor" });
   const stopId = joinNode?.id || fallbackStopId || null;
   flows.forEach((flow, idx) => {
     const label = formatBranchLabel(flow, idx);
-    const intro = bulletLine(`Ak ${label}, pokracuje sa takto:`, depth + 1);
+    const intro = bulletLine(i18n.t("story.branch_if_label", { label }), depth + 1);
     lines.push(buildLine({ text: toSentence(intro), flowIds: [flow.id] }));
     const branchSteps = buildBranchSteps({
       startId: flow.targetId,
@@ -395,7 +422,7 @@ const buildBranchSteps = ({
   while (currentId) {
     if (currentId === stopId) break;
     if (visited.has(currentId)) {
-      notes.push(buildNote("Proces obsahuje opakovanie/cyklus - vetva bola skratena.", "warn"));
+      notes.push(buildNote(i18n.t("story.warn_cycle_branch"), "warn"));
       break;
     }
     if (mainFlowNodeIds && mainFlowNodeIds.has(currentId)) {
@@ -408,7 +435,7 @@ const buildBranchSteps = ({
     if (type === "xor" || type === "and") {
       if (type === "xor") {
         if (visitedDecisionIds?.has(node.id)) {
-          notes.push(buildNote("Proces obsahuje opakovanie/cyklus - rozhodnutie bolo skratene.", "warn"));
+          notes.push(buildNote(i18n.t("story.warn_cycle_decision"), "warn"));
           break;
         }
         if (visitedDecisionIds) visitedDecisionIds.add(node.id);
@@ -429,7 +456,7 @@ const buildBranchSteps = ({
         lines.push(...nested);
         break;
       }
-      lines.push(buildLine({ text: toSentence(bulletLine("Nasleduje dalsia paralela.", decisionDepth)), nodeIds: [node.id] }));
+      lines.push(buildLine({ text: toSentence(bulletLine(i18n.t("story.next_parallel"), decisionDepth)), nodeIds: [node.id] }));
       break;
     }
     if (type === "end" && !options.showEnds) {
@@ -451,14 +478,14 @@ const formatBranchLabel = (flow, index) => {
   const label = String(flow?.name || flow?.label || "").trim();
   if (label) return label;
   const letter = String.fromCharCode(65 + index);
-  return `Moznost ${letter}`;
+  return i18n.t("story.option_letter", { letter });
 };
 
 const describeParallelBranch = ({ flow, idx, nodeById, laneById }) => {
   const targetNode = nodeById.get(flow?.targetId);
   const laneName = targetNode?.laneId ? String(laneById.get(targetNode.laneId) || "").trim() : "";
   if (laneName) return laneName;
-  return `Vetva ${idx + 1}`;
+  return i18n.t("story.branch_index", { idx: idx + 1 });
 };
 
 export const createDefaultProcessStoryOptions = () => ({
@@ -475,11 +502,11 @@ export const generateProcessStory = (engineJson, options = {}) => {
   const notes = [];
   if (!engineJson || !Array.isArray(engineJson.nodes) || !engineJson.nodes.length) {
     return {
-      summary: ["Proces nema ziadne kroky na zobrazenie."],
+      summary: [i18n.t("story.no_steps")],
       mainFlow: [],
       decisions: [],
       parallels: [],
-      notes: [buildNote("Engine JSON je prazdny alebo neobsahuje uzly.", "warn")],
+      notes: [buildNote(i18n.t("story.warn_empty"), "warn")],
     };
   }
 
@@ -494,11 +521,11 @@ export const generateProcessStory = (engineJson, options = {}) => {
   const startNode = pickStartNode(nodes, notes, opts.selectedStartId);
   if (!startNode) {
     return {
-      summary: ["Proces nema start event."],
+      summary: [i18n.t("story.no_start")],
       mainFlow: [],
       decisions: [],
       parallels: [],
-      notes: [buildNote("Proces nema start event, pribeh sa neda vytvorit.", "warn")],
+      notes: [buildNote(i18n.t("story.warn_no_start"), "warn")],
     };
   }
 
@@ -506,7 +533,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
   let currentId = startNode.id;
   while (currentId) {
     if (visited.has(currentId)) {
-      notes.push(buildNote("Proces obsahuje opakovanie/cyklus - pribeh moze byt skrateni.", "warn"));
+      notes.push(buildNote(i18n.t("story.warn_cycle_story"), "warn"));
       break;
     }
     visited.add(currentId);
@@ -530,11 +557,11 @@ export const generateProcessStory = (engineJson, options = {}) => {
       const flows = outgoing.get(node.id) || [];
       const branchMissingLabel = flows.some((flow) => !(flow?.name || flow?.label));
       if (branchMissingLabel) {
-        notes.push(buildNote("Niektore vetvy rozhodnutia nemaju nazov.", "warn"));
+        notes.push(buildNote(i18n.t("story.warn_unlabeled_branches"), "warn"));
       }
       const joinNode = findJoinNode({ splitId: node.id, outgoing, incoming, nodeById, type: "xor" });
       const decision = {
-        title: `Rozhodnutie: ${withFallback(node?.name, "Rozhodnutie")}`,
+        title: i18n.t("story.decision_title_prefix", { title: withFallback(node?.name, i18n.t("story.decision_fallback")) }),
         branches: flows.map((flow, idx) => {
           const label = formatBranchLabel(flow, idx);
           const branchSteps = buildBranchSteps({
@@ -554,7 +581,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
           });
           return {
             label,
-            intro: `Ak ${label}, pokracuje sa takto:`,
+            intro: i18n.t("story.branch_if_label", { label }),
             steps: branchSteps,
           };
         }),
@@ -573,7 +600,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
       const joinNode = findJoinNode({ splitId: node.id, outgoing, incoming, nodeById, type: "and" });
       const maxSteps = opts.summarizeParallels ? 1 : opts.moreDetails ? 20 : 6;
       const parallel = {
-        title: `Paralela: ${withFallback(node?.name, "Paralela")}`,
+        title: i18n.t("story.parallel_title_prefix", { title: withFallback(node?.name, i18n.t("story.parallel_fallback")) }),
         branches: flows.map((flow, idx) => {
           const branchSteps = buildBranchSteps({
             startId: flow.targetId,
@@ -597,7 +624,7 @@ export const generateProcessStory = (engineJson, options = {}) => {
             truncated,
           };
         }),
-        outro: joinNode ? "Keď sú súbežné činnosti hotové, proces pokračuje ďalej." : "",
+        outro: joinNode ? i18n.t("story.parallel_outro") : "",
       };
       parallels.push(parallel);
       const nextFlow = joinNode ? chooseNext(outgoing.get(joinNode.id) || []) : null;

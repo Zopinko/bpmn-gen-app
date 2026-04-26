@@ -1,5 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
 import { useHeaderStepper } from "../components/HeaderStepperContext";
 import {
@@ -44,25 +46,25 @@ import { getOrgCapabilities } from "../permissions/orgCapabilities";
 import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
 import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
 
-const HELP_RULES = [
+const buildHelpRules = (t) => [
   {
     id: "task",
-    title: "Bežný krok",
-    description: "Bežná aktivita v procese, ktorú vykoná rola alebo systém.",
+    title: t("wizard.help_rule_task_title"),
+    description: t("wizard.help_rule_task_description"),
     iconClass: "bpmn-icon-task",
-    syntax: "Ľubovoľný text na riadok",
-    example: "Overím identitu zákazníka",
+    syntax: t("wizard.help_rule_task_syntax"),
+    example: t("wizard.help_rule_task_example"),
     template: "<krok>",
-    fields: [{ key: "krok", label: "Vlastný text", token: "krok", placeholder: "napr. overím identitu" }],
+    fields: [{ key: "krok", label: t("wizard.help_rule_task_field_label"), token: "krok", placeholder: t("wizard.help_rule_task_field_placeholder") }],
   },
   {
     id: "xor",
-    title: "Rozhodnutie",
-    description: "Keď sa proces môže vydať dvoma smermi, vypíš podmienku a čo sa stane v oboch prípadoch. Do každej vetvy môžeš napísať aj viac činností pod seba.",
+    title: t("wizard.help_rule_xor_title"),
+    description: t("wizard.help_rule_xor_description"),
     iconClass: "bpmn-icon-gateway-xor",
-    syntax: "Zápis: Ak/Ked <otázka>, tak <čo sa stane>, inak <čo sa stane>",
-    example: "Ak zákazník schváli ponuku, tak pripravím zmluvu, inak koniec",
-    template: "Ak <podmienka> tak <krok>, inak <inak>",
+    syntax: t("wizard.help_rule_xor_syntax"),
+    example: t("wizard.help_rule_xor_example"),
+    template: t("wizard.help_rule_xor_template"),
     buildTemplate: (values = {}) => {
       const condition = String(values.podmienka || "").trim() || "<podmienka>";
       const yesBranch = String(values.krok || "")
@@ -75,23 +77,23 @@ const HELP_RULES = [
         .map((line) => line.trim())
         .filter(Boolean)
         .join(", ") || "<inak>";
-      return `Ak ${condition} tak ${yesBranch}, inak ${noBranch}`;
+      return `${t("wizard.help_rule_xor_prefix")} ${condition} ${t("wizard.help_rule_xor_then")} ${yesBranch}, ${t("wizard.help_rule_xor_else")} ${noBranch}`;
     },
     fields: [
-      { key: "podmienka", label: "Otázka (rozhodnutie)", token: "podmienka", placeholder: "napr. Je doklad správny?" },
+      { key: "podmienka", label: t("wizard.help_rule_xor_condition_label"), token: "podmienka", placeholder: t("wizard.help_rule_xor_condition_placeholder") },
       {
         key: "krok",
-        label: "Ak ÁNO, čo sa stane?",
+        label: t("wizard.help_rule_xor_yes_label"),
         token: "krok",
-        placeholder: "napr. pripravím zmluvu\npošlem ju na podpis",
+        placeholder: t("wizard.help_rule_xor_yes_placeholder"),
         multiline: true,
         rows: 3,
       },
       {
         key: "inak",
-        label: "Ak NIE, čo sa stane?",
+        label: t("wizard.help_rule_xor_no_label"),
         token: "inak",
-        placeholder: "napr. vrátim žiadosť na doplnenie\nukončím spracovanie",
+        placeholder: t("wizard.help_rule_xor_no_placeholder"),
         multiline: true,
         rows: 3,
       },
@@ -99,26 +101,26 @@ const HELP_RULES = [
   },
   {
     id: "and_strict",
-    title: "Paralelné kroky",
-    description: "Keď sa po tomto bode dejú viaceré činnosti naraz, vypíš ich pod seba. Pomocník ich vloží do jedného paralelného riadku.",
+    title: t("wizard.help_rule_parallel_title"),
+    description: t("wizard.help_rule_parallel_description"),
     iconClass: "bpmn-icon-gateway-parallel",
-    syntax: "Paralelne: <krok>; <krok>; <krok>",
-    example: "Paralelne: pripravím zmluvu; overím identitu; nastavím splátky",
-    template: "Paralelne: <krok1>; <krok2>; <krok3>",
+    syntax: t("wizard.help_rule_parallel_syntax"),
+    example: t("wizard.help_rule_parallel_example"),
+    template: t("wizard.help_rule_parallel_template"),
     buildTemplate: (values = {}) => {
       const steps = String(values.kroky || "")
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean);
       const rendered = steps.length ? steps.join("; ") : "<krok1>; <krok2>; <krok3>";
-      return `Paralelne: ${rendered}`;
+      return `${t("wizard.help_rule_parallel_prefix")}: ${rendered}`;
     },
     fields: [
       {
         key: "kroky",
-        label: "Kroky, ktoré sa dejú naraz",
+        label: t("wizard.help_rule_parallel_field_label"),
         token: "kroky",
-        placeholder: "napr. pripravím zmluvu\noverím identitu\nnastavím splátky",
+        placeholder: t("wizard.help_rule_parallel_field_placeholder"),
         multiline: true,
         rows: 4,
       },
@@ -215,88 +217,66 @@ const createEmptyProcessCardState = () => ({
   },
 });
 
-const PROCESS_TEMPLATES = [
+const buildProcessTemplates = (t) => [
   {
     id: "approval",
-    label: "Schválenie",
-    processName: "Schválenie žiadosti",
-    roles: "Klient\nPracovník\nManažér",
-    trigger: "Nová žiadosť od klienta",
-    input: "Žiadosť + údaje klienta",
-    output: "Schválená alebo zamietnutá žiadosť",
+    label: t("wizard.process_template_approval_label"),
+    processName: t("wizard.process_template_approval_name"),
+    roles: t("wizard.process_template_approval_roles"),
+    trigger: t("wizard.process_template_approval_trigger"),
+    input: t("wizard.process_template_approval_input"),
+    output: t("wizard.process_template_approval_output"),
   },
   {
     id: "complaint",
-    label: "Reklamácia",
-    processName: "Reklamácia tovaru",
-    roles: "Zákazník\nPodpora\nSklad",
-    trigger: "Zákazník podá reklamáciu",
-    input: "Reklamačný formulár + doklad",
-    output: "Ukončená reklamácia",
+    label: t("wizard.process_template_complaint_label"),
+    processName: t("wizard.process_template_complaint_name"),
+    roles: t("wizard.process_template_complaint_roles"),
+    trigger: t("wizard.process_template_complaint_trigger"),
+    input: t("wizard.process_template_complaint_input"),
+    output: t("wizard.process_template_complaint_output"),
   },
   {
     id: "onboarding",
-    label: "Nástup",
-    processName: "Nástup nového zamestnanca",
-    roles: "HR\nIT\nTímový líder",
-    trigger: "Nový zamestnanec nastupuje",
-    input: "Zmluva + požiadavky",
-    output: "Zamestnanec pripravený na prácu",
+    label: t("wizard.process_template_onboarding_label"),
+    processName: t("wizard.process_template_onboarding_name"),
+    roles: t("wizard.process_template_onboarding_roles"),
+    trigger: t("wizard.process_template_onboarding_trigger"),
+    input: t("wizard.process_template_onboarding_input"),
+    output: t("wizard.process_template_onboarding_output"),
   },
 ];
 
-const LANE_TEMPLATES = [
+const buildLaneTemplates = (t) => [
   {
     id: "approve_basic",
-    label: "Žiadosť",
-    text:
-      "Prijmem žiadosť\n" +
-      "Overím identitu\n" +
-      "Ak identita nesedí tak zamietnem žiadosť, inak pokračujem\n" +
-      "Oznámim výsledok",
+    label: t("wizard.lane_template_approval_label"),
+    text: t("wizard.lane_template_approval_text"),
   },
   {
     id: "complaint_basic",
-    label: "Reklamácia",
-    text:
-      "Prijmem reklamáciu\n" +
-      "Overím doklad\n" +
-      "Ak doklad chýba tak vyžiadam doplnenie, inak pokračujem\n" +
-      "Oznámim výsledok",
+    label: t("wizard.lane_template_complaint_label"),
+    text: t("wizard.lane_template_complaint_text"),
   },
   {
     id: "order_basic",
-    label: "Objednávka",
-    text:
-      "Prijmem objednávku\n" +
-      "Skontrolujem sklad\n" +
-      "Ak nie je skladom tak ponúknem alternatívu, inak pripravím zásielku\n" +
-      "Odošlem zásielku",
+    label: t("wizard.lane_template_order_label"),
+    text: t("wizard.lane_template_order_text"),
   },
   {
     id: "invoice_basic",
-    label: "Faktúra",
-    text:
-      "Skontrolujem podklady\n" +
-      "Vystavím faktúru\n" +
-      "Ak údaje chýbajú tak vyžiadam doplnenie, inak odošlem faktúru",
+    label: t("wizard.lane_template_invoice_label"),
+    text: t("wizard.lane_template_invoice_text"),
   },
   {
     id: "onboarding_basic",
-    label: "Nástup",
-    text:
-      "Pripravím plán nástupu\n" +
-      "Zriadim prístupy\n" +
-      "Ak chýbajú podklady tak vyžiadam doplnenie, inak potvrdím nástup",
+    label: t("wizard.lane_template_onboarding_label"),
+    text: t("wizard.lane_template_onboarding_text"),
   },
   {
     id: "parallel_only_basic",
-    label: "Paralelný blok",
-    text:
-      "Prijmem podnet\n" +
-      "Paralelne: skontrolujem dokumenty; overím údaje; pripravím návrh\n" +
-      "Zlúčim výsledky\n" +
-      "Ukončím spracovanie",
+    label: t("wizard.lane_template_parallel_label"),
+    text: t("wizard.lane_template_parallel_text"),
   },
 ];
 
@@ -580,6 +560,7 @@ const pickGuideCard = ({
   modelSnapshot,
 }) => {
   if (!engineJson) return null;
+  const t = i18n.t.bind(i18n);
   const index = buildGuideIndex(engineJson);
   const ctxLaneId = activeLaneId || lastEditedLaneId || null;
   const ctxLane = ctxLaneId
@@ -673,12 +654,14 @@ const pickGuideCard = ({
       phase,
       scope: laneIdForHard ? "lane" : "global",
       laneId: laneIdForHard || null,
-      title: "Poďme opraviť tento bod",
+      title: t("wizard.guide_fix_title"),
       message: isGatewaySingleOutgoing
-        ? "Máme tu rozhodnutie, ktoré ešte nie je dokončené. Zatiaľ z neho vedie len jedna možnosť. Poďme doplniť druhú vetvu, aby bolo jasné, čo sa stane pri inom výsledku."
-        : `Na tomto mieste máme malú nezrovnalosť: ${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}. Poďme ju upraviť skôr, než pôjdeme ďalej.`,
+        ? t("wizard.guide_fix_gateway_message")
+        : t("wizard.guide_fix_message", {
+            details: `${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}`,
+          }),
       primary: laneIdForHard
-        ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
+        ? { label: t("wizard.guide_open_lane"), action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
         : null,
     };
   }
@@ -690,11 +673,12 @@ const pickGuideCard = ({
       key: "process_empty",
       phase,
       scope: "global",
-      title: "Kostra je hotová",
-      message:
-        `Máme pripravenú kostru procesu. Poďme začať rolou „${firstEmptyLane.name || firstEmptyLane.id}“ a doplniť do nej aspoň 2 až 3 konkrétne kroky. Rolu si otvoríme kliknutím na ňu v mape alebo tlačidlom vpravo. Píšme krátko a slovesom, napríklad Overím..., Skontrolujem..., Odošlem....`,
+      title: t("wizard.guide_skeleton_done_title"),
+      message: t("wizard.guide_skeleton_done_message", {
+        lane: firstEmptyLane.name || firstEmptyLane.id,
+      }),
       primary: firstEmptyLane
-        ? { label: "Otvoriť prvú rolu", action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
+        ? { label: t("wizard.guide_open_first_lane"), action: "OPEN_LANE", payload: { laneId: firstEmptyLane.id } }
         : null,
     };
   }
@@ -714,9 +698,11 @@ const pickGuideCard = ({
         phase,
         scope: "lane",
         laneId: ctxLaneId,
-        title: "Ešte chvíľu zostaň v tejto role",
-        message: `Máme základ role „${ctxLane.name || ctxLane.id}“. Poďme do nej doplniť ešte aspoň jeden krok, aby bolo jasné, čo sa tu deje od začiatku po odovzdanie ďalej.`,
-        primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLaneId } },
+        title: t("wizard.guide_lane_progress_title"),
+        message: t("wizard.guide_lane_progress_message", {
+          lane: ctxLane.name || ctxLane.id,
+        }),
+        primary: { label: t("wizard.guide_continue_lane"), action: "OPEN_LANE", payload: { laneId: ctxLaneId } },
       };
     }
     if (laneDone && nextLane && nextLane.id !== ctxLaneId) {
@@ -725,9 +711,12 @@ const pickGuideCard = ({
         phase,
         scope: "lane",
         laneId: ctxLaneId,
-        title: "Poďme na ďalšiu rolu",
-        message: `Rola „${ctxLane.name || ctxLane.id}“ už vyzerá dobre. Teraz poďme otvoriť rolu „${nextLane.name || nextLane.id}“ a doplniť jej hlavné kroky, aby bol proces kompletný naprieč všetkými účastníkmi.`,
-        primary: { label: "Otvoriť ďalšiu rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } },
+        title: t("wizard.guide_next_lane_title"),
+        message: t("wizard.guide_next_lane_message", {
+          currentLane: ctxLane.name || ctxLane.id,
+          nextLane: nextLane.name || nextLane.id,
+        }),
+        primary: { label: t("wizard.guide_open_next_lane"), action: "OPEN_LANE", payload: { laneId: nextLane.id } },
       };
     }
   }
@@ -745,9 +734,11 @@ const pickGuideCard = ({
           phase,
           scope: "lane",
           laneId: lane.id,
-          title: "Táto rola ešte čaká na kroky",
-          message: `V role „${lane.name || lane.id}“ ešte nemáme žiadne kroky. Poďme ju otvoriť a doplniť aspoň prvý konkrétny krok, aby bolo jasné, čo sa tu deje a čo má táto rola odovzdať ďalej.`,
-          primary: { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: lane.id } },
+          title: t("wizard.guide_empty_lane_title"),
+          message: t("wizard.guide_empty_lane_message", {
+            lane: lane.name || lane.id,
+          }),
+          primary: { label: t("wizard.guide_open_lane"), action: "OPEN_LANE", payload: { laneId: lane.id } },
         };
       }
     }
@@ -776,15 +767,17 @@ const pickGuideCard = ({
           phase,
           scope: laneId ? "lane" : "global",
           laneId,
-          title: "Poďme uzavrieť proces",
-          message: `Kostra už sa pekne črtá. Ak je aktivita „${label || "tento krok"}“ posledný bod procesu, poďme kliknúť na ňu na mape a potom použiť tlačidlo „Koniec sem“. Tým jasne určíme, kde sa tok procesu uzatvára.`,
+          title: t("wizard.guide_close_process_title"),
+          message: t("wizard.guide_close_process_message", {
+            label: label || t("wizard.guide_this_step"),
+          }),
           primary: {
-            label: "Ukáž miesto",
+            label: t("wizard.guide_show_place"),
             action: "FOCUS_NODE",
             payload: { nodeId: pickNode.id, laneId, nodeName: label || "" },
           },
           tertiary: {
-            label: "Koniec sem",
+            label: t("wizard.guide_end_here"),
             action: "CONNECT_END_HERE",
             payload: { nodeId: pickNode.id, nodeName: label || "", laneId },
           },
@@ -799,15 +792,17 @@ const pickGuideCard = ({
         phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Tu chýba ďalší krok",
-        message: `Aktivita „${label || "tento krok"}“ zatiaľ nemá pokračovanie. Poďme kliknúť na tento krok na mape a rozhodnúť: buď z neho potiahneme pokračovanie na ďalší krok, alebo použijeme „Koniec sem“, ak sa proces uzatvára práve tu.`,
+        title: t("wizard.guide_missing_next_title"),
+        message: t("wizard.guide_missing_next_message", {
+          label: label || t("wizard.guide_this_step"),
+        }),
         primary: {
-          label: "Ukáž miesto",
+          label: t("wizard.guide_show_place"),
           action: "FOCUS_NODE",
           payload: { nodeId: missingOutgoingTask.id, laneId, nodeName: label || "" },
         },
         tertiary: {
-          label: "Koniec sem",
+          label: t("wizard.guide_end_here"),
           action: "CONNECT_END_HERE",
           payload: { nodeId: missingOutgoingTask.id, laneId, nodeName: label || "" },
         },
@@ -821,10 +816,12 @@ const pickGuideCard = ({
         phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Tomuto kroku ešte niečo predchádza",
-        message: `Aktivita „${label || "tento krok"}“ ešte nemá predchodcu. Poďme sa na mape pozrieť, z ktorého kroku sem má prísť tok procesu, aby bola väzba medzi rolami alebo krokmi jasná.`,
+        title: t("wizard.guide_missing_prev_title"),
+        message: t("wizard.guide_missing_prev_message", {
+          label: label || t("wizard.guide_this_step"),
+        }),
         primary: {
-          label: "Ukáž miesto",
+          label: t("wizard.guide_show_place"),
           action: "FOCUS_NODE",
           payload: { nodeId: missingIncomingTask.id, laneId, nodeName: label || "" },
         },
@@ -840,12 +837,14 @@ const pickGuideCard = ({
         phase,
         scope: nextLane ? "lane" : "global",
         laneId: nextLane?.id || null,
-        title: "Poďme spojiť role do jedného toku",
+        title: t("wizard.guide_connect_lanes_title"),
         message: nextLane
-          ? `Máme doplnené kroky. Teraz z nich poďme spraviť plynulý proces od začiatku po koniec. Začneme v role „${nextLane.name || nextLane.id}“, kde ešte chýba väzba na ďalšiu časť procesu.`
-          : "Máme doplnené kroky. Teraz z nich poďme spraviť plynulý proces od začiatku po koniec a doplniť väzby medzi rolami tam, kde ešte chýbajú.",
+          ? t("wizard.guide_connect_lanes_message_with_lane", {
+              lane: nextLane.name || nextLane.id,
+            })
+          : t("wizard.guide_connect_lanes_message"),
         primary: nextLane
-          ? { label: "Otvoriť rolu", action: "OPEN_LANE", payload: { laneId: nextLane.id } }
+          ? { label: t("wizard.guide_open_lane"), action: "OPEN_LANE", payload: { laneId: nextLane.id } }
           : null,
       };
     }
@@ -871,13 +870,12 @@ const pickGuideCard = ({
         phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Poďme doladiť názvy",
-        message:
-          count > 1
-            ? `Máme ešte ${count} placeholder názvy, napríklad ${exampleToken}. Teraz už nejde o kostru, ale o spresnenie detailov. Poďme ich premenovať na reálne pomenovania, aby bol proces zrozumiteľný aj pre ďalších ľudí.`
-            : `Máme tu ešte placeholder názov, napríklad ${exampleToken}. Poďme doladiť detail a premenovať ho na reálny názov.`,
+        title: t("wizard.guide_placeholder_title"),
+        message: count > 1
+          ? t("wizard.guide_placeholder_message_many", { count, token: exampleToken })
+          : t("wizard.guide_placeholder_message_one", { token: exampleToken }),
         primary: pickNode?.id
-          ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          ? { label: t("wizard.guide_show_place"), action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
       };
     }
@@ -891,10 +889,10 @@ const pickGuideCard = ({
         phase,
         scope: laneId ? "lane" : "global",
         laneId,
-        title: "Ešte spresnime pomenovania",
-        message: "Proces už vyzerá dobre. Teraz poďme doladiť posledné všeobecné názvy ako „Procesný krok“ alebo „Nové rozhodnutie“, aby bolo hneď jasné, čo sa v procese deje.",
+        title: t("wizard.guide_refine_names_title"),
+        message: t("wizard.guide_refine_names_message"),
         primary: pickNode?.id
-          ? { label: "Ukáž miesto", action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
+          ? { label: t("wizard.guide_show_place"), action: "FOCUS_NODE", payload: { nodeId: pickNode.id, laneId } }
           : null,
       };
     }
@@ -906,9 +904,11 @@ const pickGuideCard = ({
       phase,
       scope: "lane",
       laneId: ctxLane.id,
-      title: "Ešte jeden alebo dva kroky",
-      message: `V role „${ctxLane.name || ctxLane.id}“ už niečo máme. Poďme v nej ešte chvíľu zostať a pridať jeden alebo dva kroky, aby bol jej priebeh jasnejší, a potom sa posunieme ďalej.`,
-      primary: { label: "Pokračovať v role", action: "OPEN_LANE", payload: { laneId: ctxLane.id } },
+      title: t("wizard.guide_one_more_steps_title"),
+      message: t("wizard.guide_one_more_steps_message", {
+        lane: ctxLane.name || ctxLane.id,
+      }),
+      primary: { label: t("wizard.guide_continue_lane"), action: "OPEN_LANE", payload: { laneId: ctxLane.id } },
     };
   }
 
@@ -920,10 +920,9 @@ const pickGuideCard = ({
       key: "demo_process_complete",
       phase,
       scope: "global",
-      title: "Ukážka je hotová",
-      message:
-        "Máme ucelený procesný tok. V deme si si vyskúšal kostru, kroky, prepojenia aj ukončenie procesu. Ak chceš pokračovať bez limitov a model si uložiť, vytvor si účet.",
-      primary: { label: "Vytvoriť účet", action: "OPEN_DEMO_SIGNUP" },
+      title: t("wizard.guide_demo_done_title"),
+      message: t("wizard.guide_demo_done_message"),
+      primary: { label: t("wizard.create_account"), action: "OPEN_DEMO_SIGNUP" },
     };
   }
   if (phase === "ready" && !isPersistedOrOrg) {
@@ -931,9 +930,9 @@ const pickGuideCard = ({
       key: "process_ready_for_save",
       phase,
       scope: "global",
-      title: "Proces je pripravený",
-      message: "Máme konzistentnú mapu, ktorá pôsobí ucelene. Teraz je správny moment uložiť proces. Potom sa spolu rozhodneme, či s ním budeme ďalej pracovať v pieskovisku alebo ho presunieme do organizácie.",
-      primary: { label: "Uložiť proces", action: "SAVE_PROCESS" },
+      title: t("wizard.guide_ready_save_title"),
+      message: t("wizard.guide_ready_save_message"),
+      primary: { label: t("wizard.guide_save_process"), action: "SAVE_PROCESS" },
     };
   }
 
@@ -942,10 +941,10 @@ const pickGuideCard = ({
       key: "process_complete",
       phase,
       scope: "global",
-      title: "Proces pôsobí hotovo",
-      message: "Vyzerá to dobre. Máme ucelený a pomenovaný proces pripravený na ďalší krok. Teraz sa už len rozhodneme, či ho necháme v pieskovisku alebo ho presunieme do organizácie.",
-      primary: { label: "Presunúť do organizácie", action: "MOVE_TO_ORG" },
-      secondary: { label: "Zostať v pieskovisku", action: "STAY_IN_SANDBOX" },
+      title: t("wizard.guide_complete_title"),
+      message: t("wizard.guide_complete_message"),
+      primary: { label: t("wizard.guide_move_to_org"), action: "MOVE_TO_ORG" },
+      secondary: { label: t("wizard.guide_stay_in_sandbox"), action: "STAY_IN_SANDBOX" },
     };
   }
 
@@ -964,35 +963,20 @@ const normalizeText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+const DECISION_TRIGGER_RE = /^(ak|ked|if|when)\b/i;
+const PARALLEL_TRIGGER_RE =
+  /\b(paralelne|sucasne|subezne|naraz|popri tom|popritom|parallel|in parallel|simultaneously|at the same time)\b/i;
+const PARALLEL_PREFIX_RE =
+  /^(paralelne|zaroven|sucasne|subezne|naraz|popritom|popri tom|parallel|in parallel|simultaneously|at the same time)\b\s*[:,-]?\s*/i;
+
 const detectDecision = (line) => {
   const text = normalizeText(line).trim();
-  return /^(ak|ked)\b/.test(text);
+  return DECISION_TRIGGER_RE.test(text);
 };
 
 const detectParallel = (line) => {
-  const text = normalizeText(line);
-  return (
-    text.startsWith("zaroven") ||
-    text.startsWith("sucasne") ||
-    text.startsWith("zároveň") ||
-    text.startsWith("súčasne") ||
-    text.startsWith("subezne") ||
-    text.startsWith("súbežne") ||
-    text.startsWith("paralelne") ||
-    text.startsWith("naraz") ||
-    text.startsWith("popri tom") ||
-    text.startsWith("popritom") ||
-    text.includes(" zaroven ") ||
-    text.includes(" sucasne ") ||
-    text.includes(" zároveň ") ||
-    text.includes(" súčasne ") ||
-    text.includes(" subezne ") ||
-    text.includes(" súbežne ") ||
-    text.includes(" paralelne ") ||
-    text.includes(" naraz ") ||
-    text.includes(" popri tom ") ||
-    text.includes(" popritom ")
-  );
+  const text = normalizeText(line).trim();
+  return PARALLEL_TRIGGER_RE.test(text);
 };
 
 const countStructures = (lines) => {
@@ -1008,14 +992,11 @@ const countStructures = (lines) => {
 const countParallelHintItems = (line) => {
   const normalized = normalizeText(line).trim();
   if (!normalized) return 0;
-  const triggerMatch = normalized.match(/\b(paralelne|sucasne|naraz)\b/i);
+  const triggerMatch = normalized.match(PARALLEL_TRIGGER_RE);
   if (!triggerMatch) return 0;
   const triggerStart = typeof triggerMatch.index === "number" ? triggerMatch.index : 0;
   const afterTrigger = normalized.slice(triggerStart);
-  const body = afterTrigger.replace(
-    /^(paralelne|sucasne|naraz)\s*[:,-]?\s*/i,
-    "",
-  );
+  const body = afterTrigger.replace(PARALLEL_PREFIX_RE, "");
   if (!body.trim()) return 0;
   return body
     .split(/\s*;\s*|\s*,\s*/i)
@@ -1027,26 +1008,26 @@ const determineInlineHint = (lines) => {
   const lastLine = [...lines].reverse().find((line) => line.trim());
   if (!lastLine) return null;
   const normalizedLine = normalizeText(lastLine);
-  const decisionMatch = normalizedLine.match(/\b(ak|ked)\b/);
-  const parallelMatch = normalizedLine.match(/\b(paralelne|sucasne|naraz)\b/);
+  const decisionMatch = normalizedLine.match(/\b(ak|ked|if|when)\b/);
+  const parallelMatch = normalizedLine.match(PARALLEL_TRIGGER_RE);
 
   const decisionHint = (() => {
     if (!decisionMatch) return null;
     const decisionIdx = typeof decisionMatch.index === "number" ? decisionMatch.index : 0;
-    const afterTrigger = normalizedLine.slice(decisionIdx).replace(/^(ak|ked)\b\s*/i, "");
-    const hasTak = /\btak\b/.test(afterTrigger);
-    const hasInak = /\binak\b/.test(afterTrigger);
-    const beforeTak = hasTak ? afterTrigger.split(/\btak\b/i)[0] || "" : afterTrigger;
-    const afterTak = hasTak ? (afterTrigger.split(/\btak\b/i)[1] || "") : "";
-    const beforeInak = hasInak ? (afterTrigger.split(/\binak\b/i)[0] || "") : afterTak;
-    const afterInak = hasInak ? (afterTrigger.split(/\binak\b/i)[1] || "") : "";
+    const afterTrigger = normalizedLine.slice(decisionIdx).replace(/^(ak|ked|if|when)\b\s*/i, "");
+    const hasThen = /\b(tak|then)\b/.test(afterTrigger);
+    const hasElse = /\b(inak|else|otherwise)\b/.test(afterTrigger);
+    const beforeThen = hasThen ? afterTrigger.split(/\b(tak|then)\b/i)[0] || "" : afterTrigger;
+    const afterThen = hasThen ? (afterTrigger.split(/\b(tak|then)\b/i).slice(2).join("") || "") : "";
+    const beforeElse = hasElse ? afterThen.split(/\b(inak|else|otherwise)\b/i)[0] || "" : afterThen;
+    const afterElse = hasElse ? (afterThen.split(/\b(inak|else|otherwise)\b/i).slice(2).join("") || "") : "";
     const trimmedAfterTrigger = afterTrigger.trim();
-    const conditionLen = beforeTak.replace(/[,\s]+/g, "").length;
+    const conditionLen = beforeThen.replace(/[,\s]+/g, "").length;
     const isTooShort = conditionLen < 2;
-    const yesStepText = String(beforeInak || "")
+    const yesStepText = String(beforeElse || "")
       .replace(/^(\s*[,;:-]\s*)+/, "")
       .trim();
-    const noStepText = String(afterInak || "")
+    const noStepText = String(afterElse || "")
       .replace(/^(\s*[,;:-]\s*)+/, "")
       .trim();
     const yesHasMultiple = /,\s*\S/.test(yesStepText);
@@ -1058,16 +1039,16 @@ const determineInlineHint = (lines) => {
         complete: false,
         message:
           trimmedAfterTrigger.length <= 2
-            ? "Vyzerá to na rozhodnutie. Najprv dopíš, kedy sa to stane. Napríklad: „Ak je žiadosť úplná ...“."
-            : "Dobre. Teraz pokračuj slovom „tak“, aby bolo jasné, čo sa stane potom.",
+            ? i18n.t("wizard.lane_decision_d0_short")
+            : i18n.t("wizard.lane_decision_d0_fill"),
       };
     }
-    if (!hasTak) {
+    if (!hasThen) {
       return {
         kind: "decision",
         state: "D1",
         complete: false,
-        message: "Teraz dopíš „tak“ a hneď zaň prvý krok. Napríklad: „tak schválim žiadosť“.",
+        message: i18n.t("wizard.lane_decision_d1"),
       };
     }
     if (!yesStepText) {
@@ -1075,17 +1056,17 @@ const determineInlineHint = (lines) => {
         kind: "decision",
         state: "D1A",
         complete: false,
-        message: "Za „tak“ dopíš prvý krok, ktorý sa má stať potom.",
+        message: i18n.t("wizard.lane_decision_d1a"),
       };
     }
-    if (!hasInak) {
+    if (!hasElse) {
       return {
         kind: "decision",
         state: "D2",
         complete: false,
         message: yesHasMultiple
-          ? "Táto časť vyzerá dobre. Teraz dopíš „inak“ a potom prvý krok v druhom prípade."
-          : "Ak po „tak“ nasledujú ešte ďalšie kroky, oddeľ ich čiarkou. Keď máš túto časť hotovú, dopíš „inak“.",
+          ? i18n.t("wizard.lane_decision_d2_with_multiple")
+          : i18n.t("wizard.lane_decision_d2"),
       };
     }
     if (!noStepText) {
@@ -1093,7 +1074,7 @@ const determineInlineHint = (lines) => {
         kind: "decision",
         state: "D2A",
         complete: false,
-        message: "Za „inak“ dopíš prvý krok. Napríklad: „inak vrátim žiadosť na doplnenie“.",
+        message: i18n.t("wizard.lane_decision_d2a"),
       };
     }
     return {
@@ -1101,8 +1082,8 @@ const determineInlineHint = (lines) => {
       state: "D3",
       complete: true,
       message: noHasMultiple
-        ? "Rozhodnutie je OK ✅ Obe časti sú vyplnené a môžeš ich ešte spresniť."
-        : "Rozhodnutie je OK ✅ Ak po „inak“ nasledujú ešte ďalšie kroky, oddeľ ich čiarkou.",
+        ? i18n.t("wizard.lane_decision_d3_complete")
+        : i18n.t("wizard.lane_decision_d3"),
     };
   })();
 
@@ -1114,7 +1095,7 @@ const determineInlineHint = (lines) => {
         kind: "parallel",
         state: "P0",
         complete: false,
-        message: "Vyzerá to na súbežné kroky. Doplň aspoň 2 činnosti a oddeľ ich čiarkou alebo slovom „a“.",
+        message: i18n.t("wizard.lane_parallel_p0"),
       };
     }
     if (itemCount === 1) {
@@ -1122,14 +1103,14 @@ const determineInlineHint = (lines) => {
         kind: "parallel",
         state: "P1",
         complete: false,
-        message: "Máme prvú súbežnú činnosť. Pridaj ešte jednu, aby bolo jasné, čo sa deje naraz.",
+        message: i18n.t("wizard.lane_parallel_p1"),
       };
     }
     return {
       kind: "parallel",
       state: "P2",
       complete: true,
-      message: "Súbežné kroky sú OK ✅ Ak chceš, ďalšiu činnosť pridáš po čiarke.",
+      message: i18n.t("wizard.lane_parallel_p2"),
     };
   })();
 
@@ -1148,52 +1129,46 @@ const analyzeLaneLine = (lineText) => {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const ascii = normalizeAscii(trimmed);
-  const isXor = /^(ak|ked)\b/.test(ascii);
-  const isAnd = /^(paralelne|zaroven|sucasne|subezne|naraz|popritom|popri)\b/.test(ascii);
-  const hasTak = /\btak\b/.test(ascii);
-  const hasInak = /\binak\b/.test(ascii);
+  const isXor = /^(ak|ked|if|when)\b/.test(ascii);
+  const isAnd = /^(paralelne|zaroven|sucasne|subezne|naraz|popritom|popri tom|parallel|in parallel|simultaneously|at the same time)\b/.test(ascii);
+  const hasThen = /\b(tak|then)\b/.test(ascii);
+  const hasElse = /\b(inak|else|otherwise)\b/.test(ascii);
 
   if (isXor) {
     let warning = "";
-    if (!hasTak || !hasInak) {
-      warning = "Dopln format: 'tak' aj 'inak'.";
+    if (!hasThen || !hasElse) {
+      warning = i18n.t("wizard.lane_analysis_xor_warning");
     }
     return {
       type: "xor",
-      badge: "ROZHODNUTIE",
-      hint: "Rozhodnutie: „Ak <podmienka> tak <krok>, inak <krok/koniec>“.",
+      badge: i18n.t("wizard.lane_analysis_xor_badge"),
+      hint: i18n.t("wizard.lane_analysis_xor_hint"),
       warning,
-      success: warning ? "" : "Super, toto je rozhodnutie v procese.",
+      success: warning ? "" : i18n.t("wizard.lane_analysis_xor_success"),
     };
   }
 
   if (isAnd) {
     const parts = ascii
-      .replace(/^paralelne:?/, "")
-      .replace(/^zaroven/, "")
-      .replace(/^sucasne/, "")
-      .replace(/^subezne/, "")
-      .replace(/^naraz/, "")
-      .replace(/^popritom/, "")
-      .replace(/^popri/, "");
+      .replace(PARALLEL_PREFIX_RE, "");
     const stepCount = parts
       .split(/\s*;\s*|\s*,\s*/i)
       .map((part) => part.trim())
       .filter(Boolean).length;
-    const warning = stepCount < 2 ? "Pridaj aspoň 2 kroky a oddeľ ich ; alebo ,." : "";
+    const warning = stepCount < 2 ? i18n.t("wizard.lane_analysis_parallel_warning") : "";
     return {
       type: "and",
-      badge: "PARALELNE",
-      hint: "Paralela: „Paralelne: krok; krok; krok“ alebo „Paralelne: krok, krok, krok“.",
+      badge: i18n.t("wizard.lane_analysis_parallel_badge"),
+      hint: i18n.t("wizard.lane_analysis_parallel_hint"),
       warning,
-      success: warning ? "" : "Super, toto je paralelné rozdelenie.",
+      success: warning ? "" : i18n.t("wizard.lane_analysis_parallel_success"),
     };
   }
 
   return {
     type: "task",
-    badge: "KROK",
-    hint: "Toto bude bežný krok v procese.",
+    badge: i18n.t("wizard.lane_analysis_task_badge"),
+    hint: i18n.t("wizard.lane_analysis_task_hint"),
     warning: "",
     success: "",
   };
@@ -1219,7 +1194,7 @@ const splitInlineSpecialLaneStep = (lineText) => {
   const text = String(lineText || "").trim();
   if (!text) return { prefixSteps: [], specialStep: null };
   const specialMatch = text.match(
-    /\b(Ak|Keď|Ked|paralelne|zároveň|zaroven|súčasne|sucasne|súbežne|subezne|naraz|popri tom|popritom)\b/i,
+    /\b(Ak|Keď|Ked|If|When|paralelne|zároveň|zaroven|súčasne|sucasne|súbežne|subezne|naraz|popri tom|popritom|parallel|in parallel|simultaneously|at the same time)\b/i,
   );
   if (!specialMatch || typeof specialMatch.index !== "number" || specialMatch.index <= 0) {
     return { prefixSteps: [], specialStep: null };
@@ -1242,8 +1217,8 @@ const analyzeLaneLines = (text) =>
           lineNumber: idx + 1,
           text: taskText,
           type: "task",
-          badge: "KROK",
-          hint: "Toto bude bežný krok v procese.",
+          badge: i18n.t("wizard.lane_analysis_task_badge"),
+          hint: i18n.t("wizard.lane_analysis_task_hint"),
           warning: "",
           success: "",
         }));
@@ -1303,17 +1278,17 @@ const DEMO_LIMITS = {
   maxFlows: 30,
 };
 
-const DEMO_DEFAULTS = {
-  processName: "Schválenie žiadosti",
-  roles: "Žiadateľ\nSpracovateľ",
-  trigger: "Prišla nová žiadosť",
-  output: "Žiadosť je schválená alebo zamietnutá",
-};
+const buildDemoDefaults = (t) => ({
+  processName: t("wizard.demo_template_approval_name"),
+  roles: t("wizard.demo_template_approval_roles"),
+  trigger: t("wizard.demo_template_approval_trigger"),
+  output: t("wizard.demo_template_approval_output"),
+});
 
-const DEMO_TEMPLATES = [
+const buildDemoTemplates = (t) => [
   {
     id: "custom",
-    label: "Vlastný",
+    label: t("wizard.demo_template_custom_label"),
     processName: "",
     roles: "",
     trigger: "",
@@ -1321,57 +1296,57 @@ const DEMO_TEMPLATES = [
   },
   {
     id: "approval",
-    label: "Schválenie žiadosti",
-    processName: "Schválenie žiadosti",
-    roles: "Žiadateľ\nSpracovateľ",
-    trigger: "Prišla nová žiadosť",
-    output: "Žiadosť je schválená alebo zamietnutá",
+    label: t("wizard.demo_template_approval_label"),
+    processName: t("wizard.demo_template_approval_name"),
+    roles: t("wizard.demo_template_approval_roles"),
+    trigger: t("wizard.demo_template_approval_trigger"),
+    output: t("wizard.demo_template_approval_output"),
   },
   {
     id: "invoice",
-    label: "Spracovanie faktúry",
-    processName: "Spracovanie faktúry",
-    roles: "Dodávateľ\nÚčtovník",
-    trigger: "Prišla faktúra od dodávateľa",
-    output: "Faktúra je schválená a zaúčtovaná",
+    label: t("wizard.demo_template_invoice_label"),
+    processName: t("wizard.demo_template_invoice_name"),
+    roles: t("wizard.demo_template_invoice_roles"),
+    trigger: t("wizard.demo_template_invoice_trigger"),
+    output: t("wizard.demo_template_invoice_output"),
   },
   {
     id: "ticket",
-    label: "Podpora zákazníka",
-    processName: "Riešenie zákazníckeho ticketu",
-    roles: "Zákazník\nPodpora",
-    trigger: "Zákazník vytvorí ticket",
-    output: "Ticket je vyriešený a uzatvorený",
+    label: t("wizard.demo_template_ticket_label"),
+    processName: t("wizard.demo_template_ticket_name"),
+    roles: t("wizard.demo_template_ticket_roles"),
+    trigger: t("wizard.demo_template_ticket_trigger"),
+    output: t("wizard.demo_template_ticket_output"),
   },
   {
     id: "order",
-    label: "Objednávka",
-    processName: "Spracovanie objednávky",
-    roles: "Zákazník\nSkladník",
-    trigger: "Prijatá nová objednávka",
-    output: "Objednávka je expedovaná",
+    label: t("wizard.demo_template_order_label"),
+    processName: t("wizard.demo_template_order_name"),
+    roles: t("wizard.demo_template_order_roles"),
+    trigger: t("wizard.demo_template_order_trigger"),
+    output: t("wizard.demo_template_order_output"),
   },
   {
     id: "onboarding",
-    label: "Nástup zamestnanca",
-    processName: "Nástup nového zamestnanca",
-    roles: "HR\nIT",
-    trigger: "Podpísaná pracovná zmluva",
-    output: "Zamestnanec má prístupy a onboarding plán",
+    label: t("wizard.demo_template_onboarding_label"),
+    processName: t("wizard.demo_template_onboarding_name"),
+    roles: t("wizard.demo_template_onboarding_roles"),
+    trigger: t("wizard.demo_template_onboarding_trigger"),
+    output: t("wizard.demo_template_onboarding_output"),
   },
 ];
 
-const HOME_GUIDE_MESSAGES = [
-  "Pomôžem ti začať od názvu procesu a rolí, aby kostra dávala zmysel hneď od začiatku.",
-  "Keď sa zasekneš, navediem ťa na ďalší krok, ktorý má teraz najväčší zmysel.",
-  "Strážim, aby sa z rozpracovaných krokov stal plynulý proces od začiatku po koniec.",
-  "Ukážem ti, kde chýba pokračovanie, kde sa proces uzatvára a čo ešte treba doplniť.",
-  "Pomôžem ti pomenovať kroky tak, aby mapa bola zrozumiteľná aj pre ďalších ľudí v tíme.",
-  "Keď doplníš kostru, posuniem ťa do role alebo miesta, ktoré sa oplatí riešiť ako ďalšie.",
-  "Nevypisujem len chyby. Snažím sa povedať, čo už máš dobre a čo je teraz najbližší užitočný krok.",
-  "Keď otvoríš rozpracovaný model, pomôžem ti zorientovať sa a nadviazať tam, kde si skončil.",
-  "Z BPMN nechcem robiť technický labyrint. Cieľ je, aby si vždy vedel, čo spraviť ďalej.",
-  "Som tu na to, aby sa z nápadu postupne stala čistá procesná mapa, nie chaotická kresba.",
+const buildHomeGuideMessages = (t) => [
+  t("wizard.home_guide_1"),
+  t("wizard.home_guide_2"),
+  t("wizard.home_guide_3"),
+  t("wizard.home_guide_4"),
+  t("wizard.home_guide_5"),
+  t("wizard.home_guide_6"),
+  t("wizard.home_guide_7"),
+  t("wizard.home_guide_8"),
+  t("wizard.home_guide_9"),
+  t("wizard.home_guide_10"),
 ];
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -1387,6 +1362,13 @@ const countLaneObjects = (engine, laneId) =>
   ).length;
 
 export default function LinearWizardPage({ currentUser = null, isDemo = false }) {
+  const { t } = useTranslation();
+  const helpRules = useMemo(() => buildHelpRules(t), [t]);
+  const homeGuideMessages = useMemo(() => buildHomeGuideMessages(t), [t]);
+  const processTemplates = useMemo(() => buildProcessTemplates(t), [t]);
+  const laneTemplates = useMemo(() => buildLaneTemplates(t), [t]);
+  const demoDefaults = useMemo(() => buildDemoDefaults(t), [t]);
+  const demoTemplates = useMemo(() => buildDemoTemplates(t), [t]);
   const navigate = useNavigate();
   const { modelId: routeModelId } = useParams();
   const isDemoMode = Boolean(isDemo);
@@ -1598,7 +1580,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const lastRouteModelIdRef = useRef(null);
   const undoInProgressRef = useRef(false);
   const [helpInputs, setHelpInputs] = useState(() =>
-    HELP_RULES.reduce((acc, rule) => {
+    helpRules.reduce((acc, rule) => {
       acc[rule.id] = (rule.fields || []).reduce((fieldsAcc, field) => {
         fieldsAcc[field.key] = "";
         return fieldsAcc;
@@ -1702,8 +1684,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isReadOnlyMode) {
       setInfo(
         activeOrgCapabilities.canToggleOrgEdit
-          ? "Režim: len na čítanie. Najprv klikni Upraviť."
-          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+          ? t("wizard.org_readonly_toggle_hint")
+          : t("wizard.org_readonly_viewer_hint"),
       );
       return;
     }
@@ -1734,7 +1716,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setLaneTemplateFlash(false);
       }, 900);
       const roleName = selectedLane?.name || selectedLane?.id || "rola";
-      setInfo(`Vložené do roly: ${roleName}`);
+      setInfo(t("wizard.lane_inserted_into", { role: roleName }));
       window.requestAnimationFrame(() => {
         const textarea = laneTextareaRef.current;
         if (!textarea) return;
@@ -1753,12 +1735,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (currentDraft && currentDraft !== nextDraft) {
       openWizardConfirmModal(
         {
-          kicker: "Rola",
-          title: "Prepísať rozpísané kroky?",
-          message:
-            "V tejto role už máš rozpísaný draft. Ak budeš pokračovať, vzor nahradí aktuálny text v paneli.",
-          confirmLabel: "Áno, použiť vzor",
-          cancelLabel: "Nechať môj text",
+          kicker: t("wizard.role_kicker"),
+          title: t("wizard.lane_overwrite_title"),
+          message: t("wizard.lane_overwrite_message"),
+          confirmLabel: t("wizard.lane_overwrite_confirm"),
+          cancelLabel: t("wizard.lane_overwrite_cancel"),
           warning: true,
         },
         applyTemplateText,
@@ -1852,6 +1833,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
   const guideModelLoadedKeyRef = useRef(null);
   const guideLastReasonRef = useRef("init");
+  const pendingGuideReviewReasonRef = useRef(null);
   const modelVersionRef = useRef(modelVersion);
 
   useEffect(() => {
@@ -1980,6 +1962,44 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     };
   }, [engineJson]);
 
+  const buildImmediateGuideCard = useCallback(
+    (nextEngine) => {
+      if (!nextEngine) return null;
+      const card = pickGuideCard({
+        engineJson: nextEngine,
+        findings: [],
+        activeLaneId: null,
+        lastEditedLaneId: null,
+        uiContext: {
+          mentorOpen,
+          storyOpen,
+          hasUnsavedChanges: true,
+          modelSourceKind: "sandbox",
+          isDemoMode,
+        },
+        modelSnapshot: null,
+      });
+      if (card) return card;
+      const firstLane = Array.isArray(nextEngine?.lanes) ? nextEngine.lanes[0] : null;
+      if (!firstLane?.id) return null;
+      return {
+        key: `generated_lane_start:${firstLane.id}`,
+        phase: "skeleton",
+        scope: "global",
+        title: t("wizard.guide_skeleton_done_title"),
+        message: t("wizard.guide_skeleton_done_message", {
+          lane: firstLane.name || firstLane.id,
+        }),
+        primary: {
+          label: t("wizard.guide_open_first_lane"),
+          action: "OPEN_LANE",
+          payload: { laneId: firstLane.id },
+        },
+      };
+    },
+    [mentorOpen, storyOpen, isDemoMode, t],
+  );
+
   const detectLayoutOversizeCard = useCallback(() => {
     const modeler = modelerRef.current;
     const elementRegistry = modeler?.get?.("elementRegistry");
@@ -2059,11 +2079,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return {
       key: "layout_oversize",
       scope: "global",
-      title: "Mapa je hotová 👍",
-      message:
-        "Ak chceš upratať voľné miesto, klikni najprv na rolu alebo celý proces (prípadne použi tlačidlo na mape), aby sa označil.\nPotom môžeš potiahnuť jeho okraj a zmenšiť ho podľa obsahu.",
-      primary: { label: "Na mape", action: "FOCUS_OVERSIZE_TARGET" },
-      secondary: { label: "Neskôr", action: "NOT_NOW" },
+      title: t("wizard.layout_oversize_title"),
+      message: t("wizard.layout_oversize_message"),
+      primary: { label: t("wizard.layout_oversize_primary"), action: "FOCUS_OVERSIZE_TARGET" },
+      secondary: { label: t("wizard.layout_oversize_secondary"), action: "NOT_NOW" },
     };
   }, []);
 
@@ -2134,17 +2153,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setGuideState({
           key: partialCardStarted ? "process_card_progress" : "process_card",
           scope: "global",
-          title: partialCardStarted ? "Poďme krok po kroku" : "Začíname spolu",
+          title: partialCardStarted ? t("wizard.guide_card_progress_title") : t("wizard.guide_card_start_title"),
           message: !processNameFilled
-            ? "Poďme začať názvom procesu. Jednou vetou pomenujeme, čo ideme modelovať."
+            ? t("wizard.guide_card_missing_name")
             : !rolesFilled
-              ? "Máme názov procesu. Teraz poďme doplniť roly, každú na nový riadok, aby bolo jasné, kto v procese vystupuje."
+              ? t("wizard.guide_card_missing_roles")
               : !triggerFilled
-                ? `Máme názov aj roly. Teraz poďme doplniť, čo proces „${generator.processName}“ spúšťa.`
+                ? t("wizard.guide_card_missing_trigger", { name: generator.processName })
                 : !outputFilled
-                  ? "Máme začiatok procesu. Ešte poďme doplniť, čo má byť na konci procesu alebo aký má byť jeho výsledok."
-                  : "Máme pripravený základ kostry. Poďme skontrolovať názov procesu, roly, začiatok a koniec a potom klikneme na „Vytvoriť model“.",
-          primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
+                  ? t("wizard.guide_card_missing_output")
+                  : t("wizard.guide_card_ready")
+          ,
+          primary: { label: t("wizard.guide_card_primary"), action: "OPEN_PROCESS_CARD" },
         });
         return;
       }
@@ -2163,25 +2183,31 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 : "process_card";
         const message =
           processNameFilled && rolesFilled && triggerFilled && outputFilled
-            ? "Máme pripravený základ kostry. Poďme skontrolovať názov procesu, roly, začiatok a koniec a potom kliknúť na „Vytvoriť model“, aby sme z toho spravili prvú mapu."
+            ? t("wizard.guide_card_ready_message", {
+                defaultValue:
+                  "We have the skeleton basics ready. Let's review the process name, roles, start and end, then click \"Create model\" to turn it into the first map.",
+              })
             : !processNameFilled
-              ? "Poďme začať názvom procesu. Jednou vetou pomenujeme, čo ideme modelovať."
+              ? t("wizard.guide_card_missing_name")
               : !rolesFilled
-                ? "Máme názov procesu. Teraz poďme doplniť roly, každú na nový riadok, aby sme vedeli vytvoriť kostru procesu."
+                ? t("wizard.guide_card_missing_roles")
                 : !triggerFilled
-                  ? `Máme názov aj roly. Teraz poďme doplniť, čo proces „${generator.processName}“ spúšťa.`
+                  ? t("wizard.guide_card_missing_trigger", { name: generator.processName })
                   : !outputFilled
-                    ? "Máme začiatok procesu. Ešte poďme doplniť, čo má byť na konci procesu alebo aký má byť jeho výsledok."
-                    : "Najprv si spolu nastavíme základ. Dáme procesu názov a pridáme roly, každú na nový riadok. Keď budeme pripravení, vytvoríme model.";
+                    ? t("wizard.guide_card_missing_output")
+                    : t("wizard.guide_card_default_message", {
+                        defaultValue:
+                          "Let's set up the basics first. Give the process a name and add the roles, one per line. Once we are ready, we will create the model.",
+                      });
         setGuideState({
           key,
           scope: "global",
           title:
             processNameFilled && rolesFilled && triggerFilled && outputFilled
-              ? "Základ je pripravený"
-              : "Poďme doplniť kostru",
+              ? t("wizard.guide_card_ready_title")
+              : t("wizard.guide_card_fill_title"),
           message,
-          primary: { label: "Do karty", action: "OPEN_PROCESS_CARD" },
+          primary: { label: t("wizard.guide_card_primary"), action: "OPEN_PROCESS_CARD" },
         });
         return;
       }
@@ -2290,7 +2316,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       ].join("|");
       if (guideModelLoadedKeyRef.current === key) return;
       guideModelLoadedKeyRef.current = key;
-      setGuideState(null);
       runGuideReview(partialCardStarted && !hasEngineModel ? "process_card_progress" : "model_loaded");
     }
   }, [guideEnabled, guideState, engineJson, processCard, runGuideReview]);
@@ -2470,7 +2495,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (isDemoMode && (actionId === "SAVE_PROCESS" || actionId === "MOVE_TO_ORG" || actionId === "STAY_IN_SANDBOX")) {
-      setInfo("DEMO režim: uloženie a organizácie sú dostupné až po registrácii.");
+      setInfo(t("wizard.demo_register_required"));
       setGuideState(null);
       return;
     }
@@ -2497,7 +2522,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return;
       }
       if (!activeOrgId) {
-        setInfo("Najprv si vyber alebo vytvor organizaciu.");
+        setInfo(t("wizard.org_pick_or_create_first"));
         setGuideState(null);
         return;
       }
@@ -3063,6 +3088,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   useEffect(() => {
     if (!guideEnabled) return;
+    if (!engineJson) return;
+    const pendingReason = pendingGuideReviewReasonRef.current;
+    if (!pendingReason) return;
+    pendingGuideReviewReasonRef.current = null;
+    runGuideReview(pendingReason, activeLaneId || null);
+  }, [guideEnabled, engineJson, activeLaneId, runGuideReview]);
+
+  useEffect(() => {
+    if (!guideEnabled) return;
     if (typeof window === "undefined") return;
     if (!window.__BPMNGEN_GUIDE_DEBUG) return;
     const nodesCount = Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0;
@@ -3087,14 +3121,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   useEffect(() => {
     if (xml) return undefined;
-    if (HOME_GUIDE_MESSAGES.length <= 1) return undefined;
+    if (homeGuideMessages.length <= 1) return undefined;
     const timer = window.setInterval(() => {
-      setHomeGuideMessageIndex((current) => (current + 1) % HOME_GUIDE_MESSAGES.length);
+      setHomeGuideMessageIndex((current) => (current + 1) % homeGuideMessages.length);
     }, 12000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [xml]);
+  }, [xml, homeGuideMessages]);
 
   const prevLaneOpenRef = useRef(laneOpen);
   const lastActiveLaneIdRef = useRef(null);
@@ -3274,7 +3308,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleCopyStory = async () => {
     const text = buildStoryText(storyDoc);
     if (!text) {
-      setInfo("Príbeh procesu zatiaľ nie je pripravený na kopírovanie.");
+      setInfo(
+        t("wizard.story_copy_empty", {
+          defaultValue: "The process story is not ready to copy yet.",
+        }),
+      );
       return;
     }
     try {
@@ -3282,9 +3320,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         throw new Error("clipboard_unavailable");
       }
       await navigator.clipboard.writeText(text);
-      setInfo("Príbeh procesu bol skopírovaný.");
+      setInfo(t("wizard.story_copy_success"));
     } catch (_err) {
-      setInfo("Nepodarilo sa skopírovať príbeh procesu.");
+      setInfo(t("wizard.story_copy_error"));
     }
   };
 
@@ -3292,7 +3330,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isDemoMode && field === "roles") {
       const lines = String(value || "").split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxRoles) {
-        setInfo(`V ukážke zatiaľ stačia maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+        setInfo(t("wizard.demo_roles_limit", { count: DEMO_LIMITS.maxRoles }));
       }
       value = lines.slice(0, DEMO_LIMITS.maxRoles).join("\n");
     }
@@ -3366,7 +3404,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isDemoMode) {
       const lines = String(value || "").split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
-        setInfo(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
+        setInfo(t("wizard.demo_lane_steps_limit", { count: DEMO_LIMITS.maxStepsPerLane }));
       }
       value = lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     }
@@ -3388,12 +3426,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (!isDemoMode) return next;
       const lines = next.split(/\r?\n/);
       if (lines.length > DEMO_LIMITS.maxStepsPerLane) {
-        setInfo(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
+        setInfo(t("wizard.demo_lane_steps_limit", { count: DEMO_LIMITS.maxStepsPerLane }));
       }
       return lines.slice(0, DEMO_LIMITS.maxStepsPerLane).join("\n");
     });
     const roleName = helpInsertTarget?.laneName || helpInsertTarget?.laneId || "rola";
-    setInfo(`Vložené do roly: ${roleName}`);
+    setInfo(t("wizard.lane_inserted_into", { role: roleName }));
     if (helpInsertTarget?.type === "lane") {
       openSingleCard("lane");
     }
@@ -3471,7 +3509,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const renderHelpList = () => (
     <div className="wizard-help-accordion">
-      {HELP_RULES.map((rule) => {
+      {helpRules.map((rule) => {
         const isOpen = Boolean(helpAccordionOpen[rule.id]);
         const tag =
           rule.id === "task"
@@ -3541,7 +3579,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   </div>
                 ) : null}
                 <div className="wizard-help-syntax-wrap">
-                  <span className="wizard-help-code-label">Odporúčaný zápis</span>
+                  <span className="wizard-help-code-label">{t("wizard.help_recommended_syntax")}</span>
                   <code className="wizard-help-syntax">{rule.syntax}</code>
                 </div>
                 <div className="wizard-help-acc-actions">
@@ -3550,7 +3588,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     className="btn btn--small btn-primary wizard-help-insert-btn"
                     onClick={() => insertHelpExample(buildHelpTemplate(rule))}
                   >
-                    Vložiť do textu
+                    {t("wizard.help_insert_into_text")}
                   </button>
                   <button
                     type="button"
@@ -3561,7 +3599,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       }
                     }}
                   >
-                    Späť do písania
+                    {t("wizard.help_back_to_writing")}
                   </button>
                 </div>
               </div>
@@ -3738,15 +3776,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const processName = String(processCard?.generatorInput?.processName || "").trim();
     const roleLines = splitLines(processCard?.generatorInput?.roles || "");
     if (!processName) {
-      setDemoIntroError("Doplň názov procesu.");
+      setDemoIntroError(
+        t("wizard.demo_intro_need_name", {
+          defaultValue: "Add a process name.",
+        }),
+      );
       return;
     }
     if (!roleLines.length) {
-      setDemoIntroError("Doplň aspoň 1 rolu.");
+      setDemoIntroError(t("wizard.demo_intro_need_role"));
       return;
     }
     if (roleLines.length > DEMO_LIMITS.maxRoles) {
-      setDemoIntroError(`V ukážke zatiaľ stačia maximálne ${DEMO_LIMITS.maxRoles} roly.`);
+      setDemoIntroError(t("wizard.demo_roles_limit", { count: DEMO_LIMITS.maxRoles }));
       return;
     }
 
@@ -3781,8 +3823,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setGuideState({
         key: "demo_skeleton_ready",
         scope: "global",
-        title: "Kostra je pripravená",
-        message: `Teraz klikni na jednu rolu a doplň 2 až 3 krátke kroky. Ak sa proces rozhoduje, začni vetu slovom „ak“ alebo „keď“.`,
+        title: t("wizard.demo_skeleton_ready_title"),
+        message: t("wizard.demo_skeleton_ready_message"),
       });
       setDemoSetupOpen(false);
       setHasUnsavedChanges(true);
@@ -3816,7 +3858,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       },
     }));
     setDemoIntroError("");
-    setInfo(template.id === "custom" ? "Môžeš začať vlastným procesom." : `Doplnený vzor: ${template.label}`);
+    setInfo(
+      template.id === "custom"
+        ? t("wizard.demo_custom_start")
+        : t("wizard.demo_template_applied", { label: template.label }),
+    );
   }, []);
 
   useEffect(() => {
@@ -3825,10 +3871,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       ...prev,
       generatorInput: {
         ...prev.generatorInput,
-        processName: DEMO_DEFAULTS.processName,
-        roles: DEMO_DEFAULTS.roles,
-        trigger: DEMO_DEFAULTS.trigger,
-        output: DEMO_DEFAULTS.output,
+        processName: demoDefaults.processName,
+        roles: demoDefaults.roles,
+        trigger: demoDefaults.trigger,
+        output: demoDefaults.output,
       },
     }));
     setDrawerOpen(false);
@@ -4215,7 +4261,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (!generatedEngine) {
         throw new Error("Chýba engine_json v odpovedi.");
       }
+      pendingGuideReviewReasonRef.current = "skeleton_generated";
       setEngineJson(generatedEngine);
+      setGuideState(buildImmediateGuideCard(generatedEngine));
       const xmlText = await renderEngineXml(generatedEngine);
       setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
@@ -4240,7 +4288,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (!generatedEngine) {
         throw new Error("Chýba engine_json v odpovedi.");
       }
+      pendingGuideReviewReasonRef.current = "skeleton_generated";
       setEngineJson(generatedEngine);
+      setGuideState(buildImmediateGuideCard(generatedEngine));
       const xmlText = await renderEngineXml(generatedEngine);
       setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
@@ -4425,7 +4475,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const persistProjectNotes = async (nextNotes) => {
     const scopedOrgId = String(activeOrgId || "").trim();
     if (!scopedOrgId) {
-      setProjectNotesError("Najprv si zvoľ aktívnu organizáciu.");
+      setProjectNotesError(t("wizard.notes_need_org"));
       return;
     }
     const normalized = (nextNotes || []).map(normalizeNote);
@@ -4438,7 +4488,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setProjectNotes(resp.notes.map(normalizeNote));
       }
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa ulozit poznamky.";
+      const message =
+        e?.message ||
+        t("wizard.notes_save_error", {
+          defaultValue: "Failed to save notes.",
+        });
       setProjectNotesError(message);
     } finally {
       setProjectNotesSaving(false);
@@ -4636,8 +4690,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     modeling.connect(createdTaskB, createdJoin);
     if (gatewayType === "bpmn:ExclusiveGateway") {
       try {
-        modeling.updateProperties(flowA, { name: "Áno" });
-        modeling.updateProperties(flowB, { name: "Nie" });
+        modeling.updateProperties(flowA, { name: "Yes" });
+        modeling.updateProperties(flowB, { name: "No" });
       } catch {
         // ignore label update errors
       }
@@ -5036,7 +5090,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const _handleEnableOrgEdit_unused2 = () => {
     if (modelSource?.kind !== "org") return;
     if (!activeOrgCapabilities.canToggleOrgEdit) {
-      setInfo("Nemáš právo upravovať org model.");
+      setInfo(t("wizard.org_edit_denied"));
       return;
     }
     setOrgEditConfirmOpen(true);
@@ -5374,13 +5428,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (isReadOnlyMode) {
       setInfo(
         activeOrgCapabilities.canToggleOrgEdit
-          ? "Režim: len na čítanie. Najprv klikni Upraviť."
-          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+          ? t("wizard.org_readonly_toggle_hint")
+          : t("wizard.org_readonly_viewer_hint"),
       );
       return;
     }
     if (!selectedLane || !laneDescription.trim()) {
-      setError("Vyber lane a doplň aspoň jednu aktivitu.");
+      setError(t("wizard.lane_select_and_add"));
       return;
     }
     if (laneSubmitGuardMessage) {
@@ -5389,7 +5443,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     const laneLines = splitLines(laneDescription);
     if (isDemoMode && laneLines.length > DEMO_LIMITS.maxStepsPerLane) {
-      setError(`Na ukážku stačí kratšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxStepsPerLane} riadkov.`);
+      setError(t("wizard.demo_lane_steps_limit", { count: DEMO_LIMITS.maxStepsPerLane }));
       return;
     }
     cancelPendingRelayouts();
@@ -5405,7 +5459,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         const existingDecisions = countExclusiveGateways(currentEngine);
         const typedDecisions = laneLines.filter((line) => detectDecision(line)).length;
         if (existingDecisions + typedDecisions > DEMO_LIMITS.maxDecisions) {
-          setError(`V ukážke si zatiaľ skús maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutia.`);
+          setError(t("wizard.demo_decisions_limit", { count: DEMO_LIMITS.maxDecisions }));
           setIsLoading(false);
           return;
         }
@@ -5448,22 +5502,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (isDemoMode) {
         const laneObjects = countLaneObjects(updatedEngine, laneId);
         if (laneObjects > DEMO_LIMITS.maxObjectsPerLane) {
-          setError(`Na ukážku stačí menšia rola. Nechaj zatiaľ maximálne ${DEMO_LIMITS.maxObjectsPerLane} objektov v jednej role.`);
+          setError(t("wizard.demo_lane_objects_limit", { count: DEMO_LIMITS.maxObjectsPerLane }));
           return;
         }
         const nodesCount = Array.isArray(updatedEngine?.nodes) ? updatedEngine.nodes.length : 0;
         const flowsCount = Array.isArray(updatedEngine?.flows) ? updatedEngine.flows.length : 0;
         const decisionsCount = countExclusiveGateways(updatedEngine);
         if (nodesCount > DEMO_LIMITS.maxNodes) {
-          setError(`Ukážka je nastavená na menší proces. Ak chceš pokračovať vo väčšom modeli, otvor plnú verziu.`);
+          setError(t("wizard.demo_smaller_process_only"));
           return;
         }
         if (flowsCount > DEMO_LIMITS.maxFlows) {
-          setError(`Ukážka je nastavená na menší proces. Ak chceš pokračovať vo väčšom modeli, otvor plnú verziu.`);
+          setError(t("wizard.demo_smaller_process_only"));
           return;
         }
         if (decisionsCount > DEMO_LIMITS.maxDecisions) {
-          setError(`V ukážke si zatiaľ skús maximálne ${DEMO_LIMITS.maxDecisions} rozhodnutia.`);
+          setError(t("wizard.demo_decisions_limit", { count: DEMO_LIMITS.maxDecisions }));
           return;
         }
       }
@@ -5482,14 +5536,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         });
 
       const mapIncrementalReasonToMessage = (reason) => {
-        if (!reason) return "Nepodarilo sa pridať kroky bez prepočtu mapy.";
-        if (reason === "missing_process_parent") return "Chýba pool/proces pre vloženie krokov.";
-        if (reason === "missing_required_node") return "Niektorý krok v mape chýba (pravdepodobne bol zmazaný).";
-        if (reason === "connect_failed" || reason === "connect_exception") return "Prepojenie krokov zablokovali BPMN pravidlá.";
-        if (reason === "create_shape_failed" || reason === "create_shape_exception") return "Nepodarilo sa vytvoriť nové kroky v lane.";
-        if (reason === "missing_modeler_services") return "Editor mapy nie je pripravený.";
-        if (reason === "invalid_input") return "Neplatné dáta pre pridanie krokov.";
-        return `Nepodarilo sa pridať kroky (${reason}).`;
+        if (!reason) return t("wizard.append_error_generic", { defaultValue: "Failed to add steps without recalculating the map." });
+        if (reason === "missing_process_parent") return t("wizard.append_error_missing_process_parent", { defaultValue: "Missing pool/process target for inserting steps." });
+        if (reason === "missing_required_node") return t("wizard.append_error_missing_required_node", { defaultValue: "A required step is missing from the map, likely because it was deleted." });
+        if (reason === "connect_failed" || reason === "connect_exception") return t("wizard.append_error_connect_failed", { defaultValue: "BPMN rules blocked connecting the steps." });
+        if (reason === "create_shape_failed" || reason === "create_shape_exception") return t("wizard.append_error_create_shape_failed", { defaultValue: "Failed to create new steps in the lane." });
+        if (reason === "missing_modeler_services") return t("wizard.append_error_missing_modeler_services", { defaultValue: "The map editor is not ready." });
+        if (reason === "invalid_input") return t("wizard.append_error_invalid_input", { defaultValue: "Invalid data for adding steps." });
+        return t("wizard.append_error_with_reason", { reason, defaultValue: "Failed to add steps ({{reason}})." });
       };
 
       const logDemoFallback = (reason, details = {}) => {
@@ -5578,16 +5632,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setGuideState({
                 key: `demo_next_lane:${nextLane.id}`,
                 scope: "global",
-                title: "Pokračuj na druhú rolu",
-                message: `Máme prvú rolu. Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a doplň, čo sa v nej deje.`,
+                title: t("wizard.demo_next_lane_title"),
+                message: t("wizard.demo_next_lane_message", { lane: nextLane.name || nextLane.id }),
               });
             } else {
               setGuideState({
                 key: "demo_finish_hint",
                 scope: "global",
-                title: "Poďme prepojiť tok procesu",
-                message:
-                  "Máme doplnené kroky v rolách. Teraz klikni na krok, z ktorého má proces pokračovať, daj „Prepojiť“ a potiahni spojenie na ďalší objekt. Ak sa proces na niektorom kroku končí, klikni naň a použi „Koniec sem“.",
+                title: t("wizard.demo_connect_flow_title"),
+                message: t("wizard.demo_connect_flow_message"),
               });
             }
           }
@@ -5627,16 +5680,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setGuideState({
                 key: `demo_next_lane:${nextLane.id}`,
                 scope: "global",
-                title: "Pokračuj na druhú rolu",
-                message: `Máme prvú rolu. Teraz klikni na rolu „${nextLane.name || nextLane.id}“ a doplň, čo sa v nej deje.`,
+                title: t("wizard.demo_next_lane_title"),
+                message: t("wizard.demo_next_lane_message", { lane: nextLane.name || nextLane.id }),
               });
             } else {
               setGuideState({
                 key: "demo_finish_hint",
                 scope: "global",
-                title: "Poďme prepojiť tok procesu",
-                message:
-                  "Máme doplnené kroky v rolách. Teraz klikni na krok, z ktorého má proces pokračovať, daj „Prepojiť“ a potiahni spojenie na ďalší objekt. Ak sa proces na niektorom kroku končí, klikni naň a použi „Koniec sem“.",
+                title: t("wizard.demo_connect_flow_title"),
+                message: t("wizard.demo_connect_flow_message"),
               });
             }
           }
@@ -5669,23 +5721,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleSaveModel = async () => {
     if (isDemoMode) {
-      setInfo("DEMO režim: ukladanie je vypnuté.");
+      setInfo(t("wizard.demo_save_disabled"));
       return;
     }
     if (!engineJson) {
-      setError("Nie je čo uložiť – vygeneruj alebo naimportuj diagram.");
+      setError(t("wizard.nothing_to_save"));
       return;
     }
     const canEditOrg = modelSource?.kind !== "org" || activeOrgCapabilities.canEditOrgModels;
     if (modelSource?.kind === "org" && !canEditOrg) {
-      setInfo("Nemáš právo upravovať org model.");
+      setInfo(t("wizard.org_edit_denied"));
       return;
     }
     if (modelSource?.kind === "org" && orgReadOnly) {
       setInfo(
         activeOrgCapabilities.canToggleOrgEdit
-          ? "Režim: len na čítanie. Najprv klikni Upraviť."
-          : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať.",
+          ? t("wizard.org_readonly_toggle_hint")
+          : t("wizard.org_readonly_viewer_hint"),
       );
       return;
     }
@@ -5868,11 +5920,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const viewerProps = useMemo(
     () => ({
-      title: "Karta procesu - náhľad",
+      title: t("wizard.process_card_preview_title"),
       subtitle: previewName,
       subtitleMeta: previewVersionLabel,
       subtitleTag: previewVersionTag,
-      subtitleBadge: modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko",
+      subtitleBadge: modelSource?.kind === "org" ? t("wizard.process_card_badge_org") : t("wizard.process_card_badge_sandbox"),
       subtitleBadgeVariant: modelSource?.kind === "org" ? "org" : "sandbox",
       subtitleProminent: true,
       xml,
@@ -5888,12 +5940,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       onEditStructure: isDemoMode ? undefined : () => openSingleCard("drawer"),
       onMainMenu: handleMainMenu,
       saveDisabled: isDemoMode || saveLoading || isReadOnlyMode,
-      saveLabel: isDemoMode ? "Demo režim" : saveLoading ? "Ukladám..." : "Uložiť",
+      saveLabel: isDemoMode ? t("wizard.map_save_demo") : saveLoading ? t("wizard.rail_saving") : t("map_viewer.save"),
       editStructureDisabled: false,
       onEngineJsonPatch: handleEngineJsonPatch,
       onInsertBlock: insertLaneBlock,
       onXmlImported: handleXmlImported,
-      overlayMessage: relayouting ? "Zarovnávam layout…" : "",
+      overlayMessage: relayouting ? t("wizard.relayouting") : "",
       guideHighlight: guideHighlight?.map || null,
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
@@ -5980,7 +6032,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     try {
       const resp = await loadWizardModel(id);
       applyLoadedModel(resp, { source: { kind: "sandbox" } });
-      setInfo("Model bol nacitany.");
+      setInfo(t("wizard.model_loaded"));
     } catch (e) {
       const isNotFound =
         e?.status === 404 || (typeof e?.message === "string" && e.message.includes("HTTP 404"));
@@ -5990,14 +6042,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           applyLoadedModel(orgResp, { source: { kind: "org", orgId: activeOrgId, modelId: id } });
           setOrgVersionPreview(null);
           setPreviewVersionTag("");
-          setInfo("Model bol nacitany.");
+          setInfo(t("wizard.model_loaded"));
           return;
         } catch (orgErr) {
           if (isMissingDiagramError(orgErr)) {
             showMissingDiagram("Tento diagram nie je dostupný.");
             return;
           }
-          const message = orgErr?.message || "Nepodarilo sa nacitat model.";
+          const message = orgErr?.message || t("wizard.model_load_error");
           setError(message);
           return;
         }
@@ -6006,7 +6058,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         showMissingDiagram("Tento diagram nie je dostupný.");
         return;
       }
-      const message = e?.message || "Nepodarilo sa nacitat model.";
+      const message = e?.message || t("wizard.model_load_error");
       setError(message);
     } finally {
       setLoadLoading(false);
@@ -6019,7 +6071,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!orgId) {
       setOrgLoading(false);
       setOrgTree(null);
-      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgError(t("wizard.org_pick_or_create_first"));
       return;
     }
     try {
@@ -6028,10 +6080,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     } catch (e) {
       const status = e?.status;
       if (status === 403) {
-        setOrgError("Pouzivatel nema pristup k organizacii. Skus prepnúť organizaciu.");
+        setOrgError(t("wizard.org_access_denied_switch"));
         void refreshMyOrgs(activeOrgId);
       } else {
-        setOrgError(e?.message || "Nepodarilo sa nacitat Model organizacie.");
+        setOrgError(e?.message || t("wizard.org_tree_load_error"));
       }
     } finally {
       setOrgLoading(false);
@@ -6085,23 +6137,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleCreateOrgFolder = async () => {
     if (!activeOrgId) {
-      setOrgError("Najprv si vyber alebo vytvor organizáciu.");
+      setOrgError(t("wizard.org_pick_or_create_first"));
       return;
     }
     if (!activeOrgCapabilities.canEditOrgModels) {
-      setOrgError("Nemáš právo upravovať model organizácie.");
+      setOrgError(t("wizard.org_edit_denied"));
       return;
     }
     openWizardInputModal(
       {
-        kicker: "Model organizácie",
-        title: "Vytvoriť priečinok",
-        label: "Názov priečinka",
-        confirmLabel: "Vytvoriť priečinok",
+        kicker: t("wizard.org_model_kicker"),
+        title: t("wizard.org_folder_create_title"),
+        label: t("wizard.org_folder_name_label"),
+        confirmLabel: t("wizard.org_folder_create_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return "Zadaj názov priečinka.";
+        if (!trimmed) return t("wizard.org_folder_name_required");
         try {
           const result = await createOrgFolder({ parentId: selectedOrgFolderId, name: trimmed }, activeOrgId);
           setOrgTree(result?.tree || null);
@@ -6109,7 +6161,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           setOrgError(null);
           return null;
         } catch (e) {
-          const message = e?.message || "Nepodarilo sa vytvoriť priečinok.";
+          const message = e?.message || t("wizard.org_folder_create_error");
           setOrgError(message);
           return message;
         }
@@ -6119,23 +6171,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleCreateOrgProcess = async () => {
     if (!activeOrgId) {
-      setOrgError("Najprv si vyber alebo vytvor organizáciu.");
+      setOrgError(t("wizard.org_pick_or_create_first"));
       return;
     }
     if (!activeOrgCapabilities.canEditOrgModels) {
-      setOrgError("Nemáš právo upravovať model organizácie.");
+      setOrgError(t("wizard.org_edit_denied"));
       return;
     }
     openWizardInputModal(
       {
-        kicker: "Model organizácie",
-        title: "Vytvoriť proces",
-        label: "Názov procesu",
-        confirmLabel: "Vytvoriť proces",
+        kicker: t("wizard.org_model_kicker"),
+        title: t("wizard.org_process_create_title"),
+        label: t("wizard.org_process_name_label"),
+        confirmLabel: t("wizard.org_process_create_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return "Zadaj názov procesu.";
+        if (!trimmed) return t("wizard.org_process_name_required");
         try {
           const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: trimmed }, activeOrgId);
           setOrgTree(result?.tree || null);
@@ -6203,7 +6255,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const openMoveProcessModal = (node) => {
     if (!node || node.type !== "process") return;
     if (!activeOrgCapabilities.canEditOrgModels) {
-      setOrgError("Nemáš právo upravovať model organizácie.");
+      setOrgError(t("wizard.org_edit_denied"));
       return;
     }
     const parentInfo = findParentFolderInfo(orgTree, node.id);
@@ -6270,7 +6322,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const openOrgVersionsModal = async (node) => {
     if (!node || node.type !== "process") return;
     if (!activeOrgId) {
-      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgError(t("wizard.org_pick_or_create_first"));
       return;
     }
     setOrgMenuNodeId(null);
@@ -6301,7 +6353,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const sorted = filtered.sort((a, b) => new Date(b?.updated_at || 0) - new Date(a?.updated_at || 0));
       setOrgVersionsItems(sorted);
     } catch (e) {
-      setOrgVersionsError(e?.message || "Nepodarilo sa nacitat verzie.");
+      setOrgVersionsError(e?.message || t("wizard.org_versions_load_error"));
     } finally {
       setOrgVersionsLoading(false);
     }
@@ -6327,24 +6379,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleRenameOrgProcess = async (node) => {
     if (!node || node.type !== "process") return;
     if (!activeOrgId) {
-      setOrgError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgError(t("wizard.org_pick_or_create_first"));
       return;
     }
     if (!activeOrgCapabilities.canEditOrgModels) {
-      setOrgError("Nemáš právo upravovať model organizácie.");
+      setOrgError(t("wizard.org_edit_denied"));
       return;
     }
     openWizardInputModal(
       {
-        kicker: "Model organizácie",
-        title: "Premenovať proces",
-        label: "Nový názov procesu",
+        kicker: t("wizard.org_model_kicker"),
+        title: t("wizard.org_rename_title"),
+        label: t("wizard.org_rename_label"),
         initialValue: node.name || "",
-        confirmLabel: "Uložiť názov",
+        confirmLabel: t("wizard.org_rename_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return "Zadaj nový názov procesu.";
+        if (!trimmed) return t("wizard.org_rename_required");
         setOrgMenuNodeId(null);
         try {
           const result = await renameOrgNode(node.id, trimmed, activeOrgId);
@@ -6352,7 +6404,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           setOrgError(null);
           return null;
         } catch (e) {
-          const message = e?.message || "Nepodarilo sa premenovať proces.";
+          const message = e?.message || t("wizard.org_rename_error");
           setOrgError(message);
           return message;
         }
@@ -6363,7 +6415,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const loadOrgModelFromTree = async (modelId, treeNodeId, options = {}) => {
     const { preview = false, previewLabel = "" } = options;
     if (!activeOrgId) {
-      setError("Najprv si vyber alebo vytvor organizaciu.");
+      setError(t("wizard.org_pick_or_create_first"));
       return;
     }
     setError(null);
@@ -6390,13 +6442,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       lastRouteModelIdRef.current = modelId;
       navigate(`/model/${modelId}`);
-      setInfo("Model bol nacitany.");
+      setInfo(t("wizard.model_loaded"));
     } catch (e) {
       if (isMissingDiagramError(e)) {
         showMissingDiagram("Tento diagram nie je dostupný.");
         return;
       }
-      const message = e?.message || "Nepodarilo sa nacitat model.";
+      const message = e?.message || t("wizard.model_load_error");
       setError(message);
     } finally {
       setLoadLoading(false);
@@ -6405,7 +6457,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const openOrgProcessByNodeLatest = async (treeNodeId) => {
     if (!activeOrgId || !treeNodeId) {
-      setError("Najprv si vyber alebo vytvor organizaciu.");
+      setError(t("wizard.org_pick_or_create_first"));
       return;
     }
     let latestTree = orgTree;
@@ -6426,7 +6478,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const loadOrgModelDirect = async (modelId) => {
     if (!activeOrgId) {
-      setError("Najprv si vyber alebo vytvor organizaciu.");
+      setError(t("wizard.org_pick_or_create_first"));
       return;
     }
     setError(null);
@@ -6444,13 +6496,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setPreviewVersionTag("");
       lastRouteModelIdRef.current = modelId;
       navigate(`/model/${modelId}`);
-      setInfo("Model bol nacitany.");
+      setInfo(t("wizard.model_loaded"));
     } catch (e) {
       if (isMissingDiagramError(e)) {
         showMissingDiagram("Tento diagram nie je dostupný.");
         return;
       }
-      const message = e?.message || "Nepodarilo sa nacitat model.";
+      const message = e?.message || t("wizard.model_load_error");
       setError(message);
     } finally {
       setLoadLoading(false);
@@ -6459,7 +6511,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const openPushToOrgModal = async (model) => {
     if (!activeOrgId) {
-      setInfo("Najprv si vyber alebo vytvor organizaciu.");
+      setInfo(t("wizard.org_pick_or_create_first"));
       return;
     }
     setOrgPushModel(model);
@@ -6531,7 +6583,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const executePushToOrg = async ({ nameOverride = null, overwriteModelId = null, skipConflictCheck = false } = {}) => {
     if (!orgPushModel?.id) return;
     if (!activeOrgId) {
-      setOrgPushError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgPushError(t("wizard.org_pick_or_create_first"));
       return;
     }
     const baseName = (nameOverride || orgPushModel?.name || "").trim();
@@ -6560,7 +6612,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         };
         await saveOrgModel(overwriteModelId, activeOrgId, payload);
         await refreshOrgTree(activeOrgId);
-        setInfo("Proces v organizácii bol prepísaný.");
+        setInfo(t("wizard.org_process_overwritten"));
       } else {
         const pushResp = await pushSandboxModelToOrg(orgPushModel.id, nameOverride || orgPushModel?.name, activeOrgId);
         const orgModelId = pushResp?.org_model_id;
@@ -6577,7 +6629,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         );
         setOrgTree(treeResp?.tree || orgTree);
         setExpandedOrgFolders((prev) => ({ ...prev, root: true, [orgPushTargetFolderId]: true }));
-        setInfo("Model bol ulozeny do organizacie.");
+        setInfo(t("wizard.org_model_saved"));
       }
       await fetchModels();
       setOrgPushModalOpen(false);
@@ -6589,11 +6641,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setOrgPushOverwriteConfirmOpen(false);
     } catch (e) {
       if (e?.status === 403) {
-        setInfo("Nemas organizaciu alebo nemas pristup.");
+        setInfo(t("wizard.org_missing_or_denied"));
       } else if (e?.status === 401) {
-        setInfo("Nie si prihlaseny.");
+        setInfo(t("wizard.not_logged_in"));
       } else {
-        setOrgPushError(e?.message || "Nepodarilo sa ulozit model do organizacie.");
+        setOrgPushError(e?.message || t("wizard.org_model_save_error"));
       }
     } finally {
       setOrgPushLoading(false);
@@ -6610,15 +6662,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleConflictRename = async () => {
     openWizardInputModal(
       {
-        kicker: "Organizácia",
-        title: "Premenovať názov procesu",
-        label: "Nový názov procesu",
+        kicker: t("wizard.dialog_org"),
+        title: t("wizard.org_process_rename_title"),
+        label: t("wizard.org_process_name_label"),
         initialValue: orgPushConflictName || orgPushModel?.name || "",
-        confirmLabel: "Použiť nový názov",
+        confirmLabel: t("wizard.org_process_rename_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return "Zadaj nový názov procesu.";
+        if (!trimmed) return t("wizard.org_rename_required");
         setOrgPushConflictOpen(false);
         setOrgPushConflictMatches([]);
         setOrgPushConflictName("");
@@ -6631,7 +6683,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleConflictOverwrite = async () => {
     if (!orgPushConflictSelectedId) {
-      setOrgPushError("Najprv vyber proces na prepisanie.");
+      setOrgPushError(t("wizard.org_overwrite_pick_first"));
       return;
     }
     setOrgPushOverwriteConfirmOpen(true);
@@ -6657,7 +6709,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleConfirmOverwrite = async () => {
     const match = orgPushConflictMatches.find((m) => m?.node?.id === orgPushConflictSelectedId);
     if (!match) {
-      setOrgPushError("Nenasiel sa existujuci proces na prepisanie.");
+      setOrgPushError(t("wizard.org_overwrite_missing_target"));
       setOrgPushOverwriteConfirmOpen(false);
       return;
     }
@@ -6676,7 +6728,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleConfirmMoveProcess = async () => {
     if (!orgMoveNode?.id || !orgMoveTargetFolderId) return;
     if (!activeOrgId) {
-      setOrgMoveError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgMoveError(t("wizard.org_pick_or_create_first"));
       return;
     }
     setOrgMoveLoading(true);
@@ -6694,7 +6746,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const targetInfo = findParentFolderInfo(response?.tree || orgTree, orgMoveNode.id);
       setOrgMoveHighlightFolderId(orgMoveTargetFolderId);
       window.setTimeout(() => setOrgMoveHighlightFolderId(null), 700);
-      setOrgToast(`✅ Presunute do ${targetInfo?.name || "priecinka"}`);
+      setOrgToast(
+        t("wizard.org_move_success", {
+          name: targetInfo?.name || t("wizard.org_move_fallback_folder"),
+        }),
+      );
       if (orgToastTimerRef.current) {
         window.clearTimeout(orgToastTimerRef.current);
       }
@@ -6705,7 +6761,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setOrgMoveModalOpen(false);
       setOrgMoveNode(null);
     } catch (e) {
-      setOrgMoveError(e?.message || "Nepodarilo sa presunut proces.");
+      setOrgMoveError(e?.message || t("wizard.org_move_error"));
     } finally {
       setOrgMoveLoading(false);
     }
@@ -6714,7 +6770,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleConfirmDeleteProcess = async () => {
     if (!orgDeleteNode?.id) return;
     if (!activeOrgId) {
-      setOrgDeleteError("Najprv si vyber alebo vytvor organizaciu.");
+      setOrgDeleteError(t("wizard.org_pick_or_create_first"));
       return;
     }
     setOrgDeleteLoading(true);
@@ -6727,16 +6783,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         } else {
           await refreshOrgTree(activeOrgId);
         }
-        setInfo("Proces bol odstránený.");
+        setInfo(t("wizard.org_process_deleted"));
       } else {
         await requestOrgProcessDelete(orgDeleteNode.id, activeOrgId, orgDeleteRequestReason);
-        setInfo("Žiadosť o odstránenie procesu bola odoslaná vlastníkovi.");
+        setInfo(t("wizard.org_delete_request_sent"));
       }
       setOrgDeleteConfirmOpen(false);
       setOrgDeleteFinalConfirmOpen(false);
       setOrgDeleteNode(null);
     } catch (e) {
-      setOrgDeleteError(e?.message || "Nepodarilo sa odstranit proces.");
+      setOrgDeleteError(e?.message || t("wizard.org_process_delete_error"));
     } finally {
       setOrgDeleteLoading(false);
     }
@@ -6800,7 +6856,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <button
             type="button"
             className="org-tree-chev-btn"
-            aria-label={expanded ? "Zbaliť" : "Rozbaliť"}
+            aria-label={expanded ? t("wizard.collapse") : t("wizard.expand")}
             onClick={(e) => {
               e.stopPropagation();
               toggleExpanded(node.id);
@@ -6868,13 +6924,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 className={`org-tree-level ${depth >= 1 ? `org-tree-level--l${depth}` : ""}`}
                 title={
                   depth === 1
-                    ? "L1 – Najvyššia procesná úroveň (doména / divízia)"
+                    ? t("wizard.org_level_l1")
                     : depth === 2
-                      ? "L2 – Procesná oblasť"
+                      ? t("wizard.org_level_l2")
                       : depth === 3
-                        ? "L3 – Podprocesná skupina"
+                        ? t("wizard.org_level_l3")
                         : depth === 4
-                          ? "L4 – Konkrétny proces (BPMN model)"
+                          ? t("wizard.org_level_l4")
                           : undefined
                 }
                 aria-hidden
@@ -6888,7 +6944,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <button
               type="button"
               className="org-tree-chev-btn"
-              aria-label={expanded ? "Zbaliť" : "Rozbaliť"}
+              aria-label={expanded ? t("wizard.collapse") : t("wizard.expand")}
               onClick={(e) => {
                 e.stopPropagation();
                 toggleOrgFolder(node.id);
@@ -6918,9 +6974,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const isEditedBySelf = selfEditors.length > 0;
     const isEditedByOthers = otherEditors.length > 0;
     const processPresenceTitle = isEditedByOthers
-      ? `Práve upravuje: ${otherEditors.map((item) => item.email).join(", ")}`
+      ? t("wizard.org_presence_editing_by", {
+          users: otherEditors.map((item) => item.email).join(", "),
+          defaultValue: "Currently editing: {{users}}",
+        })
       : isEditedBySelf
-        ? "Tento proces práve upravuješ."
+        ? t("wizard.org_presence_editing_self", {
+            defaultValue: "You are currently editing this process.",
+          })
         : "";
     return (
       <div
@@ -6941,7 +7002,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           type="button"
           className={`org-tree-node org-tree-node--process ${isActive ? "is-active" : ""}`}
           onClick={() => {
-            setOpenOrgProcessConfirmNode({ id: node.id, name: node.name || "Proces" });
+            setOpenOrgProcessConfirmNode({
+              id: node.id,
+              name:
+                node.name ||
+                t("wizard.process_fallback_name", {
+                  defaultValue: "Process",
+                }),
+            });
           }}
         >
           <div className="org-tree-prefix" aria-hidden>
@@ -6972,7 +7040,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         <button
           type="button"
           className="org-tree-menu-btn"
-          aria-label="Menu procesu"
+          aria-label={t("wizard.org_process_menu", { defaultValue: "Process menu" })}
           onClick={(e) => {
             e.stopPropagation();
             const rect = e.currentTarget.getBoundingClientRect();
@@ -6998,10 +7066,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               onClick={() => handleRenameOrgProcess(node)}
               disabled={!activeOrgCapabilities.canEditOrgModels}
             >
-              Premenovat
+              {t("wizard.models_rename")}
             </button>
             <button type="button" className="org-tree-menu__item" onClick={() => void openOrgVersionsModal(node)}>
-              Verzie
+              {t("wizard.models_versions")}
             </button>
             <button
               type="button"
@@ -7009,7 +7077,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               onClick={() => openMoveProcessModal(node)}
               disabled={!activeOrgCapabilities.canEditOrgModels}
             >
-              Presunut do...
+              {t("wizard.org_move_menu")}
             </button>
             <div className="org-tree-menu__divider" />
             <button
@@ -7017,7 +7085,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               className="org-tree-menu__item org-tree-menu__item--danger"
               onClick={() => openDeleteProcessModal(node)}
             >
-              Odstranit proces
+              {t("wizard.delete_process_action")}
             </button>
           </div>
         ) : null}
@@ -7141,10 +7209,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const getProcessStatusLabel = (status) => {
     const normalized = String(status || "").toLowerCase();
-    if (normalized === "draft") return "Koncept";
-    if (normalized === "review") return "Na posúdenie";
-    if (normalized === "approved") return "Schválený";
-    if (normalized === "deprecated") return "Zastaraný";
+    if (normalized === "draft") return t("wizard.process_status_draft", { defaultValue: "Draft" });
+    if (normalized === "review") return t("wizard.process_status_review", { defaultValue: "In review" });
+    if (normalized === "approved") return t("wizard.process_status_approved", { defaultValue: "Approved" });
+    if (normalized === "deprecated") return t("wizard.process_status_deprecated", { defaultValue: "Deprecated" });
     return status || "";
   };
 
@@ -7311,7 +7379,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const fetchModels = async () => {
     if (isDemoMode) {
       setModels([]);
-      setModelsError("DEMO režim: uložené modely sú vypnuté.");
+      setModelsError(t("wizard.demo_models_disabled"));
       return;
     }
     setModelsLoading(true);
@@ -7320,7 +7388,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const resp = await listWizardModels({ limit: 50, offset: 0, search: modelsSearch });
       setModels(resp?.items || []);
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa nacitat modely.";
+      const message = e?.message || t("wizard.models_load_error");
       setModelsError(message);
     } finally {
       setModelsLoading(false);
@@ -7333,7 +7401,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const openModels = async () => {
     if (isDemoMode) {
-      setInfo("DEMO režim: uložené modely sú vypnuté.");
+      setInfo(t("wizard.demo_models_disabled"));
       return;
     }
     setModelsOpen(true);
@@ -7359,7 +7427,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setSavePromptOpen(false);
     await handleSaveModel();
-    setInfo("Model bol ulozeny.");
+    setInfo(t("wizard.model_saved"));
     setHasUnsavedChanges(false);
     const resolve = pendingOpenResolveRef.current;
     pendingOpenResolveRef.current = null;
@@ -7406,9 +7474,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     wizardInputSubmitRef.current = typeof onSubmit === "function" ? onSubmit : null;
     setWizardInputModal({
       kicker: config?.kicker || "",
-      title: config?.title || "Zadaj hodnotu",
-      label: config?.label || "Názov",
-      confirmLabel: config?.confirmLabel || "Uložiť",
+      title: config?.title || t("wizard.input_modal_title"),
+      label: config?.label || t("wizard.input_modal_label"),
+      confirmLabel: config?.confirmLabel || t("wizard.input_modal_confirm"),
       placeholder: config?.placeholder || "",
       warning: config?.warning || "",
     });
@@ -7441,10 +7509,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     wizardConfirmActionRef.current = typeof onConfirm === "function" ? onConfirm : null;
     setWizardConfirmModal({
       kicker: config?.kicker || "",
-      title: config?.title || "Potvrdiť akciu?",
+      title: config?.title || t("wizard.confirm_modal_title"),
       message: config?.message || "",
-      confirmLabel: config?.confirmLabel || "Potvrdiť",
-      cancelLabel: config?.cancelLabel || "Zrušiť",
+      confirmLabel: config?.confirmLabel || t("wizard.confirm_modal_confirm"),
+      cancelLabel: config?.cancelLabel || t("wizard.cancel"),
       warning: Boolean(config?.warning),
     });
   }, []);
@@ -7465,11 +7533,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleDeleteModel = async (id, name) => {
     openWizardConfirmModal(
       {
-        kicker: "Pieskovisko",
-        title: "Zmazať model?",
-        message: `Naozaj chceš zmazať model ${name || id}?`,
-        confirmLabel: "Áno, zmazať",
-        cancelLabel: "Ponechať model",
+        kicker: t("wizard.sandbox_kicker"),
+        title: t("wizard.model_delete_title"),
+        message: t("wizard.model_delete_message", { name: name || id }),
+        confirmLabel: t("wizard.model_delete_confirm"),
+        cancelLabel: t("wizard.model_delete_cancel"),
         warning: true,
       },
       async () => {
@@ -7479,9 +7547,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         try {
           await deleteWizardModel(id);
           await fetchModels();
-          setInfo("Model bol zmazaný.");
+          setInfo(t("wizard.model_delete_success"));
         } catch (e) {
-          const message = e?.message || "Nepodarilo sa zmazať model.";
+          const message = e?.message || t("wizard.model_delete_error");
           setModelsError(message);
         } finally {
           setModelsActionLoading(false);
@@ -7493,25 +7561,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleRenameModel = async (id, currentName) => {
     openWizardInputModal(
       {
-        kicker: "Pieskovisko",
-        title: "Premenovať model",
-        label: "Nový názov modelu",
+        kicker: t("wizard.sandbox_kicker"),
+        title: t("wizard.model_rename_title"),
+        label: t("wizard.model_rename_label"),
         initialValue: currentName || "",
-        confirmLabel: "Uložiť názov",
+        confirmLabel: t("wizard.model_rename_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return "Zadaj názov modelu.";
+        if (!trimmed) return t("wizard.model_rename_required");
         setModelsError(null);
         setInfo(null);
         setModelsActionLoading(true);
         try {
           await renameWizardModel(id, trimmed);
           await fetchModels();
-          setInfo("Model bol premenovaný.");
+          setInfo(t("wizard.model_rename_success"));
           return null;
         } catch (e) {
-          const message = e?.message || "Nepodarilo sa premenovať model.";
+          const message = e?.message || t("wizard.model_rename_error");
           setModelsError(message);
           return message;
         } finally {
@@ -7537,7 +7605,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const id = model?.id;
     if (!id) return;
     if (!activeOrgId) {
-      setInfo("Najprv si vyber alebo vytvor organizaciu.");
+      setInfo(t("wizard.org_pick_or_create_first"));
       return;
     }
     setModelsError(null);
@@ -7552,9 +7620,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const resp = await loadWizardModel(id);
       const fallbackTag = resp?.process_meta?.version ? String(resp.process_meta.version) : "";
       applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" }, versionTag: versionTag || fallbackTag });
-      setInfo("Model bol nacitany.");
+      setInfo(t("wizard.model_loaded"));
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa nacitat model.";
+      const message = e?.message || t("wizard.model_load_error");
       setError(message);
     }
   };
@@ -7647,7 +7715,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const openOrgsModal = () => {
     if (isDemoMode) {
-      setInfo("DEMO režim: organizácie sú vypnuté.");
+      setInfo(t("wizard.demo_orgs_disabled"));
       return;
     }
     navigate("/organization");
@@ -7656,7 +7724,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleEnableOrgEdit = () => {
     if (modelSource?.kind !== "org") return;
     if (!activeOrgCapabilities.canToggleOrgEdit) {
-      setInfo("Nemáš právo upravovať org model.");
+      setInfo(t("wizard.org_edit_denied"));
       return;
     }
     setOrgEditConfirmOpen(true);
@@ -7665,7 +7733,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleConfirmEnableOrgEdit = () => {
     setOrgEditConfirmOpen(false);
     setOrgReadOnly(false);
-    setInfo("Režim: editácia.");
+    setInfo(t("wizard.org_edit_mode"));
   };
 
   const handleCancelEnableOrgEdit = () => {
@@ -7674,11 +7742,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleExportBpmn = async () => {
     if (isDemoMode) {
-      setInfo("DEMO režim: export BPMN je vypnutý.");
+      setInfo(t("wizard.demo_export_disabled"));
       return;
     }
     if (!engineJson) {
-      setError("Najprv vygeneruj alebo naimportuj diagram.");
+      setError(t("wizard.generate_or_import_first"));
       return;
     }
     setError(null);
@@ -7707,9 +7775,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setInfo("Model bol nacitany.");
+      setInfo(t("wizard.model_loaded"));
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa exportovať BPMN.";
+      const message = e?.message || t("wizard.export_error");
       setError(message);
     } finally {
       setExportLoading(false);
@@ -7718,7 +7786,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const handleImportClick = () => {
     if (isDemoMode) {
-      setInfo("DEMO režim: import BPMN je vypnutý.");
+      setInfo(t("wizard.demo_import_disabled"));
       return;
     }
     if (fileInputRef.current) {
@@ -7756,7 +7824,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (event.target) {
         event.target.value = "";
       }
-      setInfo("DEMO režim: import BPMN je vypnutý.");
+      setInfo(t("wizard.demo_import_disabled"));
       return;
     }
     const file = event.target?.files?.[0];
@@ -7775,10 +7843,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setXmlFull(newXml, "importBpmn");
       setSelectedLane(null);
       setLaneDescription("");
-      setInfo("BPMN model bol importovaný do Karty procesu.");
+      setInfo(t("wizard.import_success"));
       setHasUnsavedChanges(true);
     } catch (e) {
-      const message = e?.message || "Nepodarilo sa importovať BPMN.";
+      const message = e?.message || t("wizard.import_error");
       setError(message);
     } finally {
       setImportLoading(false);
@@ -7899,11 +7967,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const showHomeGuideBanner =
     modelSource?.kind !== "org" && guideEnabled && !guideWorkspaceActive && !xml;
   const homeGuideMessage =
-    HOME_GUIDE_MESSAGES[homeGuideMessageIndex % HOME_GUIDE_MESSAGES.length] || HOME_GUIDE_MESSAGES[0];
+    homeGuideMessages[homeGuideMessageIndex % homeGuideMessages.length] || homeGuideMessages[0];
 
   return (
     <div className="process-card-layout" ref={layoutRef}>
       <div className="process-card-rail">
+        <Link to="/" className="process-card-rail-brand" aria-label={t("app.brand_label")}>
+          <span className="process-card-rail-brand__text">BPMN.Gen</span>
+        </Link>
         {isDemoMode ? (
           <div className="process-card-rail-group is-open">
             <button type="button" className="process-card-rail-header" onClick={() => setDemoSetupOpen(true)}>
@@ -7911,13 +7982,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             </button>
             <div className="process-card-rail-content">
               <button type="button" className="process-card-toggle" onClick={() => setDemoSetupOpen(true)}>
-                Demo info
+                {t("app.nav.demo_info")}
               </button>
               <button type="button" className="process-card-toggle process-card-toggle--new-model" onClick={resetDemoState}>
-                Reset demo
+                {t("app.nav.demo_reset")}
               </button>
               <a className="process-card-toggle" href="/register">
-                Create account
+                {t("app.nav.create_account")}
               </a>
             </div>
           </div>
@@ -7925,27 +7996,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <>
         <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
-            <span>Tvorba</span>
+            <span>{t("wizard.rail_process_group")}</span>
           </button>
           {railSections.process ? (
             <div className="process-card-rail-content">
-              <button
-                type="button"
-                className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
-                style={
-                  orgOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("org")}
-              >
-                {orgOpen ? "Skryť model organizacie" : "Model organizacie"}
-              </button>
               <button
                 type="button"
                 className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
@@ -7961,7 +8015,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 }
                 onClick={() => toggleSingleCard("drawer")}
               >
-                {drawerOpen ? "Skryť kartu procesu" : "Karta procesu"}
+                {drawerOpen ? t("wizard.rail_hide_process_card") : t("wizard.rail_show_process_card")}
               </button>
 
               <button
@@ -7979,14 +8033,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 }
                 onClick={() => toggleSingleCard("story")}
               >
-                {storyOpen ? "Skryť príbeh" : "Príbeh procesu"}
+                {storyOpen ? t("wizard.rail_hide_story") : t("wizard.rail_show_story")}
               </button>
               <button
                 type="button"
                 className="process-card-toggle process-card-toggle--new-model"
                 onClick={handleNewModel}
               >
-                Nový model
+                {t("wizard.rail_new_model")}
               </button>
             </div>
           ) : null}
@@ -7994,7 +8048,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
         <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
           <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
-            <span>Modely</span>
+            <span>{t("wizard.rail_models_group")}</span>
           </button>
           {railSections.save ? (
             <div className="process-card-rail-content">
@@ -8003,7 +8057,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 className="process-card-toggle process-card-toggle--models"
                 onClick={openModels}
               >
-                Uložené modely
+                {t("wizard.rail_saved_models")}
               </button>
               <button
                 type="button"
@@ -8011,28 +8065,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 onClick={handleSaveModel}
                 disabled={saveLoading}
               >
-                {saveLoading ? "Ukladám..." : "Uložiť model"}
+                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
               </button>
-              <div className="process-card-rail-hover">
-                <button type="button" className="process-card-toggle process-card-toggle--io">
-                  Export / Import BPMN
-                </button>
-                <div className="process-card-rail-popover">
-                  <button className="btn" type="button" onClick={handleExportBpmn} disabled={exportLoading}>
-                    {exportLoading ? "Exportujem..." : "Export BPMN"}
-                  </button>
-                  <button className="btn" type="button" onClick={handleImportClick} disabled={importLoading}>
-                    {importLoading ? "Importujem..." : "Import BPMN"}
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                className="process-card-toggle process-card-toggle--io"
+                onClick={handleExportBpmn}
+                disabled={exportLoading}
+              >
+                {exportLoading ? t("wizard.rail_exporting") : t("wizard.rail_export")}
+              </button>
+              <button
+                type="button"
+                className="process-card-toggle process-card-toggle--io"
+                onClick={handleImportClick}
+                disabled={importLoading}
+              >
+                {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
+              </button>
             </div>
           ) : null}
         </div>
 
         <div className={`process-card-rail-group process-card-rail-group--team ${railSections.project ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("project")}>
-            <span>Tím</span>
+          <button
+            type="button"
+            className="process-card-rail-header process-card-rail-header--stacked"
+            onClick={() => toggleRailSection("project")}
+          >
+            <span>{t("wizard.rail_team_group")}</span>
             {totalTeamUnreadCount > 0 ? (
               <span
                 className="process-card-rail-header__badge"
@@ -8046,10 +8107,27 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-rail-content process-card-rail-content--team">
               <button
                 type="button"
+                className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
+                style={
+                  orgOpen
+                    ? {
+                        backgroundColor: "#1b3a6b",
+                        color: "#fff",
+                        borderColor: "#2f5ca0",
+                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
+                      }
+                    : undefined
+                }
+                onClick={() => toggleSingleCard("org")}
+              >
+                {orgOpen ? t("wizard.rail_hide_org_model") : t("wizard.rail_show_org_model")}
+              </button>
+              <button
+                type="button"
                 className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
                 onClick={() => setNotesOpen(true)}
               >
-                Poznámky
+                {t("wizard.rail_notes")}
                 {unreadProjectNotesCount > 0 ? (
                   <span className="process-card-toggle__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
                     {unreadProjectNotesCount}
@@ -8061,7 +8139,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-activity ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
                 onClick={() => setActivityOpen(true)}
               >
-                Aktivita
+                {t("wizard.rail_activity")}
                 {visibleActivityPendingCount > 0 ? (
                   <span className="process-card-toggle__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
                     {visibleActivityPendingCount}
@@ -8069,11 +8147,34 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 ) : null}
               </button>
               <button type="button" className="process-card-toggle process-card-toggle--team" onClick={openOrgsModal}>
-                Sprava organizacie
+                {t("wizard.rail_org_admin")}
               </button>
             </div>
           ) : null}
         </div>
+        {currentUser ? (
+          <div className="process-card-rail-footer">
+            <div className="process-card-rail-footer__meta">
+              <span className="process-card-rail-footer__email">{currentUser.email}</span>
+              <span className="process-card-rail-footer__org">
+                {activeOrgId
+                  ? t("app.nav.active_org", { name: activeOrgName || activeOrgId })
+                  : t("app.nav.no_active_org")}
+              </span>
+            </div>
+            <Link to="/organization" className="process-card-rail-link">
+              {t("app.nav.organization")}
+            </Link>
+            <Link to="/account" className="process-card-rail-link">
+              {t("app.nav.profile")}
+            </Link>
+            {currentUser?.admin_panel_available === true && currentUser?.is_super_admin === true ? (
+              <Link to="/admin" className="process-card-rail-link">
+                {t("app.nav.admin")}
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
           </>
         )}
 
@@ -8105,21 +8206,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div className="process-card-header">
                 <div>
                   <div className="process-card-label process-card-label-row">
-                    <span>Karta procesu</span>
+                    <span>{t("wizard.process_card_label")}</span>
                     <span className={`process-card-badge ${modelSource?.kind === "org" ? "is-org" : "is-sandbox"}`}>
-                      {modelSource?.kind === "org" ? "Organizácia" : "Pieskovisko"}
+                      {modelSource?.kind === "org" ? t("wizard.process_card_badge_org") : t("wizard.process_card_badge_sandbox")}
                     </span>
                   </div>
                   <div className="process-card-description">
                     {hasGeneratedModel
-                      ? "Upravuješ základnú kostru existujúceho procesu a jeho hlavné údaje."
-                      : "Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme mapu."}
+                      ? t("wizard.process_card_existing_description")
+                      : t("wizard.process_card_new_description")}
                   </div>
                 </div>
                 <button
                   type="button"
                   className="process-card-close"
-                  aria-label="Zavrieť kartu procesu"
+                  aria-label={t("wizard.process_card_close_aria")}
                   onClick={() => setDrawerOpen(false)}
                 >
                   ×
@@ -8129,25 +8230,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <div className="wizard-lane-v2__card process-card-process__card">
                 {hasGeneratedModel ? (
                   <div className="process-card-edit-banner">
-                    <div className="process-card-edit-banner__eyebrow">Editácia kostry procesu</div>
+                    <div className="process-card-edit-banner__eyebrow">{t("wizard.process_card_edit_banner")}</div>
                     <div className="process-card-edit-banner__title">
-                      Tento model už existuje. Teraz upravuješ jeho základnú kostru, nie vytváraš nový model.
+                      {t("wizard.process_card_edit_hint")}
                     </div>
                   </div>
                 ) : null}
                 <section className="process-card-section process-card-process__section">
                   <div className="process-card-section__title">
-                    <h2>{hasGeneratedModel ? "Kostra procesu" : "Začnime základom"}</h2>
-                    <span className="process-card-pill">{hasGeneratedModel ? "Živý model" : "Základ"}</span>
+                    <h2>{hasGeneratedModel ? t("wizard.process_card_structure_title_edit") : t("wizard.process_card_structure_title_new")}</h2>
+                    <span className="process-card-pill">{hasGeneratedModel ? t("wizard.process_card_pill_live") : t("wizard.process_card_pill_base")}</span>
                   </div>
                   <div className="process-card-description process-card-description--panel">
                     {hasGeneratedModel
-                      ? "Model už existuje. Táto karta teraz spravuje základnú kostru procesu a zobrazuje údaje priamo z mapy."
-                      : "Krátko opíš proces, roly a čo ho spúšťa. Z toho vytvoríme kostru mapy."}
+                      ? t("wizard.process_card_existing_panel_description")
+                      : t("wizard.process_card_new_panel_description")}
                   </div>
                   {!hasGeneratedModel ? (
                     <div className="process-card-process__template-row">
-                      {PROCESS_TEMPLATES.map((template) => (
+                      {processTemplates.map((template) => (
                         <button
                           key={template.id}
                           type="button"
@@ -8155,7 +8256,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           onClick={() => applyProcessTemplate(template)}
                           disabled={isReadOnlyMode}
                         >
-                          Vzor: {template.label}
+                          {t("wizard.process_card_template_prefix", { label: template.label })}
                         </button>
                       ))}
                     </div>
@@ -8165,7 +8266,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       guideHighlight?.processCardField === "processName" ? "guide-highlight-input" : ""
                     }`}
                   >
-                    <span>{hasGeneratedModel ? "Názov procesu v modeli" : "Ako sa proces volá?"}</span>
+                    <span>
+                      {hasGeneratedModel
+                        ? t("wizard.process_card_name_label_generated")
+                        : t("wizard.process_card_name_question")}
+                    </span>
                     <input
                       value={generatorInput.processName}
                       onChange={(e) =>
@@ -8173,7 +8278,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           ? handleStructuredProcessNameChange(e.target.value)
                           : updateGeneratorInput("processName", e.target.value)
                       }
-                      placeholder="Napr. Schválenie žiadosti"
+                      placeholder={t("wizard.process_card_name_placeholder")}
                       disabled={isReadOnlyMode}
                     />
                   </label>
@@ -8183,33 +8288,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         guideHighlight?.processCardField === "roles" ? "guide-highlight-input" : ""
                       }`}
                     >
-                      <span>Kto v ňom vystupuje? (každú rolu na nový riadok)</span>
+                      <span>{t("wizard.process_card_roles_question")}</span>
                       <textarea
                         value={generatorInput.roles}
                         onChange={(e) => updateGeneratorInput("roles", e.target.value)}
                         rows={4}
-                        placeholder={"Každú rolu napíš na nový riadok"}
+                        placeholder={t("wizard.process_card_roles_placeholder")}
                         disabled={isReadOnlyMode}
                       />
                     </label>
                   ) : (
                     <div className="wizard-field wizard-field--full">
-                      <span>Roly v modeli</span>
+                      <span>{t("wizard.process_card_roles_label_generated")}</span>
                       <div className="process-card-role-list">
                         {liveRoleItems.map((lane, index) => (
                           <label key={lane.id} className="process-card-role-item">
-                            <span className="process-card-role-item__label">Rola {index + 1}</span>
+                            <span className="process-card-role-item__label">
+                              {t("wizard.process_card_role_label", { index: index + 1 })}
+                            </span>
                             <input
                               value={lane.name}
                               onChange={(e) => handleStructuredLaneRename(lane.id, e.target.value)}
-                              placeholder={`Rola ${index + 1}`}
+                              placeholder={t("wizard.process_card_role_label", { index: index + 1 })}
                               disabled={isReadOnlyMode}
                             />
                           </label>
                         ))}
                       </div>
                       <div className="process-card-inline-note">
-                        Nové roly budeme dopĺňať ako samostatnú funkciu. Zatiaľ tu vieš upraviť názvy rolí, ktoré už v modeli existujú.
+                        {t("wizard.process_card_roles_inline_note")}
                       </div>
                     </div>
                   )}
@@ -8218,7 +8325,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       guideHighlight?.processCardField === "trigger" ? "guide-highlight-input" : ""
                     }`}
                   >
-                    <span>{hasGeneratedModel ? "Začiatok procesu v modeli" : "Čo proces spúšťa?"}</span>
+                    <span>
+                      {hasGeneratedModel
+                        ? t("wizard.process_card_trigger_label_generated")
+                        : t("wizard.process_card_trigger_question")}
+                    </span>
                     <input
                       value={generatorInput.trigger}
                       onChange={(e) =>
@@ -8226,12 +8337,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           ? handleStructuredNodeFieldChange("trigger", primaryStartOption?.id, e.target.value)
                           : updateGeneratorInput("trigger", e.target.value)
                       }
-                      placeholder="Napr. Nová žiadosť od klienta"
+                      placeholder={t("wizard.process_card_trigger_placeholder")}
                       disabled={isReadOnlyMode || (hasGeneratedModel && !primaryStartOption)}
                     />
                     {hasGeneratedModel && startOptions.length > 1 ? (
                       <div className="process-card-inline-note">
-                        Upravuješ prvý štart v modeli. Spolu sú v mape {startOptions.length} štarty.
+                        {t("wizard.process_card_multi_start_edit_note", { count: startOptions.length })}
                       </div>
                     ) : null}
                   </label>
@@ -8240,7 +8351,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       guideHighlight?.processCardField === "output" ? "guide-highlight-input" : ""
                     }`}
                   >
-                    <span>{hasGeneratedModel ? "Koniec procesu v modeli" : "Čo má byť na konci?"}</span>
+                    <span>
+                      {hasGeneratedModel
+                        ? t("wizard.process_card_goal_label_generated")
+                        : t("wizard.process_card_goal_question")}
+                    </span>
                     <textarea
                       value={generatorInput.output}
                       onChange={(e) =>
@@ -8249,17 +8364,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           : updateGeneratorInput("output", e.target.value)
                       }
                       rows={2}
-                      placeholder="Aký je výsledok procesu?"
+                      placeholder={t("wizard.process_card_goal_placeholder")}
                       disabled={isReadOnlyMode}
                     />
                     {hasGeneratedModel && !primaryEndOption ? (
                       <div className="process-card-inline-note">
-                        V modeli zatiaľ nemáš koncový prvok. Text si vieš pripraviť už teraz a keď koniec doplníš, budeš ho vedieť prepojiť aj s mapou.
+                        {t("wizard.process_card_missing_end_note")}
                       </div>
                     ) : null}
                     {hasGeneratedModel && endOptions.length > 1 ? (
                       <div className="process-card-inline-note">
-                        Upravuješ prvý koniec v modeli. Spolu sú v mape {endOptions.length} konce.
+                        {t("wizard.process_card_multi_end_edit_note", { count: endOptions.length })}
                       </div>
                     ) : null}
                   </label>
@@ -8271,14 +8386,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         onChange={(e) => updateProcessMeta("status", e.target.value)}
                         disabled={isReadOnlyMode}
                       >
-                        <option value="Draft">Koncept</option>
-                        <option value="Review">Na posúdenie</option>
-                        <option value="Approved">Schválený</option>
-                        <option value="Deprecated">Zastaraný</option>
+                        <option value="Draft">{t("wizard.process_card_status_draft")}</option>
+                        <option value="Review">{t("wizard.process_card_status_review")}</option>
+                        <option value="Approved">{t("wizard.process_card_status_approved")}</option>
+                        <option value="Deprecated">{t("wizard.process_card_status_deprecated")}</option>
                       </select>
                     </label>
                     <label className="wizard-field">
-                      <span>Verzia</span>
+                      <span>{t("wizard.process_card_version_label")}</span>
                       <input
                         value={processMeta.version}
                         onChange={(e) => updateProcessMeta("version", e.target.value)}
@@ -8293,18 +8408,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         onClick={handleGenerate}
                         disabled={isLoading || isReadOnlyMode}
                       >
-                        {isLoading ? "Vytváram..." : hasGeneratedModel ? "Vytvoriť model znova" : "Vytvoriť model"}
+                        {isLoading ? t("wizard.process_card_create_loading") : hasGeneratedModel ? t("wizard.process_card_recreate") : t("wizard.process_card_create")}
                       </button>
                   </div>
                 </section>
                 <section className="process-card-section process-card-process__section">
                   <div className="process-card-section__title">
-                    <h2>Meta udaje o procese</h2>
+                    <h2>{t("wizard.process_card_meta_title")}</h2>
                     <span className="process-card-pill process-card-pill--muted">Opis</span>
                   </div>
                   <div className="process-card-grid">
                     <label className="wizard-field">
-                      <span>Vlastnik procesu</span>
+                      <span>{t("wizard.process_card_owner_label")}</span>
                       <input
                         value={processMeta.owner}
                         onChange={(e) => updateProcessMeta("owner", e.target.value)}
@@ -8312,7 +8427,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       />
                     </label>
                     <label className="wizard-field">
-                      <span>Oddelenie</span>
+                      <span>{t("wizard.process_card_dept_label")}</span>
                       <input
                         value={processMeta.department}
                         onChange={(e) => updateProcessMeta("department", e.target.value)}
@@ -8320,7 +8435,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       />
                     </label>
                     <label className="wizard-field wizard-field--full">
-                      <span>Popis procesu</span>
+                      <span>{t("wizard.process_card_desc_label")}</span>
                       <textarea
                         value={processMeta.description}
                         onChange={(e) => updateProcessMeta("description", e.target.value)}
@@ -8335,7 +8450,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {info ? <div className="wizard-toast">{info}</div> : null}
                 {modelSource?.kind === "org" ? (
                   <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
-                    Režim: {orgReadOnly ? "Len na čítanie" : "Editácia"} (Organizácia)
+                    {orgReadOnly ? t("wizard.process_card_mode_readonly") : t("wizard.process_card_mode_edit")}
                     {orgReadOnly ? (
                       <button
                         className="btn btn--small"
@@ -8343,7 +8458,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         type="button"
                         onClick={handleEnableOrgEdit}
                       >
-                        Upraviť
+                        {t("wizard.process_card_mode_edit_btn")}
                       </button>
                     ) : null}
                   </div>
@@ -8374,7 +8489,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 verticalResizeStart.current = { y: e.clientY, h: processPanelHeight };
                 setIsResizingPanels(true);
               }}
-              title="Ťahaj pre zmenu výšky Karty procesu vs. Pomocník"
+              title={t("wizard.process_card_resize_title")}
             >
               <span
                 style={{
@@ -8391,23 +8506,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-drawer is-open process-card-org">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Model organizacie</div>
+                  <div className="process-card-label">{t("wizard.org_panel_title")}</div>
                   <div className="process-card-description">
-                    Strom procesov. Vyber priecinok a pridaj Folder alebo Process.
+                    {t("wizard.org_panel_description")}
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
                     <span>
-                      Aktivna organizacia: {activeOrgId ? activeOrgName || activeOrgId : "Ziadna organizacia"}
+                      {t("wizard.org_panel_active_org", {
+                        name: activeOrgId ? activeOrgName || activeOrgId : t("wizard.org_panel_no_org"),
+                      })}
                     </span>
                     <button className="btn btn--small" type="button" onClick={openOrgsModal}>
-                      Sprava
+                      {t("wizard.org_manage")}
                     </button>
                   </div>
                 </div>
                 <button
                   type="button"
                   className="process-card-close"
-                  aria-label="Zavriet model organizacie"
+                  aria-label={t("wizard.org_model_close_aria")}
                   onClick={() => setOrgOpen(false)}
                 >
                   ×
@@ -8446,38 +8563,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     onClick={handleCreateOrgFolder}
                     disabled={!activeOrgId || !activeOrgCapabilities.canEditOrgModels}
                   >
-                    + Folder
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--small"
-                    onClick={handleCreateOrgProcess}
-                    disabled={!activeOrgId || !activeOrgCapabilities.canEditOrgModels}
-                  >
-                    + Process
+                    {t("wizard.org_panel_add_folder")}
                   </button>
                   <button type="button" className="btn btn--small" onClick={toggleOrgTreeExpand} disabled={!orgTree}>
-                    {isOrgTreeFullyExpanded ? "Zbalit strom" : "Rozbalit strom"}
+                    {isOrgTreeFullyExpanded ? t("wizard.org_push_collapse") : t("wizard.org_push_expand")}
                   </button>
                 </div>
                 <div className="org-sidebar__search">
                   <input
                     type="search"
                     className="org-search-input"
-                    placeholder="Hľadať proces..."
+                    placeholder={t("wizard.org_search_placeholder")}
                     value={orgSearchQuery}
                     onChange={(e) => setOrgSearchQuery(e.target.value)}
                   />
                 </div>
                 {orgToast ? <div className="org-sidebar__hint org-sidebar__hint--success">{orgToast}</div> : null}
-                {orgLoading ? <div className="org-sidebar__hint">Nacitavam strom...</div> : null}
+                {orgLoading ? <div className="org-sidebar__hint">{t("wizard.org_tree_loading")}</div> : null}
                 {orgError ? <div className="org-sidebar__hint org-sidebar__hint--error">{orgError}</div> : null}
                 {!activeOrgId ? (
                   <div className="org-sidebar__hint org-sidebar__hint--error">
-                    Najprv si vyber alebo vytvor organizaciu.
+                    {t("wizard.org_pick_or_create_first")}
                     <div style={{ marginTop: 6 }}>
                       <button className="btn btn--small" type="button" onClick={openOrgsModal}>
-                        Sprava organizacie
+                        {t("wizard.org_manage")}
                       </button>
                     </div>
                   </div>
@@ -8496,7 +8605,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <div className="wizard-lane-v2__title">{laneRoleDisplayName}</div>
                   <div className="wizard-lane-v2__subtitle">{laneSubtitle}</div>
                   <div className="wizard-lane-v2__hint">
-                    Tu doplníš kroky tejto roly. Ďalší krok môžeš oddeliť čiarkou alebo pokračovať na novom riadku.
+                    {t("wizard.lane_hint")}
                   </div>
                 </div>
                 <div className="wizard-lane-v2__header-actions">
@@ -8507,12 +8616,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       openLaneHelper({ type: inferLaneHelpIntentType() });
                     }}
                   >
-                    Pomocník
+                    {t("wizard.lane_helper_btn")}
                   </button>
                   <button
                     type="button"
                     className="process-card-close wizard-lane-v2__close"
-                    aria-label="Zavrieť panel lane"
+                    aria-label={t("wizard.lane_close_aria")}
                     onClick={() => {
                       setSelectedLane(null);
                       setLaneDescription("");
@@ -8526,30 +8635,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div className="process-card-body wizard-lane-v2__body" ref={lanePanelScrollRef}>
                 <div className="wizard-lane-v2__card">
                     <div className="wizard-lane-v2__onboarding">
-                      <div className="wizard-lane-v2__onboarding-title">Ako písať kroky v role</div>
+                      <div className="wizard-lane-v2__onboarding-title">{t("wizard.lane_onboarding_title")}</div>
                       <div className="wizard-lane-v2__onboarding-list">
                         <div className="wizard-lane-v2__type-copy">
-                          Píš jednoducho to, čo táto rola robí. Ďalší krok môžeš oddeliť čiarkou alebo pokračovať na novom riadku.
+                          {t("wizard.lane_onboarding_copy_1")}
                         </div>
                         <div className="wizard-lane-v2__type-copy">
-                          Keď sa proces rozhoduje, začni vetu slovom <strong>ak</strong> alebo <strong>keď</strong>. Modrý pomocník pod poľom ti potom napovie, ako pokračovať.
+                          {t("wizard.lane_onboarding_copy_2_before")} <strong>{t("wizard.lane_onboarding_if")}</strong> {t("wizard.lane_onboarding_or")} <strong>{t("wizard.lane_onboarding_when")}</strong>. {t("wizard.lane_onboarding_copy_2_after")}
                         </div>
                         <div className="wizard-lane-v2__type-copy">
-                          Keď sa deje viac vecí naraz, začni vetu slovom <strong>paralelne</strong>, <strong>súčasne</strong> alebo <strong>naraz</strong>.
+                          {t("wizard.lane_onboarding_copy_3_before")} <strong>{t("wizard.lane_onboarding_parallel")}</strong>, <strong>{t("wizard.lane_onboarding_simultaneous")}</strong> {t("wizard.lane_onboarding_or")} <strong>{t("wizard.lane_onboarding_at_once")}</strong>.
                         </div>
                         <div className="wizard-lane-v2__type-copy">
-                          Ak si nie si istý, napíš to vlastnými slovami. Kontrola zápisu dole ti priebežne ukáže, ako textu rozumie.
+                          {t("wizard.lane_onboarding_copy_4")}
                         </div>
                       </div>
                     </div>
                     <div className="wizard-lane-v2__section">
-                      <div className="wizard-lane-v2__section-header">KROKY ROLY</div>
+                      <div className="wizard-lane-v2__section-header">{t("wizard.lane_steps_header")}</div>
                       <div className="wizard-lane-v2__section-sub">
-                        Píš stručne a vecne. Stačí opísať, čo táto rola robí a v akom poradí to nasleduje.
+                        {t("wizard.lane_steps_sub")}
                       </div>
                       {isDemoMode ? (
                         <div className="wizard-lane-v2__section-sub">
-                          Na ukážku stačí menšia rola. Zameraj sa na pár jasných krokov a jeden menší decision alebo paralelu.
+                          {t("wizard.lane_demo_hint")}
                         </div>
                       ) : null}
                       <textarea
@@ -8557,9 +8666,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         value={laneDescription}
                         onChange={(e) => updateLaneDescription(e.target.value)}
                         rows={9}
-                        placeholder={
-                          "Prijmem žiadosť, overím identitu\nAk identita nie je platná, zamietnem žiadosť, inak pokračujem..."
-                        }
+                        placeholder={t("wizard.lane_placeholder")}
                         onKeyDown={(e) => {
                           if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                             e.preventDefault();
@@ -8587,22 +8694,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         <button
                           type="button"
                           className={`btn btn--small wizard-lane-v2__link-btn ${showLaneHelpTip ? "is-nudged" : ""}`}
-                          title="Otvorí pomocníka, kde si vieš vložiť vzor alebo vyplniť konštrukciu."
+                          title={t("wizard.lane_helper_title")}
                           onClick={() => {
                             openLaneHelper({ type: inferLaneHelpIntentType() });
                           }}
                         >
-                          Pomôž mi napísať krok
+                          {t("wizard.lane_helper_btn_tip")}
                         </button>
-                        {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">1 tip</span> : null}
+                        {showLaneHelpTip ? <span className="wizard-lane-v2__tip-badge">{t("wizard.lane_tip_badge")}</span> : null}
                       </div>
                       {isDemoMode ? (
                         <div className="wizard-lane-v2__demo-templates">
                           <div className="wizard-lane-v2__section-sub">
-                            Nechce sa ti začínať od nuly? Klikni na vzor a dopíš si ho podľa seba.
+                            {t("wizard.lane_templates_sub_demo")}
                           </div>
                           <div className="wizard-lane-v2__templates-grid">
-                            {LANE_TEMPLATES.map((template) => (
+                            {laneTemplates.map((template) => (
                               <button
                                 key={template.id}
                                 type="button"
@@ -8637,7 +8744,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             Boolean(laneSubmitGuardMessage)
                           }
                         >
-                          {isLoading ? "Pridávam..." : laneApplyButtonLabel}
+                          {isLoading ? t("wizard.lane_apply_loading") : laneApplyButtonLabel}
                         </button>
                         {laneDescription.trim() ? (
                           <button
@@ -8646,18 +8753,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             onClick={() => setLaneDescription("")}
                             disabled={isLoading}
                           >
-                            Vyčistiť
+                            {t("wizard.lane_clear")}
                           </button>
                         ) : null}
                       </div>
                       {!laneDescription.trim() ? (
-                        <div className="wizard-lane-v2__disabled-hint">Najprv napíš aspoň 1 krok.</div>
+                        <div className="wizard-lane-v2__disabled-hint">{t("wizard.lane_disabled_hint")}</div>
                       ) : null}
                     </div>
                     {!isDemoMode ? (
                     <div className="wizard-lane-v2__section">
-                      <div className="wizard-lane-v2__section-header">VZORY</div>
-                      <div className="wizard-lane-v2__section-sub">Dočasná pomôcka, keď si chceš rýchlo predvyplniť text.</div>
+                      <div className="wizard-lane-v2__section-header">{t("wizard.lane_templates_header")}</div>
+                      <div className="wizard-lane-v2__section-sub">{t("wizard.lane_templates_helper")}</div>
                       <div className="wizard-lane-v2__template-select-wrap">
                         <select
                           className="wizard-lane-v2__template-select"
@@ -8665,15 +8772,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           onChange={(e) => {
                             const selectedId = e.target.value;
                             setLaneTemplateChoice(selectedId);
-                            const template = LANE_TEMPLATES.find((item) => item.id === selectedId);
+                            const template = laneTemplates.find((item) => item.id === selectedId);
                             if (template) {
                               applyLaneTemplate(template);
                             }
                           }}
                           disabled={isReadOnlyMode}
                         >
-                          <option value="">Vyber vzor...</option>
-                          {LANE_TEMPLATES.map((template) => (
+                          <option value="">{t("wizard.lane_template_select")}</option>
+                          {laneTemplates.map((template) => (
                             <option key={template.id} value={template.id}>
                               {template.label}
                             </option>
@@ -8696,7 +8803,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             }`}
                             aria-hidden
                           />
-                          Kontrola zápisu
+                          {t("wizard.lane_control_title")}
                         </span>
                       </div>
                       <div className="wizard-lane-v2__control-body is-compact">
@@ -8711,7 +8818,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   onClick={() => focusLaneLine(item.lineNumber)}
                                 >
                                   <div className="wizard-lane-v2__control-line">
-                                    <span className="wizard-lane-v2__control-meta">Riadok {item.lineNumber}</span>
+                                    <span className="wizard-lane-v2__control-meta">{t("wizard.lane_control_line", { number: item.lineNumber })}</span>
                                     <strong>{item.badge}</strong> - {item.text}
                                   </div>
                                   {item.warning && !inlineLaneHint ? (
@@ -8721,11 +8828,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               ))}
                             </div>
                           ) : (
-                            <div className="wizard-lane-v2__control-ok">Kroky vyzerajú konzistentne.</div>
+                            <div className="wizard-lane-v2__control-ok">{t("wizard.lane_control_ok")}</div>
                           )
                         ) : (
                           <div className="wizard-lane-v2__muted">
-                            Začni písať kroky a kontrola ti ukáže typy krokov a upozornenia.
+                            {t("wizard.lane_control_muted")}
                           </div>
                         )}
                       </div>
@@ -8739,15 +8846,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-drawer is-open process-card-help">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Pomocník</div>
+                  <div className="process-card-label">{t("wizard.help_panel_label")}</div>
                   <div className="process-card-description">
-                    Vkladáš do:{" "}
                     {helpInsertTarget?.type === "lane"
-                      ? `roly ${helpInsertTarget.laneName || helpInsertTarget.laneId || ""}`
-                      : "hlavné kroky"}
+                      ? t("wizard.help_panel_inserting_lane", { name: helpInsertTarget.laneName || helpInsertTarget.laneId || "" })
+                      : t("wizard.help_panel_inserting_main")}
                   </div>
                   <div className="wizard-help-card-hint">
-                    Vyber typ zápisu, doplň vlastné slová a vlož ho do textu. Potom ho už len upravíš podľa svojho procesu.
+                    {t("wizard.help_panel_hint")}
                   </div>
                 </div>
                 <div className="process-card-header-actions">
@@ -8762,7 +8868,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       setHelpOpen(false);
                     }}
                   >
-                    Späť
+                    {t("wizard.help_panel_back")}
                   </button>
                 </div>
               </div>
@@ -8778,15 +8884,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="process-card-drawer is-open process-card-story">
               <div className="process-card-header">
                 <div>
-                  <div className="process-card-label">Príbeh procesu</div>
+                  <div className="process-card-label">{t("wizard.story_panel_label")}</div>
                   <div className="process-card-description">
-                    Zhrnutie procesu v ľudskej reči podľa aktuálnej mapy.
+                    {t("wizard.story_panel_subtitle")}
                   </div>
                 </div>
                 <button
                   type="button"
                   className="process-card-close"
-                  aria-label="Zavrieť príbeh procesu"
+                  aria-label={t("wizard.story_panel_close_aria")}
                   onClick={() => setStoryOpen(false)}
                 >
                   ×
@@ -8797,11 +8903,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <div className="process-story-panel__hero">
                     <div className="process-story-panel__copy">
                       <div className="process-card-section__title">
-                        <h2>Opis procesu</h2>
-                        <span className="process-card-pill process-card-pill--muted">Automatický výstup</span>
+                        <h2>{t("wizard.story_title")}</h2>
+                        <span className="process-card-pill process-card-pill--muted">{t("wizard.story_badge_auto")}</span>
                       </div>
                       <p className="process-story-panel__intro">
-                        Tento panel automaticky vytvára čistý opis procesu podľa aktuálnej mapy. Cieľom je text, pri ktorom si používateľ povie: áno, presne takto to robíme.
+                        {t("wizard.story_intro")}
                       </p>
                     </div>
                     <div className="process-story-actions">
@@ -8811,7 +8917,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         onClick={regenerateStory}
                         disabled={!engineJson}
                       >
-                        Obnoviť príbeh
+                        {t("wizard.story_refresh")}
                       </button>
                       <button
                         type="button"
@@ -8819,7 +8925,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         onClick={handleCopyStory}
                         disabled={!storyDoc}
                       >
-                        Kopírovať text
+                        {t("wizard.story_copy")}
                       </button>
                     </div>
                   </div>
@@ -8827,19 +8933,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <div className="process-story-status">
                     {storyStale ? (
                       <div className="process-story-stale">
-                        Mapa sa zmenila. Obnov príbeh procesu podľa aktuálneho stavu modelu.
+                        {t("wizard.story_stale")}
                       </div>
                     ) : null}
                     {storyGeneratedAt ? (
-                      <div className="process-story-meta">Naposledy generované: {formatDateTime(storyGeneratedAt)}</div>
+                      <div className="process-story-meta">
+                        {t("wizard.story_generated_at", { value: formatDateTime(storyGeneratedAt) })}
+                      </div>
                     ) : null}
                   </div>
                 </section>
 
                 <section className="process-card-section process-story-output">
                   <div className="process-card-section__title">
-                    <h2>Čistý opis procesu</h2>
-                    <span className="process-card-pill process-card-pill--muted">Dokument</span>
+                    <h2>{t("wizard.story_clean_title")}</h2>
+                    <span className="process-card-pill process-card-pill--muted">{t("wizard.story_badge_doc")}</span>
                   </div>
                   {storyDoc ? (
                     <div className="process-story-document">
@@ -8851,7 +8959,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     </div>
                   ) : (
                     <div className="process-story-empty">
-                      {engineJson ? "Klikni na „Obnoviť príbeh“ a vygeneruj si opis procesu." : "Najprv načítaj alebo vytvor mapu."}
+                      {engineJson ? t("wizard.story_empty_with_engine") : t("wizard.story_empty_without_engine")}
                     </div>
                   )}
                 </section>
@@ -8874,14 +8982,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           {isDemoMode ? (
             <div className="demo-banner">
               <div className="demo-banner__text">
-                <strong>Ukážka produktu</strong> · nič sa neukladá. Stačí menší proces do {DEMO_LIMITS.maxRoles} rolí, aby si si vyskúšal, ako sa z textu skladá mapa.
+                {t("wizard.banner_demo_text", { maxRoles: DEMO_LIMITS.maxRoles })}
               </div>
               <div className="demo-banner__actions">
                 <button className="btn btn--small" type="button" onClick={resetDemoState}>
-                  Reset demo
+                  {t("wizard.demo_reset")}
                 </button>
                 <a className="btn btn--small btn-primary" href="/register">
-                  Pokračovať naplno
+                  {t("wizard.banner_demo_continue")}
                 </a>
               </div>
             </div>
@@ -8902,16 +9010,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               }}
             >
               <div>
-                <div style={{ fontWeight: 600 }}>READ-ONLY režim</div>
+                <div style={{ fontWeight: 600 }}>{t("wizard.banner_readonly_label")}</div>
                 <div style={{ fontSize: 12, opacity: 0.8 }}>
                   {activeOrgCapabilities.canToggleOrgEdit
-                    ? "Tento org model je len na čítanie. Ak chceš upravovať, klikni „Upraviť“."
-                    : "Tento org model je len na čítanie. Ako pozorovateľ ho nemôžeš upravovať."}
+                    ? t("wizard.banner_readonly_hint_toggle")
+                    : t("wizard.banner_readonly_hint_no_toggle")}
                 </div>
               </div>
               {activeOrgCapabilities.canToggleOrgEdit ? (
                 <button className="btn btn--small" type="button" onClick={handleEnableOrgEdit}>
-                  Upraviť
+                  {t("wizard.banner_readonly_edit_btn")}
                 </button>
               ) : null}
             </div>
@@ -8932,14 +9040,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               }}
             >
               <div style={{ fontWeight: 600 }}>
-                Pozeráš staršiu verziu {orgVersionPreview?.label || ""}. 
+                {t("wizard.banner_version_text", { label: orgVersionPreview?.label || "" })}
               </div>
               <button
                 className="btn btn--small"
                 type="button"
                 onClick={() => void openOrgProcessByNodeLatest(orgVersionPreview?.treeNodeId || modelSource?.treeNodeId)}
               >
-                Otvoriť najnovšiu
+                {t("wizard.banner_version_open_latest")}
               </button>
             </div>
           ) : null}
@@ -9004,7 +9112,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             ) : showHomeGuideBanner ? (
               <div className="guide-bar guide-bar--welcome">
                 <div className="guide-bar__text">
-                  <div className="guide-bar__title">Ahoj, ja som tvoj sprievodca</div>
+                  <div className="guide-bar__title">{t("wizard.banner_guide_title")}</div>
                   <div>{homeGuideMessage}</div>
                 </div>
                 <div className="guide-bar__actions">
@@ -9013,7 +9121,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     type="button"
                     onClick={handleStartNewModel}
                   >
-                    Vytvoriť model
+                    {t("wizard.banner_guide_create_btn")}
                   </button>
                 </div>
               </div>
@@ -9058,37 +9166,37 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <div className="wizard-welcome">
                   <div className="wizard-welcome__orb" aria-hidden />
                   <div className="wizard-welcome__card">
-                    <div className="wizard-welcome__eyebrow">flowmate · BPMNGen</div>
-                    <div className="wizard-welcome__title">Vitaj znova v BPMNGen</div>
-                    <div className="wizard-welcome__subtitle">Čo ideme robiť dnes?</div>
+                    <div className="wizard-welcome__eyebrow">{t("wizard.welcome_eyebrow")}</div>
+                    <div className="wizard-welcome__title">{t("wizard.welcome_title")}</div>
+                    <div className="wizard-welcome__subtitle">{t("wizard.welcome_subtitle")}</div>
                     <div className="wizard-welcome__actions">
                       {isDemoMode ? (
                         <>
                           <button className="btn btn-primary" type="button" onClick={() => setDemoSetupOpen(true)}>
-                            Otvoriť demo setup
+                            {t("wizard.welcome_open_demo")}
                           </button>
                           <a className="btn" href="/register">
-                            Create account
+                            {t("app.nav.create_account")}
                           </a>
                         </>
                       ) : (
                         <>
                           <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
-                            Vytvoriť mapu procesu
+                            {t("wizard.welcome_create_map")}
                           </button>
                           <button className="btn" type="button" onClick={openModels}>
-                            Pokračovať v rozpracovanom
+                            {t("wizard.welcome_continue")}
                           </button>
                         </>
                       )}
                     </div>
                     <div className="wizard-welcome__hint">
                       {isDemoMode
-                        ? "Demo je dočasné a po obnovení stránky sa vymaže."
+                        ? t("wizard.welcome_hint_demo")
                         : (
                           <>
-                            <div>Tip: Rozpracované modely nájdeš v sekcii Uložené modely.</div>
-                            <div>Tip: napíš proces bežným jazykom. My ho premeníme na BPMN mapu.</div>
+                            <div>{t("wizard.welcome_hint_tip1")}</div>
+                            <div>{t("wizard.welcome_hint_tip2")}</div>
                           </>
                         )}
                     </div>
@@ -9102,16 +9210,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setLaneInsertOpen(false)}>
             <div className="wizard-models-panel wizard-help-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3>Pomocník</h3>
+                <h3>{t("wizard.lane_insert_title")}</h3>
                 <button className="btn btn--small" type="button" onClick={() => setLaneInsertOpen(false)}>
-                  Zavriet
+                  {t("wizard.lane_insert_close")}
                 </button>
               </div>
               <div className="wizard-shape-meta">
-                Vkladáš do: lane {selectedLane.name || selectedLane.id}
+                {t("wizard.lane_insert_inserting", { name: selectedLane.name || selectedLane.id })}
               </div>
               <div className="wizard-help-card-hint wizard-help-card-hint--modal">
-                Vyber typ zápisu, doplň vlastné slová a vlož ho do textu. Potom ho už len upravíš podľa svojho procesu.
+                {t("wizard.lane_insert_hint")}
               </div>
               <div className="wizard-help-modal-body">
                 {renderHelpList()}
@@ -9125,30 +9233,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel demo-setup-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div>
-                  <h3 style={{ margin: 0 }}>Vyskúšaj si tvorbu procesu na malej ukážke</h3>
+                  <h3 style={{ margin: 0 }}>{t("wizard.demo_setup_title")}</h3>
                   <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                    Stačí názov procesu, 1 až 2 roly a krátka veta, čo proces spúšťa. Potom spolu vytvoríme kostru mapy a doplníš pár krokov.
+                    {t("wizard.demo_setup_intro")}
                   </div>
                 </div>
                 {xml ? (
                   <button className="btn btn--small" type="button" onClick={() => setDemoSetupOpen(false)}>
-                    Zavrieť
+                    {t("wizard.close")}
                   </button>
                 ) : null}
               </div>
               <div className="demo-setup-content">
                 <div className="demo-setup-form">
                   <label className="wizard-field">
-                    <span>Názov procesu</span>
+                    <span>{t("wizard.demo_setup_process_name")}</span>
                     <input
                       value={processCard.generatorInput.processName}
                       onChange={(e) => updateGeneratorInput("processName", e.target.value)}
-                      placeholder="Napr. Schválenie žiadosti"
+                      placeholder={t("wizard.demo_setup_process_name_placeholder")}
                       disabled={demoBuilding}
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Roly (každá na nový riadok, max {DEMO_LIMITS.maxRoles})</span>
+                    <span>{t("wizard.demo_setup_roles", { maxRoles: DEMO_LIMITS.maxRoles })}</span>
                     <textarea
                       value={processCard.generatorInput.roles}
                       onChange={(e) => updateGeneratorInput("roles", e.target.value)}
@@ -9157,47 +9265,47 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Čo proces spúšťa</span>
+                    <span>{t("wizard.demo_setup_trigger")}</span>
                     <input
                       value={processCard.generatorInput.trigger}
                       onChange={(e) => updateGeneratorInput("trigger", e.target.value)}
-                      placeholder="Napr. Prišla nová žiadosť"
+                      placeholder={t("wizard.demo_setup_trigger_placeholder")}
                       disabled={demoBuilding}
                     />
                   </label>
                   <label className="wizard-field">
-                    <span>Čo má byť na konci</span>
+                    <span>{t("wizard.demo_setup_outcome")}</span>
                     <input
                       value={processCard.generatorInput.output}
                       onChange={(e) => updateGeneratorInput("output", e.target.value)}
-                      placeholder="Napr. Žiadosť je schválená alebo zamietnutá"
+                      placeholder={t("wizard.demo_setup_outcome_placeholder")}
                       disabled={demoBuilding}
                     />
                   </label>
                   <div className="wizard-dialog-section">
-                    <strong style={{ display: "block", marginBottom: 6 }}>Čo si tu vyskúšaš</strong>
+                    <strong style={{ display: "block", marginBottom: 6 }}>{t("wizard.demo_setup_try_title")}</strong>
                     <div className="wizard-dialog-subtitle" style={{ fontSize: 13 }}>
-                      Vytvoríš kostru procesu, klikneš na rolu a doplníš pár krokov. Ak sa proces rozhoduje, začni vetu slovom <code>ak</code> alebo <code>keď</code>. Ak sa deje viac vecí naraz, začni vetu slovom <code>paralelne</code>.
+                      {t("wizard.demo_setup_try_body")}
                     </div>
                   </div>
                   {demoIntroError ? <div className="wizard-error">{demoIntroError}</div> : null}
                   {demoBuilding ? (
                     <div className="demo-build-steps">
-                      <div className={demoBuildStep >= 0 ? "is-active" : ""}>1. Pripravujeme kostru procesu...</div>
-                      <div className={demoBuildStep >= 1 ? "is-active" : ""}>2. Dopĺňame roly...</div>
-                      <div className={demoBuildStep >= 2 ? "is-active" : ""}>3. Kreslíme mapu...</div>
+                      <div className={demoBuildStep >= 0 ? "is-active" : ""}>{t("wizard.demo_setup_step1")}</div>
+                      <div className={demoBuildStep >= 1 ? "is-active" : ""}>{t("wizard.demo_setup_step2")}</div>
+                      <div className={demoBuildStep >= 2 ? "is-active" : ""}>{t("wizard.demo_setup_step3")}</div>
                     </div>
                   ) : null}
                   <div className="demo-setup-actions">
                     <button className="btn btn-primary" type="button" onClick={() => void runDemoGenerate()} disabled={demoBuilding}>
-                      {demoBuilding ? "Pripravujem ukážku..." : "Vytvoriť ukážkový model"}
+                      {demoBuilding ? t("wizard.demo_setup_building") : t("wizard.demo_setup_create")}
                     </button>
                   </div>
                 </div>
                 <aside className="demo-template-panel">
-                  <div className="demo-template-panel__title">Vybrať vzor</div>
+                  <div className="demo-template-panel__title">{t("wizard.demo_setup_pick_template")}</div>
                   <div className="demo-template-panel__list">
-                    {DEMO_TEMPLATES.map((template) => {
+                    {demoTemplates.map((template) => {
                       const isActive =
                         processCard.generatorInput.processName?.trim() === template.processName &&
                         processCard.generatorInput.roles?.trim() === template.roles;
@@ -9227,17 +9335,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--sandbox" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-models-copy">
-                  <h3 className="wizard-models-title">Moje uložené modely (Pieskovisko)</h3>
+                  <h3 className="wizard-models-title">{t("wizard.models_title")}</h3>
                   <div className="wizard-models-subtitle">
-                    Súkromné modely viditeľné len pre teba. Tlačidlom „Uložiť do organizácie“ ich uložíš do
-                    organizačnej knižnice.
+                    {t("wizard.models_subtitle")}
                   </div>
                 </div>
                 <div className="wizard-models-tools">
                   <input
                     type="text"
                     className="wizard-models-search"
-                    placeholder="Hľadať podľa názvu…"
+                    placeholder={t("wizard.models_search_placeholder")}
                     value={modelsSearch}
                     onChange={(e) => setModelsSearch(e.target.value)}
                     onKeyDown={(e) => {
@@ -9247,21 +9354,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     }}
                   />
                   <button className="btn btn--small" type="button" onClick={fetchModels} disabled={modelsLoading}>
-                    {modelsLoading ? "Načítavam..." : "Hľadať"}
+                    {modelsLoading ? t("wizard.models_loading") : t("wizard.models_search")}
                   </button>
                   <button className="btn btn--small" type="button" onClick={fetchModels} disabled={modelsLoading}>
-                    {modelsLoading ? "Načítavam..." : "Obnoviť"}
+                    {modelsLoading ? t("wizard.models_loading") : t("wizard.models_refresh")}
                   </button>
                 </div>
               </div>
               {modelsError ? <div className="wizard-error">{modelsError}</div> : null}
               {myOrgsEmpty === true ? (
-                <div className="wizard-error wizard-error--compact">Používateľ nemá organizáciu.</div>
+                <div className="wizard-error wizard-error--compact">{t("wizard.models_no_org")}</div>
               ) : null}
               {myOrgsEmpty === true ? (
                 <div className="wizard-models-empty-actions">
                   <button className="btn btn--small btn-primary" type="button" onClick={openOrgsModal}>
-                    Spravovať organizáciu
+                    {t("wizard.models_manage_org")}
                   </button>
                 </div>
               ) : null}
@@ -9269,17 +9376,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <table className="wizard-models-table">
                   <thead>
                     <tr>
-                      <th>Názov modelu</th>
-                      <th>Verzia</th>
-                      <th>Vytvorený</th>
-                      <th>Naposledy upravený</th>
-                      <th>Akcie</th>
+                      <th>{t("wizard.models_col_name")}</th>
+                      <th>{t("wizard.models_col_version")}</th>
+                      <th>{t("wizard.models_col_created")}</th>
+                      <th>{t("wizard.models_col_updated")}</th>
+                      <th>{t("wizard.models_col_actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {modelsLoading ? (
                       <tr>
-                        <td colSpan={5}>Načítavam...</td>
+                        <td colSpan={5}>{t("wizard.models_loading")}</td>
                       </tr>
                     ) : modelGroups.length ? (
                       modelGroups.flatMap((group) => {
@@ -9293,9 +9400,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 {latest?.process_meta?.org_pushes?.length ? (
                                   <span
                                     className="wizard-model-org-badge"
-                                    title={`Uložené v ${latest.process_meta.org_pushes.length} organizácii(ách)`}
+                                    title={t("wizard.models_saved_in_orgs", { count: latest.process_meta.org_pushes.length })}
                                   >
-                                    V organizácii
+                                    {t("wizard.models_in_org")}
                                   </span>
                                 ) : null}
                               </div>
@@ -9310,7 +9417,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   type="button"
                                   onClick={() => toggleModelGroup(group.key)}
                                 >
-                                  <span>{isExpanded ? "Skryť verzie" : "Verzie"}</span>
+                                  <span>{isExpanded ? t("wizard.models_hide_versions") : t("wizard.models_versions")}</span>
                                   <span className="wizard-model-count">{group.items.length}</span>
                                 </button>
                                 {latest ? (
@@ -9320,7 +9427,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                     onClick={() => loadModelFromList(latest.id, `#${group.items.length}`)}
                                     disabled={loadLoading || modelsActionLoading}
                                   >
-                                    Otvoriť poslednú
+                                    {t("wizard.models_open_latest")}
                                   </button>
                                 ) : null}
                                 {latest?.process_meta?.org_pushes?.find((p) => p.org_id === activeOrgId)?.org_model_id ? (
@@ -9334,7 +9441,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                     }
                                     disabled={loadLoading || modelsActionLoading}
                                   >
-                                    Otvoriť org verziu
+                                    {t("wizard.models_open_org_version")}
                                   </button>
                                 ) : null}
                                 {latest ? (
@@ -9345,11 +9452,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       onClick={() => handlePushModelToOrg(latest)}
                                       disabled={!activeOrgId || pushModelLoadingIds.has(latest.id)}
                                     >
-                                      {pushModelLoadingIds.has(latest.id) ? "Ukladám..." : "Uložiť do organizácie"}
+                                      {pushModelLoadingIds.has(latest.id) ? t("wizard.rail_saving") : t("wizard.models_push_to_org")}
                                     </button>
                                     {!activeOrgId ? (
                                       <div className="wizard-model-action-hint">
-                                        Nemáš žiadnu organizáciu
+                                        {t("wizard.models_no_active_org")}
                                       </div>
                                     ) : null}
                                   </div>
@@ -9364,10 +9471,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   <table className="wizard-models-table">
                                     <thead>
                                       <tr>
-                                        <th>Verzia</th>
-                                        <th>Vytvorený</th>
-                                        <th>Naposledy upravený</th>
-                                        <th>Akcie</th>
+                                        <th>{t("wizard.models_col_version")}</th>
+                                        <th>{t("wizard.models_col_created")}</th>
+                                        <th>{t("wizard.models_col_updated")}</th>
+                                        <th>{t("wizard.models_col_actions")}</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -9389,7 +9496,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                                 }
                                                 disabled={loadLoading || modelsActionLoading}
                                               >
-                                                Otvoriť
+                                                {t("wizard.models_open")}
                                               </button>
                                               <button
                                                 className="btn btn--small btn-link"
@@ -9397,7 +9504,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                                 onClick={() => handleRenameModel(m.id, m.name || m.id)}
                                                 disabled={modelsLoading || modelsActionLoading}
                                               >
-                                                Premenovať
+                                                {t("wizard.models_rename")}
                                               </button>
                                               <button
                                                 className="btn btn--small btn-danger"
@@ -9405,7 +9512,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                                 onClick={() => handleDeleteModel(m.id, m.name || m.id)}
                                                 disabled={modelsLoading || modelsActionLoading}
                                               >
-                                                Zmazať
+                                                {t("wizard.models_delete")}
                                               </button>
                                               <div className="wizard-model-action-stack">
                                                 <button
@@ -9414,11 +9521,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                                   onClick={() => handlePushModelToOrg(m)}
                                                   disabled={!activeOrgId || pushModelLoadingIds.has(m.id)}
                                                 >
-                                                  {pushModelLoadingIds.has(m.id) ? "Ukladám..." : "Uložiť do organizácie"}
+                                                  {pushModelLoadingIds.has(m.id) ? t("wizard.rail_saving") : t("wizard.models_push_to_org")}
                                                 </button>
                                                 {!activeOrgId ? (
                                                   <div className="wizard-model-action-hint">
-                                                    Nemáš žiadnu organizáciu
+                                                    {t("wizard.models_no_active_org")}
                                                   </div>
                                                 ) : null}
                                               </div>
@@ -9436,7 +9543,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5}>Žiadne uložené modely.</td>
+                        <td colSpan={5}>{t("wizard.models_empty")}</td>
                       </tr>
                     )}
                   </tbody>
@@ -9444,7 +9551,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn" type="button" onClick={() => setModelsOpen(false)}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
             </div>
@@ -9456,9 +9563,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div>
-                  <h3 style={{ margin: 0 }}>Verzie procesu</h3>
+                  <h3 style={{ margin: 0 }}>{t("wizard.org_versions_title")}</h3>
                   <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-                    {orgVersionsNode?.name || "Proces"} · organizacne verzie
+                    {t("wizard.org_versions_subtitle", {
+                      name: orgVersionsNode?.name || t("wizard.process_fallback_name"),
+                    })}
                   </div>
                 </div>
                 <div className="wizard-models-tools">
@@ -9468,7 +9577,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     onClick={() => void openOrgVersionsModal(orgVersionsNode)}
                     disabled={orgVersionsLoading}
                   >
-                    {orgVersionsLoading ? "Nacitavam..." : "Obnovit"}
+                    {orgVersionsLoading ? t("wizard.models_loading") : t("wizard.models_refresh")}
                   </button>
                 </div>
               </div>
@@ -9477,17 +9586,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <table className="wizard-models-table">
                   <thead>
                     <tr>
-                      <th>Verzia</th>
+                      <th>{t("wizard.models_col_version")}</th>
                       <th>ID</th>
-                      <th>Vytvoreny</th>
-                      <th>Naposledy upraveny</th>
-                      <th>Akcie</th>
+                      <th>{t("wizard.models_col_created")}</th>
+                      <th>{t("wizard.models_col_updated")}</th>
+                      <th>{t("wizard.models_col_actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orgVersionsLoading ? (
                       <tr>
-                        <td colSpan={5}>Nacitavam...</td>
+                        <td colSpan={5}>{t("wizard.models_loading")}</td>
                       </tr>
                     ) : orgVersionRows.length ? (
                       orgVersionRows.map((item) => (
@@ -9504,7 +9613,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onClick={() => handleOpenOrgVersion(item.id, item.versionLabel)}
                                 disabled={loadLoading}
                               >
-                                Otvorit
+                                {t("wizard.models_open")}
                               </button>
                             </div>
                           </td>
@@ -9512,7 +9621,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={5}>Pre tento proces zatial neexistuju dalsie verzie.</td>
+                        <td colSpan={5}>{t("wizard.org_versions_empty")}</td>
                       </tr>
                     )}
                   </tbody>
@@ -9520,7 +9629,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn" type="button" onClick={closeOrgVersionsModal}>
-                  Zavriet
+                  {t("wizard.close")}
                 </button>
               </div>
             </div>
@@ -9531,24 +9640,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           <div className="wizard-models-modal" onClick={() => setOrgMoveModalOpen(false)}>
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>Presunut do...</h3>
+                <h3 style={{ margin: 0 }}>{t("wizard.org_move_title")}</h3>
                 <button className="btn btn--small" type="button" onClick={() => setOrgMoveModalOpen(false)}>
-                  Zavriet
+                  {t("wizard.close")}
                 </button>
               </div>
               <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
-                Proces: <strong>{orgMoveNode?.name || "-"}</strong>
+                {t("wizard.process_label")}: <strong>{orgMoveNode?.name || "-"}</strong>
               </div>
               {orgMoveError ? <div className="wizard-error">{orgMoveError}</div> : null}
               {orgMoveTargetFolderId === orgMoveCurrentParentId ? (
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
-                  Proces uz je v tomto priecinku.
+                  {t("wizard.org_move_same_folder")}
                 </div>
               ) : null}
               <div className="org-tree">{renderOrgFolderPickerNode(orgTree)}</div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                 <button className="btn" type="button" onClick={() => setOrgMoveModalOpen(false)} disabled={orgMoveLoading}>
-                  Zrusit
+                  {t("wizard.cancel")}
                 </button>
                 <button
                   className="btn btn-primary"
@@ -9556,7 +9665,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={handleConfirmMoveProcess}
                   disabled={orgMoveLoading || orgMoveTargetFolderId === orgMoveCurrentParentId}
                 >
-                  {orgMoveLoading ? "Presuvam..." : "Presunut sem"}
+                  {orgMoveLoading ? t("wizard.org_move_loading") : t("wizard.org_move_confirm")}
                 </button>
               </div>
             </div>
@@ -9568,17 +9677,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Organizácia</p>
-                  <h3 className="wizard-dialog-title">Uložiť do organizácie</h3>
-                  <p className="wizard-dialog-subtitle">Vyber miesto v tímovom strome, kam sa uloží aktuálny model zo sandboxu.</p>
+                  <p className="wizard-dialog-kicker">{t("wizard.dialog_org")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.org_push_title")}</h3>
+                  <p className="wizard-dialog-subtitle">{t("wizard.org_push_subtitle")}</p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closePushModal}>
-                  Zavriet
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-dialog-meta">
                 <div className="wizard-dialog-meta__chip">
-                  <span className="wizard-dialog-meta__label">Model</span>
+                  <span className="wizard-dialog-meta__label">{t("wizard.org_push_model")}</span>
                   <strong>{orgPushModel?.name || orgPushModel?.id || "-"}</strong>
                 </div>
               </div>
@@ -9590,7 +9699,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={toggleOrgPushTreeExpand}
                   disabled={!orgTree || orgPushLoading}
                 >
-                  {isOrgPushTreeFullyExpanded ? "Zbaliť strom" : "Rozbaliť strom"}
+                  {isOrgPushTreeFullyExpanded ? t("wizard.org_push_collapse") : t("wizard.org_push_expand")}
                 </button>
               </div>
               <div className="org-tree wizard-dialog-section wizard-dialog-scroll">
@@ -9607,7 +9716,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={closePushModal} disabled={orgPushLoading}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
                 <button
                   className="btn btn-primary"
@@ -9615,7 +9724,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={handleConfirmPushToOrg}
                   disabled={orgPushLoading || !orgTree}
                 >
-                  {orgPushLoading ? "Ukladám..." : "Uložiť sem"}
+                  {orgPushLoading ? t("wizard.rail_saving") : t("wizard.org_push_save_here")}
                 </button>
               </div>
             </div>
@@ -9628,19 +9737,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
                   <p className="wizard-dialog-kicker">Konflikt</p>
-                  <h3 className="wizard-dialog-title">Duplicitný názov</h3>
-                  <p className="wizard-dialog-subtitle">V organizácii už existuje proces s týmto názvom. Vyber, ako sa má pokračovať.</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.conflict_title")}</h3>
+                  <p className="wizard-dialog-subtitle">{t("wizard.conflict_subtitle")}</p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={handleConflictCloseModal}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-dialog-section wizard-dialog-section--warning">
-                V organizačnej vrstve už existuje proces s názvom <strong>{orgPushConflictName}</strong>.
+                {t("wizard.conflict_exists", { name: orgPushConflictName })}
               </div>
               {orgPushConflictMatches.length ? (
                 <div className="wizard-dialog-section">
-                  <div style={{ marginBottom: 6 }}>Nájdené zhody:</div>
+                  <div style={{ marginBottom: 6 }}>{t("wizard.conflict_matches")}</div>
                   <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
                     {orgPushConflictMatches.map((match) => (
                       <li key={match.node.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -9666,13 +9775,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   onClick={handleConflictOverwrite}
                   disabled={!orgPushConflictSelectedId}
                 >
-                  Prepísať
+                  {t("wizard.conflict_overwrite")}
                 </button>
                 <button className="btn" type="button" onClick={handleConflictProceed}>
-                  Vložiť aj tak
+                  {t("wizard.conflict_insert_anyway")}
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleConflictRename}>
-                  Premenovať názov procesu
+                  {t("wizard.conflict_rename")}
                 </button>
               </div>
             </div>
@@ -9684,25 +9793,25 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Potvrdenie</p>
-                  <h3 className="wizard-dialog-title">Potvrdiť prepísanie</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.confirmation_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.overwrite_confirm_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelOverwrite}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-dialog-section wizard-dialog-section--warning">
-                Ozaj chceš prepísať vybraný proces v organizačnej vrstve?
+                {t("wizard.overwrite_confirm_message")}
               </div>
               <div className="wizard-dialog-subtitle">
-                Ak prepíšeš tento proces, zmeny z tvojho Pieskoviska sa prejavia v organizačnej vrstve.
+                {t("wizard.overwrite_confirm_hint")}
               </div>
               <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={handleCancelOverwrite}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
                 <button className="btn btn-danger" type="button" onClick={handleConfirmOverwrite}>
-                  Áno, prepísať
+                  {t("wizard.overwrite_confirm_yes")}
                 </button>
               </div>
             </div>
@@ -9714,34 +9823,34 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Proces</p>
+                  <p className="wizard-dialog-kicker">{t("wizard.process_label")}</p>
                   <h3 className="wizard-dialog-title">
-                    {activeOrgCapabilities.canDirectDeleteOrgProcess ? "Odstrániť proces?" : "Požiadať o odstránenie?"}
+                    {activeOrgCapabilities.canDirectDeleteOrgProcess ? t("wizard.delete_process_title") : t("wizard.delete_request_title")}
                   </h3>
                   <p className="wizard-dialog-subtitle">
                     {activeOrgCapabilities.canDirectDeleteOrgProcess
-                      ? "Priame odstránenie je dostupné len pre roly s oprávnením mazať organizačné procesy."
-                      : "Táto požiadavka sa odošle vlastníkovi organizácie na schválenie."}
+                      ? t("wizard.delete_process_subtitle")
+                      : t("wizard.delete_request_subtitle")}
                   </p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className={`wizard-dialog-section ${activeOrgCapabilities.canDirectDeleteOrgProcess ? "wizard-dialog-section--danger" : "wizard-dialog-section--warning"}`}>
                 {activeOrgCapabilities.canDirectDeleteOrgProcess
-                  ? `Proces "${orgDeleteNode?.name || "-"}" bude odstránený zo stromu organizácie.`
-                  : `Proces "${orgDeleteNode?.name || "-"}" nemôžeš odstrániť priamo.`}
+                  ? t("wizard.delete_process_tree_message", { name: orgDeleteNode?.name || "-" })
+                  : t("wizard.delete_process_cannot_direct", { name: orgDeleteNode?.name || "-" })}
               </div>
               <div className="wizard-dialog-subtitle">
                 {activeOrgCapabilities.canDirectDeleteOrgProcess
-                  ? "Táto akcia sa nedá vrátiť späť."
-                  : "Pošli vlastníkovi krátky dôvod, prečo má byť proces odstránený."}
+                  ? t("wizard.delete_process_irreversible")
+                  : t("wizard.delete_request_reason_hint")}
               </div>
               {!activeOrgCapabilities.canDirectDeleteOrgProcess ? (
                 <div className="wizard-dialog-section" style={{ display: "grid", gap: 6 }}>
                   <label htmlFor="org-delete-request-reason" style={{ fontSize: 12, opacity: 0.82 }}>
-                    Dôvod žiadosti
+                    {t("wizard.delete_request_reason_label")}
                   </label>
                   <textarea
                     id="org-delete-request-reason"
@@ -9749,7 +9858,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     style={{ minHeight: 100 }}
                     value={orgDeleteRequestReason}
                     onChange={(e) => setOrgDeleteRequestReason(e.target.value)}
-                    placeholder="Stručne napíš, prečo má byť proces odstránený..."
+                    placeholder={t("wizard.delete_request_reason_placeholder")}
                     maxLength={500}
                   />
                 </div>
@@ -9757,15 +9866,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
               <div className="wizard-dialog-actions">
                 <button className="btn" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
-                  {activeOrgCapabilities.canDirectDeleteOrgProcess ? "Zrušiť" : "Zavrieť"}
+                  {activeOrgCapabilities.canDirectDeleteOrgProcess ? t("wizard.cancel") : t("wizard.close")}
                 </button>
                 {activeOrgCapabilities.canDirectDeleteOrgProcess ? (
                   <button className="btn btn-danger" type="button" onClick={openFinalDeleteConfirmModal} disabled={orgDeleteLoading}>
-                    Odstrániť
+                    {t("wizard.delete_process_action")}
                   </button>
                 ) : (
                   <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
-                    {orgDeleteLoading ? "Odosielam..." : "Požiadať o odstránenie"}
+                    {orgDeleteLoading ? t("wizard.delete_request_sending") : t("wizard.delete_request_action")}
                   </button>
                 )}
               </div>
@@ -9778,18 +9887,18 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--org-push" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Posledné potvrdenie</p>
-                  <h3 className="wizard-dialog-title">Potvrdiť odstránenie procesu?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.final_confirmation_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.delete_final_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-dialog-section wizard-dialog-section--danger">
-                Naozaj chceš odstrániť proces "{orgDeleteNode?.name || "-"}"?
+                {t("wizard.delete_final_message", { name: orgDeleteNode?.name || "-" })}
               </div>
               <div className="wizard-dialog-subtitle">
-                Táto akcia sa nedá vrátiť späť.
+                {t("wizard.delete_process_irreversible")}
               </div>
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
               <div className="wizard-dialog-actions">
@@ -9803,10 +9912,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   }}
                   disabled={orgDeleteLoading}
                 >
-                  Späť
+                  {t("wizard.back")}
                 </button>
                 <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
-                  {orgDeleteLoading ? "Odstraňujem..." : "Áno, odstrániť"}
+                  {orgDeleteLoading ? t("wizard.delete_process_loading") : t("wizard.delete_final_yes")}
                 </button>
               </div>
             </div>
@@ -9818,22 +9927,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Sandbox</p>
-                  <h3 className="wizard-dialog-title">Uložiť model?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.sandbox_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.save_model_prompt_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
-                Máš rozpracovaný model. Chceš ho uložiť pred otvorením iného?
+                {t("wizard.save_model_prompt_message")}
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={handleOpenWithoutSave}>
-                  Neuložiť
+                  {t("wizard.save_model_prompt_skip")}
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
-                  Uložiť model
+                  {t("wizard.save_model_prompt_save")}
                 </button>
               </div>
             </div>
@@ -9845,22 +9954,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Karta procesu</p>
-                  <h3 className="wizard-dialog-title">Vytvoriť model znova?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.process_card_label")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.regenerate_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={() => setRegenerateConfirmOpen(false)}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section wizard-dialog-section--warning">
-                Model už existuje. Ak budeš pokračovať, kostra procesu sa vygeneruje znova podľa aktuálnych údajov v karte procesu.
+                {t("wizard.regenerate_message")}
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={() => setRegenerateConfirmOpen(false)}>
-                  Nechať pôvodný model
+                  {t("wizard.regenerate_keep")}
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleConfirmRegenerate}>
-                  Vytvoriť znova
+                  {t("wizard.regenerate_confirm")}
                 </button>
               </div>
             </div>
@@ -9872,22 +9981,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt wizard-save-prompt--wide" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Sandbox</p>
-                  <h3 className="wizard-dialog-title">Začať nový model?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.sandbox_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.new_model_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={() => setNewModelConfirmOpen(false)}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section wizard-dialog-section--warning">
-                Máš rozpracovaný model. Ak budeš pokračovať, neuložené zmeny sa stratia a otvorí sa nová prázdna karta procesu.
+                {t("wizard.new_model_message")}
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={() => setNewModelConfirmOpen(false)}>
-                  Ostať v aktuálnom modeli
+                  {t("wizard.new_model_stay")}
                 </button>
                 <button className="btn btn--warning" type="button" onClick={handleConfirmNewModel}>
-                  Áno, nový model
+                  {t("wizard.new_model_confirm")}
                 </button>
               </div>
             </div>
@@ -9903,7 +10012,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <h3 className="wizard-dialog-title">{wizardInputModal.title}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeWizardInputModal}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
@@ -9924,7 +10033,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={closeWizardInputModal}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
                 <button className="btn btn-primary" type="button" onClick={() => void submitWizardInputModal()}>
                   {wizardInputModal.confirmLabel}
@@ -9943,7 +10052,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <h3 className="wizard-dialog-title">{wizardConfirmModal.title}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeWizardConfirmModal}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className={`wizard-save-prompt__text wizard-dialog-section ${wizardConfirmModal.warning ? "wizard-dialog-section--warning" : ""}`}>
@@ -9970,19 +10079,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Model organizácie</p>
-                  <h3 className="wizard-dialog-title">Otvoriť proces?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.org_model_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.open_process_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={() => setOpenOrgProcessConfirmNode(null)}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
-                Otvorí sa najnovšia verzia procesu <strong>{openOrgProcessConfirmNode.name}</strong>.
+                {t("wizard.open_process_message", { name: openOrgProcessConfirmNode.name })}
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={() => setOpenOrgProcessConfirmNode(null)}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
                 <button
                   className="btn btn-primary"
@@ -9996,7 +10105,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     });
                   }}
                 >
-                  Otvoriť proces
+                  {t("wizard.open_process_action")}
                 </button>
               </div>
             </div>
@@ -10008,22 +10117,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel wizard-models-panel--compact wizard-save-prompt" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Organizácia</p>
-                  <h3 className="wizard-dialog-title">Prepnúť do editácie?</h3>
+                  <p className="wizard-dialog-kicker">{t("wizard.dialog_org")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.org_edit_title")}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={handleCancelEnableOrgEdit}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
-                Zmeny sa budú ukladať do organizácie. Chceš pokračovať?
+                {t("wizard.org_edit_message")}
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={handleCancelEnableOrgEdit}>
-                  Zrušiť
+                  {t("wizard.cancel")}
                 </button>
                 <button className="btn btn-primary" type="button" onClick={handleConfirmEnableOrgEdit}>
-                  Áno, upraviť
+                  {t("wizard.org_edit_confirm")}
                 </button>
               </div>
             </div>
@@ -10035,12 +10144,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Tím</p>
-                  <h3 className="wizard-dialog-title">Poznámky k projektu</h3>
-                  <p className="wizard-dialog-subtitle">Zachytávajte dohody, otázky a rozhodnutia, aby ich videl celý tím.</p>
+                  <p className="wizard-dialog-kicker">{t("wizard.notes_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.notes_title")}</h3>
+                  <p className="wizard-dialog-subtitle">{t("wizard.notes_subtitle")}</p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={() => setNotesOpen(false)}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="project-notes-body">
@@ -10048,13 +10157,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <div className="project-notes-toolbar">
                   <div className="project-notes-toolbar__top">
                     <div className="project-notes-toolbar__title">
-                      <h4>Zdieľané poznámky</h4>
-                      <p>Organizácia: {activeOrgName || "Nezvolená"}</p>
+                      <h4>{t("wizard.notes_shared_title")}</h4>
+                      <p>{t("wizard.notes_org_label", { name: activeOrgName || t("wizard.notes_org_unselected") })}</p>
                     </div>
                     {activeOrgId ? (
                       <div className="wizard-dialog-meta">
                         <div className="wizard-dialog-meta__chip">
-                          <span className="wizard-dialog-meta__label">Neprečítané</span>
+                          <span className="wizard-dialog-meta__label">{t("wizard.notes_unread")}</span>
                           <strong>{unreadProjectNotesCount}</strong>
                         </div>
                       </div>
@@ -10064,37 +10173,35 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {activeOrgId ? (
                   <>
                     <label className="wizard-field wizard-dialog-section">
-                      <span>Nová poznámka</span>
+                      <span>{t("wizard.notes_new_label")}</span>
                       <textarea
                         className="project-notes-textarea project-notes-textarea--draft"
                         value={noteDraft}
                         onChange={(e) => setNoteDraft(e.target.value)}
-                        placeholder={"Dohody, otvorené otázky, rozhodnutia...\n- \n- "}
+                        placeholder={t("wizard.notes_placeholder")}
                         rows={6}
                       />
                     </label>
                     <div className="project-notes-actions">
                       <button className="btn btn-primary" type="button" onClick={addProjectNote} disabled={!noteDraft.trim()}>
-                        Pridať poznámku
+                        {t("wizard.notes_add")}
                       </button>
-                      {projectNotesSaving ? <div className="project-notes-saving">Ukladám...</div> : null}
+                      {projectNotesSaving ? <div className="project-notes-saving">{t("wizard.notes_saving")}</div> : null}
                     </div>
                   </>
                 ) : (
                   <div className="project-notes-empty" style={{ marginBottom: 8 }}>
-                    Poznámky sú viazané na organizáciu. Najprv si zvoľ aktívnu organizáciu.
+                    {t("wizard.notes_need_org")}
                   </div>
                 )}
 
                 <div className="project-notes-list">
                   {projectNotesLoading ? (
-                    <div className="project-notes-empty">Načítavam poznámky...</div>
+                    <div className="project-notes-empty">{t("wizard.notes_loading")}</div>
                   ) : !activeOrgId ? (
-                    <div className="project-notes-empty">Po výbere organizácie sa zobrazia jej poznámky.</div>
+                    <div className="project-notes-empty">{t("wizard.notes_empty_no_org")}</div>
                   ) : projectNotes.length === 0 ? (
-                    <div className="project-notes-empty">
-                      Táto organizácia zatiaľ nemá poznámky. Pridaj prvú vyššie.
-                    </div>
+                    <div className="project-notes-empty">{t("wizard.notes_empty_none")}</div>
                   ) : (
                     projectNotes.map((note) => (
                       <div
@@ -10106,9 +10213,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             value={normalizeNoteStatus(note.status)}
                             onChange={(e) => updateProjectNote(note.id, { status: e.target.value })}
                           >
-                            <option value="new">Nové</option>
-                            <option value="reviewed">Skontrolované</option>
-                            <option value="agreed">Dohodnuté</option>
+                            <option value="new">{t("wizard.notes_status_new")}</option>
+                            <option value="reviewed">{t("wizard.notes_status_reviewed")}</option>
+                            <option value="agreed">{t("wizard.notes_status_agreed")}</option>
                           </select>
                           <div className="project-note-actions">
                             <button
@@ -10116,7 +10223,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               className="btn btn--small btn-accent"
                               onClick={() => setReplyOpenById((prev) => ({ ...prev, [note.id]: true }))}
                             >
-                              Pridať odpoveď
+                              {t("wizard.notes_reply_add")}
                             </button>
                             <button
                               type="button"
@@ -10124,14 +10231,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                               onClick={() => startEditProjectNote(note)}
                               disabled={editingNoteId === note.id}
                             >
-                              Upraviť
+                              {t("wizard.notes_edit")}
                             </button>
                             <button
                               type="button"
                               className="btn btn--small btn-danger"
                               onClick={() => removeProjectNote(note.id)}
                             >
-                              Zmazať
+                              {t("wizard.notes_delete")}
                             </button>
                           </div>
                         </div>
@@ -10151,10 +10258,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onClick={() => saveEditProjectNote(note.id)}
                                 disabled={!editingNoteText.trim()}
                               >
-                                Uložiť
+                                {t("wizard.notes_save")}
                               </button>
                               <button type="button" className="btn btn--small" onClick={cancelEditProjectNote}>
-                                Zrušiť
+                                {t("wizard.cancel")}
                               </button>
                             </div>
                           </div>
@@ -10178,10 +10285,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       onClick={saveEditReply}
                                       disabled={!String(replyEditing.text || "").trim()}
                                     >
-                                      Uložiť
+                                      {t("wizard.notes_save")}
                                     </button>
                                     <button type="button" className="btn btn--small" onClick={cancelEditReply}>
-                                      Zrušiť
+                                      {t("wizard.cancel")}
                                     </button>
                                   </div>
                                 </div>
@@ -10199,14 +10306,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       className="btn btn--small"
                                       onClick={() => startEditReply(note.id, reply)}
                                     >
-                                      Upraviť
+                                      {t("wizard.notes_edit")}
                                     </button>
                                     <button
                                       type="button"
                                       className="btn btn--small btn-danger"
                                       onClick={() => removeReply(note.id, reply.id)}
                                     >
-                                      Zmazať
+                                      {t("wizard.notes_delete")}
                                     </button>
                                   </div>
                                 </div>
@@ -10221,7 +10328,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onChange={(e) =>
                                   setReplyDrafts((prev) => ({ ...prev, [note.id]: e.target.value }))
                                 }
-                                placeholder="Napíš odpoveď..."
+                                placeholder={t("wizard.notes_reply_placeholder")}
                               />
                               <button
                                 type="button"
@@ -10229,7 +10336,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                 onClick={() => addProjectNoteReply(note.id)}
                                 disabled={!String(replyDrafts[note.id] || "").trim()}
                               >
-                                Uložiť odpoveď
+                                {t("wizard.notes_reply_save")}
                               </button>
                               <button
                                 type="button"
@@ -10239,7 +10346,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   setReplyOpenById((prev) => ({ ...prev, [note.id]: false }));
                                 }}
                               >
-                                Zrušiť
+                                {t("wizard.cancel")}
                               </button>
                             </div>
                           ) : null}
@@ -10258,30 +10365,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div className="wizard-models-panel project-notes-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
-                  <p className="wizard-dialog-kicker">Tím</p>
-                  <h3 className="wizard-dialog-title">Aktivita organizácie</h3>
-                  <p className="wizard-dialog-subtitle">Prehľad zmien, požiadaviek a tímovej aktivity v aktuálnej organizácii.</p>
+                  <p className="wizard-dialog-kicker">{t("wizard.activity_kicker")}</p>
+                  <h3 className="wizard-dialog-title">{t("wizard.activity_title")}</h3>
+                  <p className="wizard-dialog-subtitle">{t("wizard.activity_subtitle")}</p>
                 </div>
                 <button className="btn btn--small" type="button" onClick={() => setActivityOpen(false)}>
-                  Zavrieť
+                  {t("wizard.close")}
                 </button>
               </div>
               <div className="project-notes-body">
                 <div className="project-notes-toolbar">
                   <div className="project-notes-toolbar__top">
                     <div className="project-notes-toolbar__title">
-                      <h4>Tímová aktivita</h4>
-                      <p>Organizácia: {activeOrgName || "Nezvolená"}</p>
+                      <h4>{t("wizard.activity_team_title")}</h4>
+                      <p>{t("wizard.activity_org_label", { name: activeOrgName || t("wizard.notes_org_unselected") })}</p>
                     </div>
                     <div className="wizard-dialog-meta">
                       {activeOrgCapabilities.canApproveDeleteRequests ? (
                         <div className="wizard-dialog-meta__chip">
-                          <span className="wizard-dialog-meta__label">Na schválenie</span>
+                          <span className="wizard-dialog-meta__label">{t("wizard.activity_pending")}</span>
                           <strong>{visibleActivityPendingCount}</strong>
                         </div>
                       ) : null}
                       <div className="wizard-dialog-meta__chip">
-                        <span className="wizard-dialog-meta__label">Udalosti</span>
+                        <span className="wizard-dialog-meta__label">{t("wizard.activity_events")}</span>
                         <strong>{projectActivityItems.length}</strong>
                       </div>
                     </div>
@@ -10293,44 +10400,44 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     className={`project-activity-filter ${projectActivityFilter === "all" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("all")}
                   >
-                    Všetko
+                    {t("wizard.activity_filter_all")}
                   </button>
                   <button
                     type="button"
                     className={`project-activity-filter ${projectActivityFilter === "requests" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("requests")}
                   >
-                    Požiadavky
+                    {t("wizard.activity_filter_requests")}
                   </button>
                   <button
                     type="button"
                     className={`project-activity-filter ${projectActivityFilter === "models" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("models")}
                   >
-                    Modely
+                    {t("wizard.activity_filter_models")}
                   </button>
                   <button
                     type="button"
                     className={`project-activity-filter ${projectActivityFilter === "members" ? "is-active" : ""}`}
                     onClick={() => setProjectActivityFilter("members")}
                   >
-                    Členovia
+                    {t("wizard.activity_filter_members")}
                   </button>
                 </div>
                 {projectActivityError ? <div className="wizard-error">{projectActivityError}</div> : null}
                 {projectActivityLoading ? (
-                  <div className="project-notes-empty">Načítavam aktivitu...</div>
+                  <div className="project-notes-empty">{t("wizard.activity_loading")}</div>
                 ) : !activeOrgId ? (
-                  <div className="project-notes-empty">Po výbere organizácie sa zobrazí aktivita tímu.</div>
+                  <div className="project-notes-empty">{t("wizard.activity_empty_no_org")}</div>
                 ) : projectActivityItems.length === 0 ? (
-                  <div className="project-notes-empty">Zatiaľ tu nie sú žiadne zaznamenané udalosti.</div>
+                  <div className="project-notes-empty">{t("wizard.activity_empty_none")}</div>
                 ) : (
                   <div className="project-notes-list">
                     {activeOrgCapabilities.canApproveDeleteRequests ? (
                       <div className={`project-activity-section ${activityRequestsPulse ? "is-pulse" : ""}`}>
                         <div className="project-activity-section__header">
                           <h4 className="project-activity-section__title">
-                            Požiadavky na odstránenie
+                            {t("wizard.activity_delete_requests")}
                             {filteredPendingDeleteRequests.length > 0 ? (
                               <span className="project-activity-badge is-pending project-activity-badge--count">
                                 {filteredPendingDeleteRequests.length}
@@ -10339,7 +10446,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                           </h4>
                         </div>
                         {filteredPendingDeleteRequests.length === 0 ? (
-                          <div className="project-notes-empty">Žiadne požiadavky na odstránenie.</div>
+                          <div className="project-notes-empty">{t("wizard.activity_delete_requests_empty")}</div>
                         ) : (
                           <div className="project-notes-list">
                             {filteredPendingDeleteRequests.map((item) => {
@@ -10358,7 +10465,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                   <div className="project-note-meta">{formatDateTime(item.created_at)}</div>
                                   {item?.metadata?.reason ? (
                                     <div className="project-activity-reason">
-                                      Dovod: {item.metadata.reason}
+                                      {t("wizard.activity_reason_label", { reason: item.metadata.reason })}
                                     </div>
                                   ) : null}
                                   <div className="project-activity-item__actions">
@@ -10368,7 +10475,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       disabled={projectActivityActionId === `approve:${item.id}` || projectActivityActionId === `reject:${item.id}`}
                                       onClick={() => void handleOrgDeleteRequestDecision(item, "approve")}
                                     >
-                                      {projectActivityActionId === `approve:${item.id}` ? "Schvalujem..." : "Schvalit odstranenie"}
+                                      {projectActivityActionId === `approve:${item.id}`
+                                        ? t("wizard.activity_approving")
+                                        : t("wizard.activity_approve_delete")}
                                     </button>
                                     <button
                                       type="button"
@@ -10376,7 +10485,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                                       disabled={projectActivityActionId === `approve:${item.id}` || projectActivityActionId === `reject:${item.id}`}
                                       onClick={() => void handleOrgDeleteRequestDecision(item, "reject")}
                                     >
-                                      {projectActivityActionId === `reject:${item.id}` ? "Zamietam..." : "Zamietnut"}
+                                      {projectActivityActionId === `reject:${item.id}`
+                                        ? t("wizard.activity_rejecting")
+                                        : t("wizard.activity_reject")}
                                     </button>
                                   </div>
                                 </div>
@@ -10389,10 +10500,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
                     <div className="project-activity-section">
                       <div className="project-activity-section__header">
-                        <h4 className="project-activity-section__title">Ostatna aktivita</h4>
+                        <h4 className="project-activity-section__title">{t("wizard.activity_other_title")}</h4>
                       </div>
                       {filteredNonRequestActivityItems.length === 0 ? (
-                        <div className="project-notes-empty">Zatial tu nie je dalsia aktivita.</div>
+                        <div className="project-notes-empty">{t("wizard.activity_other_empty")}</div>
                       ) : (
                         <div className="project-notes-list">
                           {filteredNonRequestActivityItems.map((item) => {

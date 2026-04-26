@@ -78,13 +78,15 @@ def _expand_conditional_step(
     make_flow_id: Callable[[str, str], str],
     include_lane_in_flow: bool = False,
 ) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
-    """Return (new_prev, nodes, flows) for a conditional 'Ak/Keď/Ked ...' step."""
+    """Return (new_prev, nodes, flows) for a conditional decision step."""
     cond = then_part = else_part = None
-    cond_prefix = r"(?:Ak|Keď|Ked)"
+    cond_prefix = r"(?:Ak|Keď|Ked|If|When)"
+    then_token = r"(?:tak|potom|then)"
+    else_token = r"(?:inak|else|otherwise)"
 
     # Variant 1a: explicit ELSE with tak/potom and optional commas
     m = re.match(
-        rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+?)\s*,?\s*inak\s*[:\-]?\s*(?P<else>.+)\s*$",
+        rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*{then_token}\s+(?P<then>.+?)\s*,?\s*{else_token}\s*[:\-]?\s*(?P<else>.+)\s*$",
         step,
         flags=re.IGNORECASE,
     )
@@ -95,7 +97,7 @@ def _expand_conditional_step(
     else:
         # Variant 1b: tak/potom bez explicitného inak (fallback)
         m = re.match(
-            rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*(?:tak|potom)\s+(?P<then>.+)\s*$",
+            rf"^\s*{cond_prefix}\s+(?P<cond>.+?)\s*,?\s*{then_token}\s+(?P<then>.+)\s*$",
             step,
             flags=re.IGNORECASE,
         )
@@ -133,9 +135,10 @@ def _expand_conditional_step(
 
     def _split_branch_tail_and_step(part: str) -> list[str]:
         text = str(part or "").strip().rstrip(".")
-        if not text or " a " not in text.lower():
+        lowered = text.lower()
+        if not text or (" a " not in lowered and " and " not in lowered):
             return [text] if text else []
-        left, right = re.split(r"\s+a\s+", text, maxsplit=1, flags=re.IGNORECASE)
+        left, right = re.split(r"\s+(?:a|and)\s+", text, maxsplit=1, flags=re.IGNORECASE)
         right = right.strip()
         if not left.strip() or not right:
             return [text]
@@ -200,12 +203,12 @@ def _expand_conditional_step(
             flow["laneId"] = lane_id
         flows.append(flow)
 
-    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": "Áno"}
+    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": "Yes"}
     flow_no = {
         "id": make_flow_id(gw_id, else_target_ids[0]),
         "source": gw_id,
         "target": else_target_ids[0],
-        "name": "Nie",
+        "name": "No",
     }
     if include_lane_in_flow:
         flow_yes["laneId"] = lane_id
@@ -268,9 +271,10 @@ def _expand_parallel_step(
 
     def _split_tail_and_step(part: str) -> list[str]:
         text = str(part or "").strip().rstrip(".")
-        if not text or " a " not in text.lower():
+        lowered = text.lower()
+        if not text or (" a " not in lowered and " and " not in lowered):
             return [text] if text else []
-        left, right = re.split(r"\s+a\s+", text, maxsplit=1, flags=re.IGNORECASE)
+        left, right = re.split(r"\s+(?:a|and)\s+", text, maxsplit=1, flags=re.IGNORECASE)
         right = right.strip()
         if not left.strip() or not right:
             return [text]
@@ -293,8 +297,12 @@ def _expand_parallel_step(
             expanded.extend(_split_tail_and_step(part))
         return [part for part in expanded if part]
 
-    # Allow "Paralelne: ..." explicitly
-    m = re.match(r"^\s*paralelne\s*:\s*(.+)$", step, flags=re.IGNORECASE)
+    # Allow explicit parallel prefixes in SK and EN.
+    m = re.match(
+        r"^\s*(?:paralelne|parallel|in parallel|simultaneously|at the same time)\s*:\s*(.+)$",
+        step,
+        flags=re.IGNORECASE,
+    )
     if m:
         items = _split_items(m.group(1))
     else:
@@ -311,6 +319,11 @@ def _expand_parallel_step(
             "naraz",
             "popri tom",
             "popritom",
+            "parallel",
+            "in parallel",
+            "simultaneously",
+            "at the same time",
+            "concurrently",
         ]
         prefix = next((p for p in prefixes if lowered.startswith(p)), None)
         raw = None
@@ -338,13 +351,13 @@ def _expand_parallel_step(
             "id": split_id,
             "type": "parallelGateway",
             "laneId": lane_id,
-            "name": "Paralelne",
+            "name": "Parallel",
         },
         {
             "id": join_id,
             "type": "parallelGateway",
             "laneId": lane_id,
-            "name": "Zlúčenie paralelných vetiev",
+            "name": "Parallel merge",
         },
     ]
     flows: list[Dict[str, Any]] = []
@@ -2069,7 +2082,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 
     node_order = {n.get("id"): idx for idx, n in enumerate(nodes) if n.get("id")}
 
-    # Ensure exclusive gateway branches have labels (Áno/Nie) when missing.
+    # Ensure exclusive gateway branches have labels (Yes/No) when missing.
     outgoing_by_src = defaultdict(list)
     for f in flows:
         src = f.get("source")
@@ -2084,9 +2097,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if len(ordered) >= 1 and not (ordered[0].get("name") or ordered[0].get("label")):
-            ordered[0]["name"] = "Áno"
+            ordered[0]["name"] = "Yes"
         if len(ordered) >= 2 and not (ordered[1].get("name") or ordered[1].get("label")):
-            ordered[1]["name"] = "Nie"
+            ordered[1]["name"] = "No"
 
     # Ensure EndEvent follows the last created step and sits in its lane.
     nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
@@ -2125,7 +2138,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
                 fid = base_id if base_id not in flow_ids else f"flow_{uuid4().hex[:8]}"
                 flows.append({"id": fid, "source": last_step.get("id"), "target": end_id})
 
-    # Default labels for exclusive gateway branches (Áno/Nie) if missing.
+    # Default labels for exclusive gateway branches (Yes/No) if missing.
     node_type_map = {n.get("id"): _normalize_node_type(n) for n in nodes if n.get("id")}
     outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for f in flows:
@@ -2144,9 +2157,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if ordered:
-            ordered[0]["name"] = "Áno"
+            ordered[0]["name"] = "Yes"
         if len(ordered) > 1:
-            ordered[1]["name"] = "Nie"
+            ordered[1]["name"] = "No"
 
     normalized_data = dict(data)
     normalized_data.update(

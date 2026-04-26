@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import HeaderStepper from "./components/HeaderStepper";
+import i18n from "./i18n.js";
 import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
@@ -29,17 +29,26 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [authState, setAuthState] = useState({ user: null, loading: true });
-  const [activeOrgLabel, setActiveOrgLabel] = useState("");
   const isDemoRoute = location.pathname === "/demo";
-  const { t, i18n } = useTranslation();
-  const toggleLang = () => i18n.changeLanguage(i18n.language === "sk" ? "en" : "sk");
+  const showHeader =
+    isDemoRoute ||
+    location.pathname === "/login" ||
+    location.pathname === "/register" ||
+    location.pathname === "/forgot-password" ||
+    location.pathname === "/reset-password" ||
+    location.pathname.startsWith("/join-org/");
+  const { t } = useTranslation();
 
   const refreshAuthState = useCallback(async () => {
     setAuthState((prev) => ({ ...prev, loading: true }));
     try {
       const result = await getMe();
-      setAuthState({ user: result?.user || null, loading: false });
-      return result?.user || null;
+      const user = result?.user || null;
+      if (user?.language) {
+        i18n.changeLanguage(user.language);
+      }
+      setAuthState({ user, loading: false });
+      return user;
     } catch {
       setAuthState({ user: null, loading: false });
       return null;
@@ -62,32 +71,9 @@ function AppLayout() {
       await refreshAuthState();
     } finally {
       setAuthState({ user: null, loading: false });
-      setActiveOrgLabel("");
       navigate("/login", { replace: true });
     }
   };
-
-  useEffect(() => {
-    const readActiveOrg = () => {
-      if (typeof window === "undefined") return;
-      const id = window.localStorage.getItem("ACTIVE_ORG_ID") || "";
-      const name = window.localStorage.getItem("ACTIVE_ORG_NAME") || "";
-      if (!id && !name) {
-        setActiveOrgLabel("");
-        return;
-      }
-      setActiveOrgLabel(name || id);
-    };
-    readActiveOrg();
-    if (typeof window === "undefined") return;
-    const handler = () => readActiveOrg();
-    window.addEventListener("active-org-changed", handler);
-    window.addEventListener("storage", handler);
-    return () => {
-      window.removeEventListener("active-org-changed", handler);
-      window.removeEventListener("storage", handler);
-    };
-  }, [authState.user]);
 
 
   const renderProtected = (element) => {
@@ -124,23 +110,15 @@ function AppLayout() {
   };
 
   return (
-      <div className="app-shell">
+      <div className={`app-shell ${showHeader ? "" : "app-shell--headerless"}`.trim()}>
+        {showHeader ? (
         <header className="app-nav">
             <div className="app-nav__left">
             <Link to="/" className="app-nav__brand" aria-label={t("app.brand_label")}>
               <span className="app-nav__brand-text">BPMN.Gen</span>
             </Link>
-          <HeaderStepper />
           </div>
           <nav className="app-nav__links">
-            <button
-              type="button"
-              className="btn app-nav__lang"
-              onClick={toggleLang}
-              aria-label="Switch language"
-            >
-              {i18n.language === "sk" ? "EN" : "SK"}
-            </button>
             {isDemoRoute ? (
               <div className="app-nav__auth">
                 <button
@@ -179,32 +157,11 @@ function AppLayout() {
                 </Link>
               </>
             ) : (
-              <div className="app-nav__auth">
-                {!authState.loading &&
-                authState.user?.admin_panel_available === true &&
-                authState.user?.is_super_admin === true ? (
-                  <Link to="/admin" className="app-nav__link">
-                    {t("app.nav.admin")}
-                  </Link>
-                ) : null}
-                <div className="app-nav__auth-meta">
-                  <span className="app-nav__auth-status">{t("app.nav.logged_in_as", { email: authState.user.email })}</span>
-                  {activeOrgLabel ? (
-                    <span className="app-nav__auth-status">{t("app.nav.active_org", { name: activeOrgLabel })}</span>
-                  ) : (
-                    <span className="app-nav__auth-status">{t("app.nav.no_active_org")}</span>
-                  )}
-                </div>
-                <Link to="/organization" className="btn app-nav__profile">
-                  {t("app.nav.organization")}
-                </Link>
-                <Link to="/account" className="btn app-nav__profile">
-                  {t("app.nav.profile")}
-                </Link>
-              </div>
+              <div className="app-nav__auth" />
             )}
           </nav>
         </header>
+        ) : null}
         <main className="app-shell__body">
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
