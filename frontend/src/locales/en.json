@@ -245,6 +245,7 @@
     "detail_created": "Created",
     "detail_last_login": "Last login",
     "detail_verified": "Verified email",
+    "detail_created_orgs": "Created organizations",
     "detail_user_id": "User ID",
     "yes": "Yes",
     "no": "No",
@@ -264,7 +265,11 @@
     "pills_org_models": "Loaded models of this organization",
     "pills_org_models_empty": "No models found for this organization in loaded admin data.",
     "pills_model_org": "Organization",
-    "pills_model_empty": "No additional org context found for this model yet."
+    "pills_model_empty": "No additional org context found for this model yet.",
+    "delete_user": "Delete user",
+    "delete_busy": "Deleting...",
+    "delete_error": "Failed to delete user.",
+    "delete_confirm": "Delete user {{email}}? This cannot be undone."
   },
   "org": {
     "eyebrow": "Team space",

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,15 @@ def _user_models_dir(user_id: str) -> Path:
 
 def get_user_models_dir(user_id: str) -> Path:
     return _user_models_dir(user_id)
+
+
+def delete_user_storage(user_id: str) -> int:
+    base = _models_dir() / "users" / str(user_id)
+    models_dir = base / "models"
+    deleted_count = len(list(models_dir.glob("*.json"))) if models_dir.exists() else 0
+    if base.exists():
+        shutil.rmtree(base, ignore_errors=True)
+    return deleted_count
 
 
 def _user_model_path(user_id: str, model_id: str) -> Path:

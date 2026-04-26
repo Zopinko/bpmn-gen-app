@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { getAdminModels, getAdminOrgs, getAdminUsers } from "../api/admin";
+import { deleteAdminUser, getAdminModels, getAdminOrgs, getAdminUsers } from "../api/admin";
 import "./AdminPanelPage.css";
 
 const TABS = [
@@ -18,6 +18,7 @@ function AdminPanelPage() {
   const [activeTab, setActiveTab] = useState("users");
   const [search, setSearch] = useState("");
   const [selectedItem, setSelectedItem] = useState(null);
+  const [deleteState, setDeleteState] = useState({ busy: false, error: "" });
   const [tabState, setTabState] = useState({
     users: { ...EMPTY_TAB },
     orgs: { ...EMPTY_TAB },
@@ -83,7 +84,30 @@ function AdminPanelPage() {
   useEffect(() => {
     setSelectedItem(null);
     setSearch("");
+    setDeleteState({ busy: false, error: "" });
   }, [activeTab]);
+
+  const handleDeleteUser = useCallback(async (item) => {
+    if (!item?.id || deleteState.busy) return;
+    const confirmed = window.confirm(t("admin.delete_confirm", { email: item.email || "-" }));
+    if (!confirmed) return;
+
+    setDeleteState({ busy: true, error: "" });
+    try {
+      await deleteAdminUser(item.id);
+      setSelectedItem(null);
+      setDeleteState({ busy: false, error: "" });
+      await Promise.all([
+        loadTab("users", { force: true }),
+        loadTab("orgs", { force: true }),
+      ]);
+    } catch (error) {
+      setDeleteState({
+        busy: false,
+        error: error?.message || t("admin.delete_error"),
+      });
+    }
+  }, [deleteState.busy, loadTab, t]);
 
   const current = tabState[activeTab];
   const visibleModels = useMemo(() => {
@@ -217,7 +241,9 @@ function AdminPanelPage() {
                   activeTab={activeTab}
                   item={selectedItem}
                   relatedContext={relatedContext}
+                  deleteState={deleteState}
                   onClose={() => setSelectedItem(null)}
+                  onDeleteUser={handleDeleteUser}
                   t={t}
                 />
               ) : (
@@ -358,7 +384,7 @@ function ModelsTable({ rows, onSelect, selectedItem, t }) {
   );
 }
 
-function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, t }) {
+function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, onDeleteUser, deleteState, t }) {
   if (activeTab === "users") {
     return (
       <div className="admin-detail__card">
@@ -378,9 +404,21 @@ function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, t }) {
             [t("admin.detail_created"), formatDateTimeValue(item.created_at)],
             [t("admin.detail_last_login"), formatDateTimeValue(item.last_login_at)],
             [t("admin.detail_verified"), item.email_verified_at ? t("admin.yes") : t("admin.no")],
+            [t("admin.detail_created_orgs"), String(item.created_org_count ?? 0)],
             [t("admin.detail_user_id"), item.id || "-"],
           ]}
         />
+        {deleteState?.error ? <p className="admin-detail__error">{deleteState.error}</p> : null}
+        <div className="admin-detail__actions">
+          <button
+            type="button"
+            className="admin-detail__danger"
+            onClick={() => void onDeleteUser(item)}
+            disabled={deleteState?.busy}
+          >
+            {deleteState?.busy ? t("admin.delete_busy") : t("admin.delete_user")}
+          </button>
+        </div>
         <DetailPills
           title={t("admin.pills_orgs")}
           items={(item.org_names || []).map((name) => ({ key: name, label: name }))}

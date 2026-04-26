@@ -4,10 +4,11 @@ import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from auth.db import get_connection
-from auth.deps import require_super_admin
+from auth.deps import is_super_admin_email, require_super_admin
+from auth.service import delete_user_by_admin, get_user_by_id
 
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"], dependencies=[Depends(require_super_admin)])
@@ -67,6 +68,7 @@ def list_admin_users():
                 u.created_at,
                 u.last_login_at,
                 GROUP_CONCAT(DISTINCT o.name) AS org_names,
+                COUNT(DISTINCT oc.id) AS created_org_count,
                 COUNT(DISTINCT om.organization_id) AS org_count,
                 COUNT(DISTINCT CASE
                     WHEN s.revoked_at IS NULL THEN s.id
@@ -75,6 +77,7 @@ def list_admin_users():
             FROM users u
             LEFT JOIN organization_members om ON om.user_id = u.id
             LEFT JOIN organizations o ON o.id = om.organization_id
+            LEFT JOIN organizations oc ON oc.created_by_user_id = u.id
             LEFT JOIN auth_sessions s ON s.user_id = u.id
             GROUP BY u.id, u.email, u.role, u.email_verified_at, u.created_at, u.last_login_at
             ORDER BY u.created_at DESC
@@ -89,12 +92,31 @@ def list_admin_users():
             "created_at": row["created_at"],
             "last_login_at": row["last_login_at"],
             "org_count": int(row["org_count"] or 0),
+            "created_org_count": int(row["created_org_count"] or 0),
             "org_names": [name.strip() for name in str(row["org_names"] or "").split(",") if name.strip()],
             "session_count": int(row["session_count"] or 0),
         }
         for row in rows
     ]
     return {"count": len(items), "items": items}
+
+
+@router.delete("/users/{user_id}")
+def delete_admin_user(user_id: str, current_user=Depends(require_super_admin)):
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Pouzivatel neexistuje.")
+    if target["id"] == current_user.id:
+        raise HTTPException(status_code=400, detail="Aktualne prihlaseny super admin ucet nie je mozne zmazat.")
+    if is_super_admin_email(target["email"]):
+        raise HTTPException(status_code=400, detail="Super admin ucet nie je mozne zmazat cez admin panel.")
+    try:
+        return delete_user_by_admin(user_id)
+    except PermissionError:
+        raise HTTPException(
+            status_code=409,
+            detail="Pouzivatel vytvoril organizaciu. Najprv ju zmaz alebo prepis created_by na ineho usera.",
+        )
 
 
 @router.get("/orgs")

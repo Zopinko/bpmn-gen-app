@@ -247,6 +247,7 @@
     "detail_created": "Vytvorený",
     "detail_last_login": "Posledné prihlásenie",
     "detail_verified": "Overený email",
+    "detail_created_orgs": "Vytvorené organizácie",
     "detail_user_id": "User ID",
     "yes": "Áno",
     "no": "Nie",
@@ -266,7 +267,11 @@
     "pills_org_models": "Načítané modely tejto organizácie",
     "pills_org_models_empty": "K tejto organizácii sa v načítaných admin dátach zatiaľ nenašli modely.",
     "pills_model_org": "Organizácia",
-    "pills_model_empty": "K modelu sa zatiaľ nenašiel ďalší org kontext."
+    "pills_model_empty": "K modelu sa zatiaľ nenašiel ďalší org kontext.",
+    "delete_user": "Zmazať usera",
+    "delete_busy": "Mažem...",
+    "delete_error": "Nepodarilo sa zmazať usera.",
+    "delete_confirm": "Zmazať usera {{email}}? Táto akcia sa nedá vrátiť."
   },
   "org": {
     "eyebrow": "Tímový priestor",

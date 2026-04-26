@@ -290,6 +290,28 @@
   text-align: right;
 }
 
+.admin-detail__error {
+  margin: 14px 0 0;
+  color: #fda4af;
+}
+
+.admin-detail__actions {
+  margin-top: 14px;
+}
+
+.admin-detail__danger {
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(190, 24, 93, 0.65);
+  background: rgba(127, 29, 29, 0.28);
+  color: #ffe4e6;
+}
+
+.admin-detail__danger:disabled {
+  opacity: 0.65;
+}
+
 .admin-detail__block {
   margin-top: 16px;
 }

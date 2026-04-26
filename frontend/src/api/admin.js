@@ -1,8 +1,9 @@
 import { API_BASE } from "./config";
 
-async function request(path) {
+async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
+    ...options,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -23,4 +24,10 @@ export function getAdminOrgs() {
 
 export function getAdminModels() {
   return request("/api/admin/models");
+}
+
+export function deleteAdminUser(userId) {
+  return request(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
 }

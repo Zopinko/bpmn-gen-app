@@ -20,6 +20,7 @@ from auth.security import (
     verify_password,
 )
 from core.auth_config import get_auth_config
+from services.model_storage import delete_user_storage
 from services.org_model_storage import delete_org_storage
 from services.project_notes_storage import delete_project_notes
 
@@ -474,6 +475,66 @@ def find_user_id_by_email(email: str) -> str | None:
             (normalized_email,),
         ).fetchone()
     return row["id"] if row else None
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, email, role, created_at, email_verified_at, language
+            FROM users
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "role": row["role"],
+        "created_at": row["created_at"],
+        "email_verified_at": row["email_verified_at"],
+        "language": normalize_language(row["language"]),
+    }
+
+
+def list_created_org_names(user_id: str) -> list[str]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT name
+            FROM organizations
+            WHERE created_by_user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [str(row["name"]) for row in rows if row and row["name"]]
+
+
+def delete_user_by_admin(user_id: str) -> dict:
+    user = get_user_by_id(user_id)
+    if not user:
+        raise LookupError("Pouzivatel neexistuje.")
+
+    created_org_names = list_created_org_names(user_id)
+    if created_org_names:
+        raise PermissionError("Pouzivatel vytvoril organizaciu a nie je mozne ho bezpecne zmazat.")
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+
+    deleted_personal_models = delete_user_storage(user_id)
+    logger.info("Deleted user %s by admin; deleted_personal_models=%s", user_id, deleted_personal_models)
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "deleted": True,
+        "deleted_personal_models": deleted_personal_models,
+    }
 
 
 def add_org_member(user_id: str, org_id: str, role: str) -> None:
