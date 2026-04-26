@@ -75,6 +75,7 @@ def test_lane_append_conditional_splits_multiple_tasks_per_branch():
                 "inak return request, send warning"
             ),
             engine_json=_demo_engine(),
+            locale="sk",
         )
     )["engine_json"]
 
@@ -94,6 +95,26 @@ def test_lane_append_conditional_splits_multiple_tasks_per_branch():
     assert (gateway_id, tasks[2]["id"], "Nie") in flow_pairs
     assert (tasks[0]["id"], tasks[1]["id"], "") in flow_pairs
     assert (tasks[2]["id"], tasks[3]["id"], "") in flow_pairs
+
+
+def test_lane_append_conditional_uses_english_labels_for_en_locale():
+    built = append_tasks_to_lane_from_description(
+        LaneAppendRequest(
+            lane_id="lane_1",
+            description="If request is valid, then review request, else return request",
+            engine_json=_demo_engine(),
+            locale="en",
+        )
+    )["engine_json"]
+
+    gateways = _by_type(built, "exclusiveGateway")
+    flow_pairs = {(flow["source"], flow["target"], flow.get("name", "")) for flow in built.get("flows", [])}
+    tasks = _by_type(built, "task")
+
+    assert len(gateways) == 1
+    gateway_id = gateways[0]["id"]
+    assert (gateway_id, tasks[0]["id"], "Yes") in flow_pairs
+    assert (gateway_id, tasks[1]["id"], "No") in flow_pairs
 
 
 def test_lane_append_inline_decision_after_linear_steps():

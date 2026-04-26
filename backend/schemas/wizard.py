@@ -9,6 +9,7 @@ class LinearWizardRequest(BaseModel):
     start_trigger: str
     output: str
     steps: List[str]
+    locale: str | None = None
 
 
 class LinearWizardResponse(BaseModel):
@@ -21,6 +22,7 @@ class LaneAppendRequest(BaseModel):
     lane_name: str | None = None
     description: str
     engine_json: dict
+    locale: str | None = None
 
 
 class LaneAppendResponse(BaseModel):

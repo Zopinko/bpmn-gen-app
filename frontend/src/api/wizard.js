@@ -1,10 +1,19 @@
 import { API_BASE } from "./config";
+import i18n from "../i18n";
+
+function withLocalePayload(payload) {
+  const locale = i18n.resolvedLanguage || i18n.language || "en";
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return { locale, ...payload };
+  }
+  return payload;
+}
 
 export async function generateLinearWizardDiagram(payload) {
   const response = await fetch(`${API_BASE}/wizard/linear`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withLocalePayload(payload)),
     credentials: "include",
   });
 
@@ -20,7 +29,7 @@ export async function renderEngineXml(engineJson) {
   const response = await fetch(`${API_BASE}/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(engineJson),
+    body: JSON.stringify(withLocalePayload(engineJson)),
     credentials: "include",
   });
 
@@ -36,7 +45,7 @@ export async function reflowLayout(engineJson) {
   const response = await fetch(`${API_BASE}/layout/reflow`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ engine_json: engineJson }),
+    body: JSON.stringify(withLocalePayload({ engine_json: engineJson })),
     credentials: "include",
   });
 
@@ -52,7 +61,7 @@ export async function appendLaneFromDescription(payload) {
   const response = await fetch(`${API_BASE}/wizard/lane/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withLocalePayload(payload)),
     credentials: "include",
   });
 
@@ -68,7 +77,7 @@ export async function exportBpmn(engineJson) {
   const response = await fetch(`${API_BASE}/wizard/export-bpmn`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ engine_json: engineJson }),
+    body: JSON.stringify(withLocalePayload({ engine_json: engineJson })),
     credentials: "include",
   });
 

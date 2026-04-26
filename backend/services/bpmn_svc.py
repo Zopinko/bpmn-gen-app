@@ -48,6 +48,18 @@ TYPE_TAG = {
 }
 
 
+def _normalize_locale(value: str | None) -> str:
+    cleaned = str(value or "").strip().lower()
+    return "sk" if cleaned.startswith("sk") else "en"
+
+
+def _default_gateway_branch_labels(locale: str | None) -> tuple[str, str]:
+    normalized = _normalize_locale(locale)
+    if normalized == "sk":
+        return "Áno", "Nie"
+    return "Yes", "No"
+
+
 def T(ns: str, local: str) -> str:
     return f"{{{NS[ns]}}}{local}"
 
@@ -77,6 +89,7 @@ def _expand_conditional_step(
     make_task_id: Callable[[], str],
     make_flow_id: Callable[[str, str], str],
     include_lane_in_flow: bool = False,
+    locale: str | None = None,
 ) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
     """Return (new_prev, nodes, flows) for a conditional decision step."""
     cond = then_part = else_part = None
@@ -203,12 +216,13 @@ def _expand_conditional_step(
             flow["laneId"] = lane_id
         flows.append(flow)
 
-    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": "Áno"}
+    positive_label, negative_label = _default_gateway_branch_labels(locale)
+    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": positive_label}
     flow_no = {
         "id": make_flow_id(gw_id, else_target_ids[0]),
         "source": gw_id,
         "target": else_target_ids[0],
-        "name": "Nie",
+        "name": negative_label,
     }
     if include_lane_in_flow:
         flow_yes["laneId"] = lane_id
@@ -415,6 +429,7 @@ def build_linear_engine_from_wizard(
     step_names = [
         (step or "").strip() for step in (data.steps or []) if (step or "").strip()
     ]
+    locale = _normalize_locale(getattr(data, "locale", None))
 
     def _new_gateway_id() -> str:
         return f"gw_{uuid4().hex[:8]}"
@@ -444,6 +459,7 @@ def build_linear_engine_from_wizard(
             make_task_id=lambda: f"task_{idx}_{uuid4().hex[:6]}",
             make_flow_id=lambda s, t: f"flow_{s}_to_{t}",
             include_lane_in_flow=True,
+            locale=locale,
         )
         if new_nodes:
             nodes.extend(new_nodes)
@@ -472,12 +488,13 @@ def build_linear_engine_from_wizard(
     engine_json: Dict[str, Any] = {
         "processId": process_id,
         "name": process_name,
+        "locale": locale,
         "lanes": lanes,
         "nodes": nodes,
         "flows": flows,
     }
 
-    validated = postprocess_engine_json(engine_json, locale="sk")
+    validated = postprocess_engine_json(engine_json, locale=locale)
     if return_issues:
         issues = validate_engine(validated)
         return {
@@ -490,6 +507,8 @@ def build_linear_engine_from_wizard(
 def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, Any]:
     """Append linear tasks into a lane based on multiline description."""
     engine = normalize_engine_payload(dict(data.engine_json or {}))
+    locale = _normalize_locale(getattr(data, "locale", None) or engine.get("locale"))
+    engine["locale"] = locale
     if not str(engine.get("name") or "").strip():
         fallback = str(engine.get("processId") or "").strip() or "Proces"
         engine["name"] = fallback
@@ -734,6 +753,7 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             make_task_id=lambda: _new_task_id(),
             make_flow_id=_new_flow_id,
             include_lane_in_flow=False,
+            locale=locale,
         )
         if new_nodes:
             if align_global_x:
@@ -766,7 +786,7 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
     engine["flows"] = flows
     engine["lanes"] = lanes
 
-    validated = postprocess_engine_json(engine, locale="sk")
+    validated = postprocess_engine_json(engine, locale=locale)
     issues = validate_engine(validated)
     return {
         "engine_json": validated,
@@ -2082,7 +2102,10 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 
     node_order = {n.get("id"): idx for idx, n in enumerate(nodes) if n.get("id")}
 
-    # Ensure exclusive gateway branches have labels (Áno/Nie) when missing.
+    locale = _normalize_locale(data.get("locale"))
+    positive_label, negative_label = _default_gateway_branch_labels(locale)
+
+    # Ensure exclusive gateway branches have labels (Yes/No or Áno/Nie) when missing.
     outgoing_by_src = defaultdict(list)
     for f in flows:
         src = f.get("source")
@@ -2097,9 +2120,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if len(ordered) >= 1 and not (ordered[0].get("name") or ordered[0].get("label")):
-            ordered[0]["name"] = "Áno"
+            ordered[0]["name"] = positive_label
         if len(ordered) >= 2 and not (ordered[1].get("name") or ordered[1].get("label")):
-            ordered[1]["name"] = "Nie"
+            ordered[1]["name"] = negative_label
 
     # Ensure EndEvent follows the last created step and sits in its lane.
     nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
@@ -2138,7 +2161,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
                 fid = base_id if base_id not in flow_ids else f"flow_{uuid4().hex[:8]}"
                 flows.append({"id": fid, "source": last_step.get("id"), "target": end_id})
 
-    # Default labels for exclusive gateway branches (Áno/Nie) if missing.
+    # Default labels for exclusive gateway branches (Yes/No or Áno/Nie) if missing.
     node_type_map = {n.get("id"): _normalize_node_type(n) for n in nodes if n.get("id")}
     outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for f in flows:
@@ -2157,9 +2180,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if ordered:
-            ordered[0]["name"] = "Áno"
+            ordered[0]["name"] = positive_label
         if len(ordered) > 1:
-            ordered[1]["name"] = "Nie"
+            ordered[1]["name"] = negative_label
 
     normalized_data = dict(data)
     normalized_data.update(
@@ -2357,4 +2380,3 @@ def generate_bpmn_from_json(data: dict) -> str:
                 f["id"] = f"F_{f.get('source','?')}_{f.get('target','?')}_{idx}"
     data = postprocess_engine_json(data, locale=locale)
     return json_to_bpmn(data)
-

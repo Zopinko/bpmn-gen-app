@@ -29,6 +29,20 @@ def _has_seq_flow(root, source: str, target: str) -> bool:
     return False
 
 
+def _seq_flow_name(root, source: str, target: str) -> str | None:
+    def _local(tag: str) -> str:
+        return tag.split("}")[-1]
+
+    for el in root.iter():
+        if _local(el.tag) == "sequenceFlow":
+            if (
+                el.attrib.get("sourceRef") == source
+                and el.attrib.get("targetRef") == target
+            ):
+                return el.attrib.get("name")
+    return None
+
+
 def test_xor_split_join():
     engine = {
         "nodes": [
@@ -136,3 +150,26 @@ def test_inclusive_split_join():
     assert _count(r, "inclusiveGateway") == 2
     assert _has_seq_flow(r, "gw_o", "D1")
     assert _has_seq_flow(r, "gw_o", "D2")
+
+
+def test_exclusive_gateway_defaults_to_yes_no_in_english_locale():
+    engine = {
+        "locale": "en",
+        "nodes": [
+            {"id": "start", "type": "startEvent", "name": "Start", "laneId": "L1"},
+            {"id": "gw_x", "type": "exclusiveGateway", "name": "Decision", "laneId": "L1"},
+            {"id": "A", "type": "task", "name": "Approve", "laneId": "L1"},
+            {"id": "B", "type": "task", "name": "Reject", "laneId": "L1"},
+        ],
+        "flows": [
+            {"id": "f1", "source": "start", "target": "gw_x"},
+            {"id": "f2", "source": "gw_x", "target": "A"},
+            {"id": "f3", "source": "gw_x", "target": "B"},
+        ],
+    }
+
+    xml_text = generate_bpmn_from_json(engine)
+    r = _root(xml_text)
+
+    assert _seq_flow_name(r, "gw_x", "A") == "Yes"
+    assert _seq_flow_name(r, "gw_x", "B") == "No"
