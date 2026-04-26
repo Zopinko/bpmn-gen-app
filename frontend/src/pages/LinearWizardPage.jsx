@@ -31,7 +31,6 @@ import {
 import {
   createOrgFolder,
   getOrgModelPresence,
-  createOrgProcess,
   createOrgProcessFromOrgModel,
   deleteOrgNode,
   getOrgModel,
@@ -6162,45 +6161,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           return null;
         } catch (e) {
           const message = e?.message || t("wizard.org_folder_create_error");
-          setOrgError(message);
-          return message;
-        }
-      },
-    );
-  };
-
-  const handleCreateOrgProcess = async () => {
-    if (!activeOrgId) {
-      setOrgError(t("wizard.org_pick_or_create_first"));
-      return;
-    }
-    if (!activeOrgCapabilities.canEditOrgModels) {
-      setOrgError(t("wizard.org_edit_denied"));
-      return;
-    }
-    openWizardInputModal(
-      {
-        kicker: t("wizard.org_model_kicker"),
-        title: t("wizard.org_process_create_title"),
-        label: t("wizard.org_process_name_label"),
-        confirmLabel: t("wizard.org_process_create_confirm"),
-      },
-      async (value) => {
-        const trimmed = String(value || "").trim();
-        if (!trimmed) return t("wizard.org_process_name_required");
-        try {
-          const result = await createOrgProcess({ parentId: selectedOrgFolderId, name: trimmed }, activeOrgId);
-          setOrgTree(result?.tree || null);
-          setOrgError(null);
-          const modelId = result?.node?.processRef?.modelId;
-          if (modelId) {
-            requestOpenWithSave(() => {
-              navigate(`/model/${modelId}`);
-            });
-          }
-          return null;
-        } catch (e) {
-          const message = e?.message || "Nepodarilo sa vytvoriť proces.";
           setOrgError(message);
           return message;
         }

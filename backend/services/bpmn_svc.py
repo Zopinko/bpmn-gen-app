@@ -203,12 +203,12 @@ def _expand_conditional_step(
             flow["laneId"] = lane_id
         flows.append(flow)
 
-    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": "Yes"}
+    flow_yes = {"id": make_flow_id(gw_id, yes_ids[0]), "source": gw_id, "target": yes_ids[0], "name": "Áno"}
     flow_no = {
         "id": make_flow_id(gw_id, else_target_ids[0]),
         "source": gw_id,
         "target": else_target_ids[0],
-        "name": "No",
+        "name": "Nie",
     }
     if include_lane_in_flow:
         flow_yes["laneId"] = lane_id
@@ -2082,7 +2082,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 
     node_order = {n.get("id"): idx for idx, n in enumerate(nodes) if n.get("id")}
 
-    # Ensure exclusive gateway branches have labels (Yes/No) when missing.
+    # Ensure exclusive gateway branches have labels (Áno/Nie) when missing.
     outgoing_by_src = defaultdict(list)
     for f in flows:
         src = f.get("source")
@@ -2097,9 +2097,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if len(ordered) >= 1 and not (ordered[0].get("name") or ordered[0].get("label")):
-            ordered[0]["name"] = "Yes"
+            ordered[0]["name"] = "Áno"
         if len(ordered) >= 2 and not (ordered[1].get("name") or ordered[1].get("label")):
-            ordered[1]["name"] = "No"
+            ordered[1]["name"] = "Nie"
 
     # Ensure EndEvent follows the last created step and sits in its lane.
     nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
@@ -2138,7 +2138,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
                 fid = base_id if base_id not in flow_ids else f"flow_{uuid4().hex[:8]}"
                 flows.append({"id": fid, "source": last_step.get("id"), "target": end_id})
 
-    # Default labels for exclusive gateway branches (Yes/No) if missing.
+    # Default labels for exclusive gateway branches (Áno/Nie) if missing.
     node_type_map = {n.get("id"): _normalize_node_type(n) for n in nodes if n.get("id")}
     outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for f in flows:
@@ -2157,9 +2157,9 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             flist, key=lambda f: node_order.get(f.get("target"), 10**9)
         )
         if ordered:
-            ordered[0]["name"] = "Yes"
+            ordered[0]["name"] = "Áno"
         if len(ordered) > 1:
-            ordered[1]["name"] = "No"
+            ordered[1]["name"] = "Nie"
 
     normalized_data = dict(data)
     normalized_data.update(
