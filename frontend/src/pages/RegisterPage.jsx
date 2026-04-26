@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-
+import { useTranslation } from "react-i18next";
 import { trackSignupCompleted } from "../api/analytics";
 import { registerAuth } from "../api/auth";
 
 function RegisterPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -15,7 +16,7 @@ function RegisterPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (password !== confirmPassword) {
-      setStatus({ loading: false, error: "Heslá sa nezhodujú.", success: "" });
+      setStatus({ loading: false, error: t("register.passwords_mismatch"), success: "" });
       return;
     }
     setStatus({ loading: true, error: "", success: "" });
@@ -23,7 +24,7 @@ function RegisterPage() {
       const result = await registerAuth({ email, password });
       const sid = new URLSearchParams(location.search).get("sid");
       void trackSignupCompleted(sid || undefined);
-      setStatus({ loading: false, error: "", success: result?.message || "Registrácia bola úspešná." });
+      setStatus({ loading: false, error: "", success: result?.message || t("register.success_generic") });
       setTimeout(() => navigate("/login"), 800);
     } catch (error) {
       setStatus({ loading: false, error: error.message, success: "" });
@@ -33,13 +34,11 @@ function RegisterPage() {
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <p className="auth-eyebrow">BPMN.GEN</p>
-        <h1>Registrácia</h1>
-        <p className="auth-intro">
-          Vytvor si účet a priprav si priestor pre vlastné procesy, tím a organizáciu.
-        </p>
+        <p className="auth-eyebrow">{t("register.eyebrow")}</p>
+        <h1>{t("register.title")}</h1>
+        <p className="auth-intro">{t("register.intro")}</p>
 
-        <label htmlFor="register-email">E-mail</label>
+        <label htmlFor="register-email">{t("register.email")}</label>
         <input
           id="register-email"
           type="email"
@@ -49,7 +48,7 @@ function RegisterPage() {
           required
         />
 
-        <label htmlFor="register-password">Heslo</label>
+        <label htmlFor="register-password">{t("register.password")}</label>
         <input
           id="register-password"
           type="password"
@@ -60,7 +59,7 @@ function RegisterPage() {
           required
         />
 
-        <label htmlFor="register-confirm-password">Potvrď heslo</label>
+        <label htmlFor="register-confirm-password">{t("register.confirm_password")}</label>
         <input
           id="register-confirm-password"
           type="password"
@@ -72,14 +71,14 @@ function RegisterPage() {
         />
 
         <button type="submit" disabled={status.loading}>
-          {status.loading ? "Registrujem..." : "Vytvoriť účet"}
+          {status.loading ? t("register.submitting") : t("register.submit")}
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
         {status.success ? <p className="auth-message auth-message--success">{status.success}</p> : null}
 
         <p className="auth-footer">
-          Už máš účet? <Link to="/login">Prihlás sa</Link>
+          {t("register.has_account")} <Link to="/login">{t("register.login_link")}</Link>
         </p>
       </form>
     </section>

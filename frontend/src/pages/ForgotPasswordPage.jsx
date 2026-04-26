@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-
+import { useTranslation } from "react-i18next";
 import { requestPasswordReset } from "../api/auth";
 
 function ForgotPasswordPage() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState({ loading: false, error: "", success: "" });
 
@@ -12,30 +13,20 @@ function ForgotPasswordPage() {
     setStatus({ loading: true, error: "", success: "" });
     try {
       await requestPasswordReset({ email });
-      setStatus({
-        loading: false,
-        error: "",
-        success: "Ak účet s týmto e-mailom existuje, poslali sme odkaz na reset hesla.",
-      });
+      setStatus({ loading: false, error: "", success: t("forgot_password.success") });
     } catch {
-      setStatus({
-        loading: false,
-        error: "Požiadavka zlyhala. Skús to znova.",
-        success: "",
-      });
+      setStatus({ loading: false, error: t("forgot_password.error_generic"), success: "" });
     }
   };
 
   return (
     <section className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <p className="auth-eyebrow">Obnova prístupu</p>
-        <h1>Zabudnuté heslo</h1>
-        <p className="auth-intro">
-          Zadaj svoj e-mail a pošleme ti link, cez ktorý si nastavíš nové heslo.
-        </p>
+        <p className="auth-eyebrow">{t("forgot_password.eyebrow")}</p>
+        <h1>{t("forgot_password.title")}</h1>
+        <p className="auth-intro">{t("forgot_password.intro")}</p>
 
-        <label htmlFor="forgot-password-email">E-mail</label>
+        <label htmlFor="forgot-password-email">{t("forgot_password.email")}</label>
         <input
           id="forgot-password-email"
           type="email"
@@ -46,14 +37,14 @@ function ForgotPasswordPage() {
         />
 
         <button type="submit" disabled={status.loading}>
-          {status.loading ? "Odosielam..." : "Poslať reset link"}
+          {status.loading ? t("forgot_password.submitting") : t("forgot_password.submit")}
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
         {status.success ? <p className="auth-message auth-message--success">{status.success}</p> : null}
 
         <p className="auth-footer">
-          Späť na <Link to="/login">prihlásenie</Link>
+          <Link to="/login">{t("forgot_password.back_to_login")}</Link>
         </p>
       </form>
     </section>

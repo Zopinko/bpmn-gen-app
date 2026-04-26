@@ -62,3 +62,10 @@ export function changePassword(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function updateMe(payload) {
+  return request("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}

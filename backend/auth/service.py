@@ -31,6 +31,7 @@ class AuthUser:
     role: str
     email_verified_at: str | None
     created_at: str
+    language: str = "sk"
 
 
 def normalize_email(email: str) -> str:
@@ -84,7 +85,7 @@ def authenticate_user(email: str, password: str) -> AuthUser | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, email, password_hash, role, email_verified_at, created_at
+            SELECT id, email, password_hash, role, email_verified_at, created_at, language
             FROM users
             WHERE email = ?
             """,
@@ -100,6 +101,7 @@ def authenticate_user(email: str, password: str) -> AuthUser | None:
         role=row["role"],
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
+        language=row["language"] or "sk",
     )
 
 
@@ -282,7 +284,8 @@ def find_user_by_session(session_token: str) -> AuthUser | None:
                 u.email AS email,
                 u.role AS role,
                 u.email_verified_at AS email_verified_at,
-                u.created_at AS created_at
+                u.created_at AS created_at,
+                u.language AS language
             FROM auth_sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.session_id_hash = ?
@@ -307,7 +310,21 @@ def find_user_by_session(session_token: str) -> AuthUser | None:
         role=row["role"],
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
+        language=row["language"] or "sk",
     )
+
+
+def update_user_language(user_id: str, language: str) -> None:
+    allowed = {"sk", "en"}
+    if language not in allowed:
+        raise ValueError(f"Nepodporovany jazyk: {language}")
+    now_iso = to_iso_z(utcnow())
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET language = ?, updated_at = ? WHERE id = ?",
+            (language, now_iso, user_id),
+        )
+        conn.commit()
 
 
 def create_org_with_owner(name: str, user_id: str) -> dict:

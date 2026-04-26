@@ -1,4 +1,5 @@
 ﻿import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import BpmnModeler from "bpmn-js/lib/Modeler";
 import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
@@ -40,8 +41,8 @@ export default function MapViewer({
   onEditStructure,
   onMainMenu,
   saveDisabled = false,
-  saveLabel = "Uložiť",
-  editStructureLabel = "Upraviť kostru procesu",
+  saveLabel,
+  editStructureLabel,
   editStructureDisabled = false,
   onEngineJsonPatch,
   onModelerReady,
@@ -50,6 +51,7 @@ export default function MapViewer({
   guideHighlight = null,
   readOnly = false,
 }) {
+  const { t } = useTranslation("map_viewer");
   const ENABLE_LANE_HANDLES = false;
   const ENABLE_GHOST_STYLING = false;
   const containerRef = useRef(null);
@@ -135,8 +137,8 @@ export default function MapViewer({
 
   const openInputModal = ({ title, label, value, onConfirm }) => {
     setInputModal({
-      title: title || "Zadaj názov",
-      label: label || "Názov",
+      title: title || t("enter_title"),
+      label: label || t("title_label"),
       onConfirm: typeof onConfirm === "function" ? onConfirm : null,
     });
     setInputModalValue(value || "");
@@ -172,7 +174,7 @@ export default function MapViewer({
           modeling.removeElements([el]);
         }
       });
-      showToast("Zmazané. Undo: Ctrl+Z");
+      showToast(t("deleted_undo"));
     } catch {
       // ignore delete errors
     }
@@ -867,8 +869,8 @@ export default function MapViewer({
           if (!created) return;
           const currentName = created.businessObject?.name || "";
           openInputModal({
-            title: position === "top" ? "Pridať rolu nad" : "Pridať rolu pod",
-            label: "Názov role",
+            title: position === "top" ? t("add_role_above") : t("add_role_below"),
+            label: t("role_name"),
             value: currentName,
             onConfirm: (name) => {
               if (typeof name === "string" && name.trim()) {
@@ -879,39 +881,38 @@ export default function MapViewer({
         };
 
         container.appendChild(
-          makeButton("Add lane above", "bpmn-icon-lane-insert-above", {
+          makeButton(t("add_role_above"), "bpmn-icon-lane-insert-above", {
             onClick: () => addLaneWithPrompt("top"),
             hideOnAction: false,
             closeOnClick: true,
-            label: "Rola nad",
+            label: t("role_above_label"),
           }),
         );
         container.appendChild(
-          makeButton("Add lane below", "bpmn-icon-lane-insert-below", {
+          makeButton(t("add_role_below"), "bpmn-icon-lane-insert-below", {
             onClick: () => addLaneWithPrompt("bottom"),
             hideOnAction: false,
             closeOnClick: true,
-            label: "Rola pod",
+            label: t("role_below_label"),
           }),
         );
         container.appendChild(
-          makeButton("Potiahni pre presun", "bpmn-icon-hand-tool", {
+          makeButton(t("drag_to_move"), "bpmn-icon-hand-tool", {
             onStart: (event) => startLaneDrag?.(event),
             className: "custom-context-pad__btn--drag",
             hideOnAction: true,
-            label: "Presunúť",
+            label: t("move"),
           }),
         );
       } else if (isSequenceFlow) {
         if (!readOnly) {
           container.appendChild(
-            makeButton("Zmazať", "bpmn-icon-trash", {
+            makeButton(t("delete"), "bpmn-icon-trash", {
               onClick: () => {
                 clearContextPad();
                 openConfirmModal({
-                  title: "Zmazať prepojenie?",
-                  message:
-                    "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+                  title: t("delete_connection"),
+                  message: t("delete_connection_confirm"),
                   onConfirm: () => {
                     executeDeleteElements([element]);
                   },
@@ -919,22 +920,22 @@ export default function MapViewer({
               },
               className: "custom-context-pad__btn--danger",
               hideOnAction: false,
-              label: "Zmazať",
+              label: t("delete"),
             }),
           );
         }
       } else {
         const appendShape = (type, width, height) => {
           const defaults = {
-            "bpmn:Task": "Procesný krok",
-            "bpmn:UserTask": "Procesný krok",
-            "bpmn:ServiceTask": "Procesný krok",
-            "bpmn:ExclusiveGateway": "Nové rozhodnutie",
-            "bpmn:ParallelGateway": "Nové rozhodnutie",
-            "bpmn:InclusiveGateway": "Nové rozhodnutie",
-            "bpmn:Gateway": "Nové rozhodnutie",
-            "bpmn:StartEvent": "Začiatok",
-            "bpmn:EndEvent": "Koniec",
+            "bpmn:Task": t("process_step"),
+            "bpmn:UserTask": t("process_step"),
+            "bpmn:ServiceTask": t("process_step"),
+            "bpmn:ExclusiveGateway": t("new_decision"),
+            "bpmn:ParallelGateway": t("new_decision"),
+            "bpmn:InclusiveGateway": t("new_decision"),
+            "bpmn:Gateway": t("new_decision"),
+            "bpmn:StartEvent": t("start_event"),
+            "bpmn:EndEvent": t("end_event"),
           };
           const shape = elementFactory.createShape({ type });
           if (shape?.businessObject && defaults[type]) {
@@ -962,11 +963,11 @@ export default function MapViewer({
         };
 
         container.appendChild(
-          makeButton("Prepojiť", "bpmn-icon-connection-multi", {
+          makeButton(t("connect"), "bpmn-icon-connection-multi", {
             onStart: (event) => connect.start(event, element),
             className: "custom-context-pad__btn--accent",
             hideOnAction: true,
-            label: "Prepojiť",
+            label: t("connect"),
           }),
         );
 
@@ -976,15 +977,15 @@ export default function MapViewer({
         const addButton = document.createElement("button");
         addButton.type = "button";
         addButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
-        addButton.setAttribute("aria-label", "Pridať prvok");
-        addButton.title = "Pridať prvok";
+        addButton.setAttribute("aria-label", t("add_element"));
+        addButton.title = t("add_element");
         const addIcon = document.createElement("span");
         addIcon.className = "custom-context-pad__icon";
         addIcon.textContent = "+";
         addButton.appendChild(addIcon);
         const addLabel = document.createElement("span");
         addLabel.className = "custom-context-pad__label";
-        addLabel.textContent = "Pridať";
+        addLabel.textContent = t("add_short");
         addButton.appendChild(addLabel);
         addMenu.appendChild(addButton);
 
@@ -992,42 +993,42 @@ export default function MapViewer({
         menu.className = "custom-context-pad__menu";
 
         menu.appendChild(
-          makeButton("Úloha", "bpmn-icon-task", {
+          makeButton(t("task_title"), "bpmn-icon-task", {
             onClick: () => appendShape("bpmn:Task", 100, 80),
             hideOnAction: false,
             closeOnClick: true,
             className: "custom-context-pad__btn--menu",
-            label: "Krok",
+            label: t("task_label"),
           }),
         );
 
         menu.appendChild(
-          makeButton("Rozhodnutie", "bpmn-icon-gateway-xor", {
+          makeButton(t("decision"), "bpmn-icon-gateway-xor", {
             onClick: () => appendShape("bpmn:ExclusiveGateway"),
             hideOnAction: false,
             closeOnClick: true,
             className: "custom-context-pad__btn--menu",
-            label: "Rozhodnutie",
+            label: t("decision"),
           }),
         );
 
         menu.appendChild(
-          makeButton("Začiatok", "bpmn-icon-start-event-none", {
+          makeButton(t("start_event"), "bpmn-icon-start-event-none", {
             onClick: () => appendShape("bpmn:StartEvent"),
             hideOnAction: false,
             closeOnClick: true,
             className: "custom-context-pad__btn--menu",
-            label: "Začiatok",
+            label: t("start_event"),
           }),
         );
 
         menu.appendChild(
-          makeButton("Koniec", "bpmn-icon-end-event-none", {
+          makeButton(t("end_event"), "bpmn-icon-end-event-none", {
             onClick: () => appendShape("bpmn:EndEvent"),
             hideOnAction: false,
             closeOnClick: true,
             className: "custom-context-pad__btn--menu",
-            label: "Koniec",
+            label: t("end_event"),
           }),
         );
 
@@ -1035,25 +1036,24 @@ export default function MapViewer({
         container.appendChild(addMenu);
 
         container.appendChild(
-          makeButton("Poznámka", "bpmn-icon-text-annotation", {
+          makeButton(t("note"), "bpmn-icon-text-annotation", {
             onStart: (event) => {
               const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
               create.start(event, shape, { source: element });
             },
             hideOnAction: true,
-            label: "Poznámka",
+            label: t("note"),
           }),
         );
 
         if (!readOnly) {
           container.appendChild(
-            makeButton("Zmazať", "bpmn-icon-trash", {
+            makeButton(t("delete"), "bpmn-icon-trash", {
               onClick: () => {
                 clearContextPad();
                 openConfirmModal({
-                  title: "Zmazať prvok?",
-                  message:
-                    "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+                  title: t("delete_element"),
+                  message: t("delete_element_confirm"),
                   onConfirm: () => {
                     executeDeleteElements([element]);
                   },
@@ -1061,7 +1061,7 @@ export default function MapViewer({
               },
               className: "custom-context-pad__btn--danger",
               hideOnAction: false,
-              label: "Zmazať",
+              label: t("delete"),
             }),
           );
         }
@@ -1568,9 +1568,8 @@ export default function MapViewer({
         const deletable = rawCandidates.filter((el) => el && el.type !== "label");
         if (!deletable.length) return;
         openConfirmModal({
-          title: "Zmazať prvok?",
-          message:
-            "Túto zmenu vieš vrátiť cez Undo (Ctrl+Z) alebo otvorením staršej verzie mapy. Chceš pokračovať?",
+          title: t("delete_element"),
+          message: t("delete_element_confirm"),
           onConfirm: () => {
             executeDeleteElements(deletable);
           },
@@ -1832,7 +1831,7 @@ export default function MapViewer({
           if (!laneName) return;
           const handle = document.createElement("div");
           handle.className = "lane-dnd-handle";
-          handle.title = "Presunúť lane";
+          handle.title = t("move_lane");
           handle.style.display = "none";
           handle.addEventListener("mouseenter", () => {
             laneHandleHoverRef.current = true;
@@ -1867,7 +1866,7 @@ export default function MapViewer({
         const rawMessage = err?.message || String(err);
         const normalizedMessage = String(rawMessage).toLowerCase();
         const message = normalizedMessage.includes("no diagram to display")
-          ? "Zatiaľ nie je vytvorený diagram."
+          ? t("no_diagram")
           : rawMessage;
         setImportError(message);
         isImportingRef.current = false;
@@ -1959,9 +1958,9 @@ export default function MapViewer({
             className="map-viewer__refresh"
             onClick={onRefresh}
             type="button"
-            title="Obnoviť mapu"
+            title={t("refresh_title")}
           >
-            Obnoviť
+            {t("refresh")}
           </button>
         ) : null}
       </div>
@@ -1972,19 +1971,19 @@ export default function MapViewer({
                 className="map-toolbar__toggle map-toolbar__toggle--primary map-toolbar__toggle--compact"
                 type="button"
                 onClick={() => setToolbarCollapsed((prev) => !prev)}
-                title={toolbarCollapsed ? "Zobraziť nástroje" : "Skryť nástroje"}
+                title={toolbarCollapsed ? t("show_tools") : t("hide_tools")}
               >
-                {toolbarCollapsed ? "Nástroje" : "Skryť"}
+                {toolbarCollapsed ? t("tools") : t("hide")}
               </button>
               {!toolbarCollapsed ? (
                 <div className="map-toolbar__group">
-                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(0.1)} title="Priblížiť">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(0.1)} title={t("zoom_in", { defaultValue: "Zoom in" })}>
                   +
                 </button>
-                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(-0.1)} title="Oddialiť">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={() => zoomBy(-0.1)} title={t("zoom_out", { defaultValue: "Zoom out" })}>
                   -
                 </button>
-                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={zoomFit} title="Prispôsobiť">
+                <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={zoomFit} title={t("zoom_fit", { defaultValue: "Fit to view" })}>
                   Fit
                 </button>
                   {onUndo || localCanUndo ? (
@@ -1992,10 +1991,10 @@ export default function MapViewer({
                       className="map-toolbar__btn map-toolbar__btn--undo"
                       type="button"
                       onClick={handleUndoClick}
-                      title="Späť"
+                      title={t("undo")}
                       disabled={!(canUndo || localCanUndo)}
                     >
-                      Späť
+                      {t("undo")}
                     </button>
                   ) : null}
                   {onSave ? (
@@ -2003,10 +2002,10 @@ export default function MapViewer({
                       className="map-toolbar__btn map-toolbar__btn--save"
                       type="button"
                       onClick={onSave}
-                      title="Uložiť"
+                      title={t("save")}
                       disabled={saveDisabled}
                     >
-                      {saveLabel}
+                      {saveLabel ?? t("save")}
                     </button>
                   ) : null}
                   {onEditStructure ? (
@@ -2014,10 +2013,10 @@ export default function MapViewer({
                       className="map-toolbar__btn map-toolbar__btn--structure"
                       type="button"
                       onClick={onEditStructure}
-                      title={editStructureLabel}
+                      title={editStructureLabel ?? t("edit_structure")}
                       disabled={editStructureDisabled}
                     >
-                      {editStructureLabel}
+                      {editStructureLabel ?? t("edit_structure")}
                     </button>
                   ) : null}
                   {onMainMenu ? (
@@ -2025,16 +2024,16 @@ export default function MapViewer({
                       className="map-toolbar__btn map-toolbar__btn--main-menu"
                       type="button"
                       onClick={onMainMenu}
-                      title="Hlavné menu"
+                      title={t("main_menu")}
                     >
-                      Hlavné menu
+                      {t("main_menu")}
                     </button>
                   ) : null}
                 </div>
               ) : null}
             </div>
           </div><div ref={containerRef} className={`map-viewer__canvas ${guideCanvasClass}`} />
-        {loading ? <div className="map-viewer__status map-viewer__status--loading">Načítavam…</div> : null}
+        {loading ? <div className="map-viewer__status map-viewer__status--loading">{t("loading")}</div> : null}
         {overlayMessage ? (
           <div className="map-viewer__status">{overlayMessage}</div>
         ) : null}
@@ -2068,15 +2067,15 @@ export default function MapViewer({
           <div className="wizard-models-modal" onClick={closeConfirmModal}>
             <div className="wizard-models-panel" onClick={(e) => e.stopPropagation()}>
               <div className="wizard-models-header">
-                <h3 style={{ margin: 0 }}>{confirmModal.title || "Potvrdenie"}</h3>
+                <h3 style={{ margin: 0 }}>{confirmModal.title || t("confirm")}</h3>
                 <button className="btn btn--small" type="button" onClick={closeConfirmModal}>
-                  Zrušiť
+                  {t("cancel")}
                 </button>
               </div>
               <div style={{ opacity: 0.85, marginBottom: 16 }}>{confirmModal.message || ""}</div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="btn btn--small" type="button" onClick={closeConfirmModal}>
-                  Zrušiť
+                  {t("cancel")}
                 </button>
                 <button
                   className="btn btn-danger"
@@ -2089,7 +2088,7 @@ export default function MapViewer({
                     }
                   }}
                 >
-                  Zmazať
+                  {t("delete")}
                 </button>
               </div>
             </div>
@@ -2103,7 +2102,7 @@ export default function MapViewer({
                   <h3 className="wizard-dialog-title">{inputModal.title}</h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeInputModal}>
-                  Zrušiť
+                  {t("cancel")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
@@ -2118,7 +2117,7 @@ export default function MapViewer({
               </div>
               <div className="wizard-save-prompt__actions">
                 <button className="btn" type="button" onClick={closeInputModal}>
-                  Zrušiť
+                  {t("cancel")}
                 </button>
                 <button
                   className="btn btn-primary"
@@ -2128,7 +2127,7 @@ export default function MapViewer({
                     closeInputModal();
                   }}
                 >
-                  Uložiť názov
+                  {t("save_name")}
                 </button>
               </div>
             </div>

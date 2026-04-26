@@ -1,6 +1,7 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import HeaderStepper from "./components/HeaderStepper";
+import { useTranslation } from "react-i18next";
+import i18n from "./i18n.js";
 import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
@@ -28,15 +29,26 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [authState, setAuthState] = useState({ user: null, loading: true });
-  const [activeOrgLabel, setActiveOrgLabel] = useState("");
   const isDemoRoute = location.pathname === "/demo";
+  const showHeader =
+    isDemoRoute ||
+    location.pathname === "/login" ||
+    location.pathname === "/register" ||
+    location.pathname === "/forgot-password" ||
+    location.pathname === "/reset-password" ||
+    location.pathname.startsWith("/join-org/");
+  const { t } = useTranslation();
 
   const refreshAuthState = useCallback(async () => {
     setAuthState((prev) => ({ ...prev, loading: true }));
     try {
       const result = await getMe();
-      setAuthState({ user: result?.user || null, loading: false });
-      return result?.user || null;
+      const user = result?.user || null;
+      if (user?.language) {
+        i18n.changeLanguage(user.language);
+      }
+      setAuthState({ user, loading: false });
+      return user;
     } catch {
       setAuthState({ user: null, loading: false });
       return null;
@@ -59,37 +71,14 @@ function AppLayout() {
       await refreshAuthState();
     } finally {
       setAuthState({ user: null, loading: false });
-      setActiveOrgLabel("");
       navigate("/login", { replace: true });
     }
   };
 
-  useEffect(() => {
-    const readActiveOrg = () => {
-      if (typeof window === "undefined") return;
-      const id = window.localStorage.getItem("ACTIVE_ORG_ID") || "";
-      const name = window.localStorage.getItem("ACTIVE_ORG_NAME") || "";
-      if (!id && !name) {
-        setActiveOrgLabel("");
-        return;
-      }
-      setActiveOrgLabel(name || id);
-    };
-    readActiveOrg();
-    if (typeof window === "undefined") return;
-    const handler = () => readActiveOrg();
-    window.addEventListener("active-org-changed", handler);
-    window.addEventListener("storage", handler);
-    return () => {
-      window.removeEventListener("active-org-changed", handler);
-      window.removeEventListener("storage", handler);
-    };
-  }, [authState.user]);
-
 
   const renderProtected = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -99,7 +88,7 @@ function AppLayout() {
 
   const renderPublicOnly = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (authState.user) {
       return <Navigate to="/" replace />;
@@ -109,7 +98,7 @@ function AppLayout() {
 
   const renderSuperAdminOnly = (element) => {
     if (authState.loading) {
-      return <div className="app-shell-loading">Načítavam workspace...</div>;
+      return <div className="app-shell-loading">{t("app.loading")}</div>;
     }
     if (!authState.user) {
       return <Navigate to="/login" replace />;
@@ -121,13 +110,13 @@ function AppLayout() {
   };
 
   return (
-      <div className="app-shell">
+      <div className={`app-shell ${showHeader ? "" : "app-shell--headerless"}`.trim()}>
+        {showHeader ? (
         <header className="app-nav">
             <div className="app-nav__left">
-            <Link to="/" className="app-nav__brand" aria-label="Prejsť na hlavné menu">
+            <Link to="/" className="app-nav__brand" aria-label={t("app.brand_label")}>
               <span className="app-nav__brand-text">BPMN.Gen</span>
             </Link>
-          <HeaderStepper />
           </div>
           <nav className="app-nav__links">
             {isDemoRoute ? (
@@ -141,7 +130,7 @@ function AppLayout() {
                     }
                   }}
                 >
-                  Ako demo funguje
+                  {t("app.nav.demo_info")}
                 </button>
                 <button
                   type="button"
@@ -152,48 +141,27 @@ function AppLayout() {
                     }
                   }}
                 >
-                  Reset demo
+                  {t("app.nav.demo_reset")}
                 </button>
                 <Link to="/register" className="app-nav__link">
-                  Vytvoriť účet
+                  {t("app.nav.create_account")}
                 </Link>
               </div>
             ) : !authState.user ? (
               <>
                 <Link to="/login" className="app-nav__link">
-                  Prihlásenie
+                  {t("app.nav.login")}
                 </Link>
                 <Link to="/register" className="app-nav__link">
-                  Registrácia
+                  {t("app.nav.register")}
                 </Link>
               </>
             ) : (
-              <div className="app-nav__auth">
-                {!authState.loading &&
-                authState.user?.admin_panel_available === true &&
-                authState.user?.is_super_admin === true ? (
-                  <Link to="/admin" className="app-nav__link">
-                    Admin
-                  </Link>
-                ) : null}
-                <div className="app-nav__auth-meta">
-                  <span className="app-nav__auth-status">Prihlásený: {authState.user.email}</span>
-                  {activeOrgLabel ? (
-                    <span className="app-nav__auth-status">Aktívna organizácia: {activeOrgLabel}</span>
-                  ) : (
-                    <span className="app-nav__auth-status">Zatiaľ nemáš aktívnu organizáciu</span>
-                  )}
-                </div>
-                <Link to="/organization" className="btn app-nav__profile">
-                  Organizácia
-                </Link>
-                <Link to="/account" className="btn app-nav__profile">
-                  Profil
-                </Link>
-              </div>
+              <div className="app-nav__auth" />
             )}
           </nav>
         </header>
+        ) : null}
         <main className="app-shell__body">
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
@@ -223,6 +191,3 @@ function AppLayout() {
 }
 
 export default App;
-
-
-
