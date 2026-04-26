@@ -55,6 +55,8 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def admin_super_admin_guard(request: Request, call_next):
         path = request.url.path or ""
+        if request.method == "OPTIONS":
+            return await call_next(request)
         if path == "/api/admin" or path.startswith("/api/admin/"):
             if not is_admin_panel_available():
                 return JSONResponse(status_code=404, content={"detail": "Not found"})

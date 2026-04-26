@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from main import create_app
 from auth.db import get_connection, run_auth_migrations
 from auth.deps import require_super_admin
 from auth.service import AuthUser, create_org_with_owner, create_session_for_user, find_user_id_by_email, register_user
@@ -108,4 +109,45 @@ def test_super_admin_cannot_delete_currently_authenticated_account(tmp_path):
         assert response.status_code == 400
         assert "nie je mozne zmazat" in (response.json().get("detail") or "").lower()
     finally:
+        _restore_env(previous)
+
+
+def test_admin_delete_preflight_returns_cors_headers(tmp_path):
+    previous = _set_env(tmp_path)
+    old_admin_available = os.environ.get("ADMIN_PANEL_AVAILABLE")
+    old_super_admins = os.environ.get("SUPER_ADMIN_EMAILS")
+    old_cors = os.environ.get("CORS_ALLOW_ORIGINS")
+    try:
+        os.environ["ADMIN_PANEL_AVAILABLE"] = "true"
+        os.environ["SUPER_ADMIN_EMAILS"] = "super@example.com"
+        os.environ["CORS_ALLOW_ORIGINS"] = "https://app.example.com"
+        run_auth_migrations()
+        register_user("super@example.com", "password123")
+        app = create_app()
+        client = TestClient(app)
+
+        response = client.options(
+            "/api/admin/users/some-user-id",
+            headers={
+                "Origin": "https://app.example.com",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") == "https://app.example.com"
+        assert response.headers.get("access-control-allow-credentials") == "true"
+    finally:
+        if old_admin_available is None:
+            os.environ.pop("ADMIN_PANEL_AVAILABLE", None)
+        else:
+            os.environ["ADMIN_PANEL_AVAILABLE"] = old_admin_available
+        if old_super_admins is None:
+            os.environ.pop("SUPER_ADMIN_EMAILS", None)
+        else:
+            os.environ["SUPER_ADMIN_EMAILS"] = old_super_admins
+        if old_cors is None:
+            os.environ.pop("CORS_ALLOW_ORIGINS", None)
+        else:
+            os.environ["CORS_ALLOW_ORIGINS"] = old_cors
         _restore_env(previous)
