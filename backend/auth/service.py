@@ -34,6 +34,11 @@ class AuthUser:
     language: str = "sk"
 
 
+def normalize_language(language: str | None) -> str:
+    value = str(language or "").strip().lower()
+    return "sk" if value == "sk" else "en"
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -46,7 +51,7 @@ def _validate_password(password: str) -> bool:
     return len(password) >= 8
 
 
-def register_user(email: str, password: str) -> AuthUser:
+def register_user(email: str, password: str, language: str | None = None) -> AuthUser:
     normalized_email = normalize_email(email)
     if not _validate_email(normalized_email):
         raise ValueError("Email ma neplatny format.")
@@ -56,6 +61,7 @@ def register_user(email: str, password: str) -> AuthUser:
     now = to_iso_z(utcnow())
     user_id = str(uuid4())
     password_hash = hash_password(password)
+    normalized_language = normalize_language(language)
     with get_connection() as conn:
         existing = conn.execute(
             "SELECT id FROM users WHERE email = ?",
@@ -65,10 +71,10 @@ def register_user(email: str, password: str) -> AuthUser:
             raise ValueError("Pouzivatel s tymto emailom uz existuje.")
         conn.execute(
             """
-            INSERT INTO users(id, email, password_hash, email_verified_at, role, created_at, updated_at, last_login_at)
-            VALUES (?, ?, ?, NULL, 'user', ?, ?, NULL)
+            INSERT INTO users(id, email, password_hash, email_verified_at, role, created_at, updated_at, last_login_at, language)
+            VALUES (?, ?, ?, NULL, 'user', ?, ?, NULL, ?)
             """,
-            (user_id, normalized_email, password_hash, now, now),
+            (user_id, normalized_email, password_hash, now, now, normalized_language),
         )
         conn.commit()
     return AuthUser(
@@ -77,6 +83,7 @@ def register_user(email: str, password: str) -> AuthUser:
         role="user",
         email_verified_at=None,
         created_at=now,
+        language=normalized_language,
     )
 
 
@@ -101,7 +108,7 @@ def authenticate_user(email: str, password: str) -> AuthUser | None:
         role=row["role"],
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
-        language=row["language"] or "sk",
+        language=normalize_language(row["language"]),
     )
 
 
@@ -310,19 +317,20 @@ def find_user_by_session(session_token: str) -> AuthUser | None:
         role=row["role"],
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
-        language=row["language"] or "sk",
+        language=normalize_language(row["language"]),
     )
 
 
 def update_user_language(user_id: str, language: str) -> None:
+    normalized_language = normalize_language(language)
     allowed = {"sk", "en"}
-    if language not in allowed:
+    if normalized_language not in allowed:
         raise ValueError(f"Nepodporovany jazyk: {language}")
     now_iso = to_iso_z(utcnow())
     with get_connection() as conn:
         conn.execute(
             "UPDATE users SET language = ?, updated_at = ? WHERE id = ?",
-            (language, now_iso, user_id),
+            (normalized_language, now_iso, user_id),
         )
         conn.commit()
 
@@ -886,4 +894,3 @@ def resolve_accessible_org_id(user_id: str, org_id: str | None) -> str:
         return str(orgs[0]["id"])
     raise ValueError("Vyber aktivnu organizaciu.")
 logger = logging.getLogger(__name__)
-

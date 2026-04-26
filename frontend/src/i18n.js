@@ -4,7 +4,18 @@ import sk from "./locales/sk.json";
 import en from "./locales/en.json";
 
 const savedLang = typeof window !== "undefined"
-  ? (window.localStorage.getItem("APP_LANG") || "en")
+  ? (() => {
+      const stored = window.localStorage.getItem("APP_LANG");
+      if (stored === "sk" || stored === "en") return stored;
+      const browserCandidates = [
+        ...(Array.isArray(window.navigator?.languages) ? window.navigator.languages : []),
+        window.navigator?.language,
+        window.navigator?.userLanguage,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).trim().toLowerCase());
+      return browserCandidates.some((value) => value.startsWith("sk")) ? "sk" : "en";
+    })()
   : "en";
 
 i18n

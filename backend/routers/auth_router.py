@@ -38,6 +38,7 @@ _rate_limit_buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    language: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -172,7 +173,7 @@ def _clear_session_cookie(request: Request, response: Response) -> None:
 def register(payload: RegisterRequest, request: Request):
     _enforce_rate_limit(request, endpoint_key="register", limit=5)
     try:
-        user = register_user(payload.email, payload.password)
+        user = register_user(payload.email, payload.password, payload.language)
     except ValueError as exc:
         message = str(exc)
         if "existuje" in message:

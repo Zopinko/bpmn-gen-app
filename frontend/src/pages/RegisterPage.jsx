@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n.js";
 import { trackSignupCompleted } from "../api/analytics";
 import { registerAuth } from "../api/auth";
 
@@ -21,7 +22,7 @@ function RegisterPage() {
     }
     setStatus({ loading: true, error: "", success: "" });
     try {
-      const result = await registerAuth({ email, password });
+      const result = await registerAuth({ email, password, language: i18n.resolvedLanguage || i18n.language || "en" });
       const sid = new URLSearchParams(location.search).get("sid");
       void trackSignupCompleted(sid || undefined);
       setStatus({ loading: false, error: "", success: result?.message || t("register.success_generic") });
