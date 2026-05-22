@@ -5535,7 +5535,33 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
       }
       const modeler = modelerRef.current;
-      const canPatchCanvas = Boolean(modeler && xml);
+      const hasStartEventInUpdatedEngine = Array.isArray(updatedEngine?.nodes)
+        ? updatedEngine.nodes.some((node) => String(node?.type || "").toLowerCase().includes("start"))
+        : false;
+      const currentNodeIds = new Set(
+        (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : [])
+          .map((node) => String(node?.id || ""))
+          .filter(Boolean),
+      );
+      const newNodesFromAppend = (Array.isArray(updatedEngine?.nodes) ? updatedEngine.nodes : []).filter(
+        (node) => node?.id && !currentNodeIds.has(String(node.id)),
+      );
+      const isStartOrEndNode = (node) => {
+        const type = String(node?.type || "").toLowerCase();
+        return type.includes("start") || type.includes("end");
+      };
+      const isGatewayNode = (node) => String(node?.type || "").toLowerCase().includes("gateway");
+      const existingLaneWorkNodes = (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : []).filter(
+        (node) => String(node?.laneId || "") === String(laneId || "") && !isStartOrEndNode(node),
+      );
+      const shouldFullRenderForInitialStartLabel = Boolean(
+        hasStartEventInUpdatedEngine &&
+          existingLaneWorkNodes.length === 0 &&
+          newNodesFromAppend.length === 1 &&
+          !isStartOrEndNode(newNodesFromAppend[0]) &&
+          !isGatewayNode(newNodesFromAppend[0]),
+      );
+      const canPatchCanvas = Boolean(modeler && xml && !shouldFullRenderForInitialStartLabel);
 
       const applyEngineDiffToCanvas = (prevEngine, nextEngine, activeModeler) =>
         applyIncrementalAppend({

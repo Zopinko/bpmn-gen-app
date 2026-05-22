@@ -1,4 +1,12 @@
 from services.bpmn_svc import generate_bpmn_from_json
+import xml.etree.ElementTree as ET
+
+
+NS = {
+    "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
+    "dc": "http://www.omg.org/spec/DD/20100524/DC",
+    "di": "http://www.omg.org/spec/DD/20100524/DI",
+}
 
 
 def test_generate_bpmn_includes_engine_ids():
@@ -26,3 +34,42 @@ def test_generate_bpmn_includes_engine_ids():
     assert 'data-engine-id="End_1"' in xml
     assert 'data-engine-id="Flow_1"' in xml
     assert 'data-engine-id="F_Start_1_Task_1_0"' in xml
+
+
+def test_start_event_label_bounds_stay_attached_after_first_task():
+    engine = {
+        "processId": "Process_1",
+        "name": "Test",
+        "lanes": [{"id": "Lane_A", "name": "Role A"}],
+        "nodes": [
+            {"id": "Start_1", "type": "startEvent", "laneId": "Lane_A", "name": "Start"},
+            {"id": "Task_1", "type": "task", "laneId": "Lane_A", "name": "First task"},
+        ],
+        "flows": [{"id": "Flow_1", "source": "Start_1", "target": "Task_1"}],
+    }
+
+    root = ET.fromstring(generate_bpmn_from_json(engine))
+    start_shape = root.find(".//bpmndi:BPMNShape[@bpmnElement='Start_1']", NS)
+    assert start_shape is not None
+    start_bounds = start_shape.find("dc:Bounds", NS)
+    label_bounds = start_shape.find("bpmndi:BPMNLabel/dc:Bounds", NS)
+
+    assert start_bounds is not None
+    assert label_bounds is not None
+
+    event_x = float(start_bounds.attrib["x"])
+    event_y = float(start_bounds.attrib["y"])
+    event_w = float(start_bounds.attrib["width"])
+    event_h = float(start_bounds.attrib["height"])
+    label_x = float(label_bounds.attrib["x"])
+    label_y = float(label_bounds.attrib["y"])
+    label_w = float(label_bounds.attrib["width"])
+
+    event_center_x = event_x + event_w / 2
+    label_center_x = label_x + label_w / 2
+    flow_edge = root.find(".//bpmndi:BPMNEdge[@bpmnElement='Flow_1']", NS)
+    flow_y = float(flow_edge.find("di:waypoint", NS).attrib["y"])
+
+    assert abs(label_center_x - event_center_x) <= 0.5
+    assert label_y == event_y + event_h + 2
+    assert label_y > flow_y + 12

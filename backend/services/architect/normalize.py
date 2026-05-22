@@ -253,6 +253,7 @@ def _build_ix(
     by_id: Dict[str, Dict[str, Any]] = {
         str(node["id"]): node for node in engine_json["nodes"]
     }
+    valid_flows: List[Dict[str, Any]] = []
     incoming: Dict[str, List[str]] = {
         str(node["id"]): [] for node in engine_json["nodes"]
     }
@@ -260,10 +261,14 @@ def _build_ix(
         str(node["id"]): [] for node in engine_json["nodes"]
     }
     for flow in engine_json["flows"]:
-        source_id = str(flow["source"])
-        target_id = str(flow["target"])
+        source_id = str(flow.get("source") or "")
+        target_id = str(flow.get("target") or "")
+        if source_id not in by_id or target_id not in by_id:
+            continue
+        valid_flows.append(flow)
         outgoing[source_id].append(flow["id"])
         incoming[target_id].append(flow["id"])
+    engine_json["flows"] = valid_flows
     return by_id, incoming, outgoing
 
 

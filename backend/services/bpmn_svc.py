@@ -1535,6 +1535,27 @@ def _add_di(
         {"id": "BPMNPlane_1", "bpmnElement": collab_id},
     )
 
+    def _coord(value: float) -> str:
+        return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
+
+    def _start_event_label_bounds(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+    ) -> Dict[str, str]:
+        label_width = min(110.0, max(60.0, len(text.strip()) * 6.0 + 12.0))
+        label_height = 16.0
+        label_x = x + (w / 2.0) - (label_width / 2.0)
+        label_y = y + h + 2.0
+        return {
+            "x": _coord(label_x),
+            "y": _coord(label_y),
+            "width": _coord(label_width),
+            "height": _coord(label_height),
+        }
+
     lane_for_node = layout.get("lane_for_node", {})
     # pool
     px, py, pw, ph = layout["pool_bounds"]
@@ -1621,6 +1642,13 @@ def _add_di(
             T("dc", "Bounds"),
             {"x": str(x), "y": str(y), "width": str(w), "height": str(h)},
         )
+        if _normalize_node_type(n) == "startEvent" and str(n.get("name") or "").strip():
+            label = ET.SubElement(shp, T("bpmndi", "BPMNLabel"))
+            ET.SubElement(
+                label,
+                T("dc", "Bounds"),
+                _start_event_label_bounds(float(x), float(y), float(w), float(h), str(n.get("name") or "")),
+            )
 
     node_bounds: Dict[str, tuple[float, float, float, float]] = {
         nid: (x, y, x + w, y + h) for nid, (x, y, w, h) in pos.items()

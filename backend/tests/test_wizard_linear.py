@@ -66,6 +66,25 @@ def test_lane_append_linear_steps_split_on_commas():
     assert flows[0]["target"] == tasks[1]["id"]
 
 
+def test_lane_append_ignores_orphan_flows_from_stale_client_state():
+    engine = _demo_engine()
+    engine["flows"] = [
+        {"id": "stale_flow", "source": "task_missing", "target": "also_missing"},
+    ]
+
+    built = append_tasks_to_lane_from_description(
+        LaneAppendRequest(
+            lane_id="lane_1",
+            description="Receive request",
+            engine_json=engine,
+        )
+    )["engine_json"]
+
+    flow_ids = {flow.get("id") for flow in built.get("flows", [])}
+    assert "stale_flow" not in flow_ids
+    assert [task.get("name") for task in _by_type(built, "task")] == ["Receive request"]
+
+
 def test_lane_append_conditional_splits_multiple_tasks_per_branch():
     built = append_tasks_to_lane_from_description(
         LaneAppendRequest(

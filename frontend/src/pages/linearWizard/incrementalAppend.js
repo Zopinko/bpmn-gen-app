@@ -231,17 +231,42 @@ export function applyIncrementalAppend({
     return bo.$attrs;
   };
 
+  const getStartEventLabelBounds = (el) => {
+    const name = String(el?.businessObject?.name || "");
+    const width = Math.min(110, Math.max(90, Math.round(name.length * 6) + 12));
+    const height = 20;
+    return {
+      x: Math.round(Number(el?.x || 0) + Number(el?.width || 0) / 2 - width / 2),
+      y: Math.round(Number(el?.y || 0) + Number(el?.height || 0) + 2),
+      width,
+      height,
+    };
+  };
+
+  const moveLabelToBounds = (labelEl, bounds) => {
+    if (!labelEl || !bounds || typeof modeling.moveShape !== "function") return;
+    const dx = Math.round(Number(bounds.x || 0) - Number(labelEl.x || 0));
+    const dy = Math.round(Number(bounds.y || 0) - Number(labelEl.y || 0));
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+    try {
+      modeling.moveShape(labelEl, { x: dx, y: dy }, labelEl.parent);
+    } catch {
+      // ignore direct label move errors
+    }
+  };
+
   const positionEventLabel = (el) => {
     if (!el || !el.businessObject?.name) return;
     if (typeof modeling.updateLabel !== "function") return;
     const elType = String(el?.businessObject?.$type || el?.type || "");
+    const isStartEvent = elType.includes("StartEvent");
     const labelEl = el?.label || (Array.isArray(el?.labels) ? el.labels[0] : null);
-    const currentW = Number(labelEl?.width || 0);
     const currentH = Number(labelEl?.height || 0);
-    const computedW = Math.max(80, Math.round((el.businessObject.name || "").length * 6));
-    const w = elType.includes("StartEvent") && currentW > 0 ? Math.max(computedW, currentW) : computedW;
-    const h = currentH > 0 ? currentH : 28;
-    const bounds = {
+    const startBounds = isStartEvent ? getStartEventLabelBounds(el) : null;
+    const computedW = isStartEvent ? startBounds.width : Math.max(80, Math.round((el.businessObject.name || "").length * 6));
+    const w = isStartEvent ? computedW : computedW;
+    const h = isStartEvent ? startBounds.height : currentH > 0 ? currentH : 28;
+    const bounds = startBounds || {
       x: (el.x || 0) - w / 2 + (el.width || 0) / 2,
       y: (el.y || 0) + (el.height || 0) + 6,
       width: w,
@@ -249,9 +274,18 @@ export function applyIncrementalAppend({
     };
     try {
       modeling.updateLabel(el, el.businessObject.name, bounds);
+      if (isStartEvent) {
+        moveLabelToBounds(getExternalLabel(el), bounds);
+      }
     } catch {
       // ignore label placement errors
     }
+  };
+  const positionStartEventLabel = (el) => {
+    if (!el || !el.businessObject?.name) return;
+    const elType = String(el?.businessObject?.$type || el?.type || "");
+    if (!elType.includes("StartEvent")) return;
+    positionEventLabel(el);
   };
   const positionGatewayLabel = (el) => {
     if (!el || !el.businessObject?.name) return;
@@ -1502,17 +1536,16 @@ export function applyIncrementalAppend({
     });
   }
 
-  // Freeze existing StartEvent external label positions in touched lanes.
+  // Keep existing StartEvent external labels visually attached to the event after append/re-route.
   frozenStartLabelBounds.forEach((savedBounds, startId) => {
     const startEl = elementRegistry.get(startId);
     if (!startEl || !startEl.businessObject?.name) return;
     const labelEl = getExternalLabel(startEl);
-    if (!labelEl) return;
-    const preferredY = Number(startEl.y || 0) + Number(startEl.height || 0) + 2;
-    const restoreBounds = {
-      ...savedBounds,
-      y: preferredY,
-    };
+    if (!labelEl) {
+      positionStartEventLabel(startEl);
+      return;
+    }
+    const restoreBounds = getStartEventLabelBounds(startEl);
     const currentBounds = {
       x: Number(labelEl.x || 0),
       y: Number(labelEl.y || 0),
@@ -1527,9 +1560,21 @@ export function applyIncrementalAppend({
     if (!changed) return;
     try {
       modeling.updateLabel(startEl, startEl.businessObject.name, restoreBounds);
+      moveLabelToBounds(getExternalLabel(startEl), restoreBounds);
     } catch {
       // ignore label restore errors
     }
+  });
+  touchedLaneIds.forEach((laneId) => {
+    const laneEl = laneById.get(laneId);
+    if (!laneEl) return;
+    elementRegistry
+      .getAll()
+      .filter((el) => {
+        const type = String(el?.businessObject?.$type || el?.type || "");
+        return type.includes("StartEvent") && isInLane(el, laneEl);
+      })
+      .forEach(positionStartEventLabel);
   });
 
   return ok({
