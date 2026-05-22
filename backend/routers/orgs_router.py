@@ -522,6 +522,8 @@ def get_org_model(org_model_id: str, org_id: str | None = None, current_user: Au
     org_id = _resolve_org_id(current_user, org_id)
     try:
         return load_org_model(org_id, org_model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenajdeny.")
 
@@ -555,5 +557,8 @@ def update_org_model(
         model["generator_input"] = generator_input
     if isinstance(process_meta, dict):
         model["process_meta"] = process_meta
-    saved = save_org_model(org_id, org_model_id, model)
+    try:
+        saved = save_org_model(org_id, org_model_id, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "modelId": saved.get("id"), "orgId": org_id}

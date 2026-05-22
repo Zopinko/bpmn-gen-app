@@ -61,3 +61,15 @@ def test_import_endpoint_returns_engine_json():
     engine = data.get("engine_json")
     assert engine and engine.get("processId") == "Process_1"
     assert any(n.get("type") == "exclusiveGateway" for n in engine.get("nodes", []))
+
+
+def test_import_endpoint_rejects_oversized_upload():
+    oversized_xml = "<definitions>" + ("A" * 1_100_000) + "</definitions>"
+
+    resp = client.post(
+        "/wizard/import-bpmn",
+        files={"file": ("large.bpmn", oversized_xml, "application/xml")},
+    )
+
+    assert resp.status_code == 413
+    assert "too large" in resp.json()["detail"].lower()

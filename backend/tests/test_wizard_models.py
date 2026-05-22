@@ -1,6 +1,7 @@
 import os
+import pytest
 from fastapi.testclient import TestClient
-from services import model_storage
+from services import model_storage, org_models_storage
 
 
 # Set temp storage dir before creating client (respects env override)
@@ -160,6 +161,113 @@ def test_rename_model(tmp_path):
         assert fetched.status_code == 200
         fetched_body = fetched.json()
         assert fetched_body.get("process_meta", {}).get("owner") == "Tester"
+    finally:
+        if old_env is None:
+            os.environ.pop("BPMN_MODELS_DIR", None)
+        else:
+            os.environ["BPMN_MODELS_DIR"] = old_env
+
+
+def test_save_model_accepts_safe_slug_and_uuid_ids(tmp_path):
+    tmp_dir, old_env = _setup_tmp_dir(tmp_path)
+    try:
+        slug_model = model_storage.save_model(
+            name="Slug",
+            engine_json=_sample_engine(),
+            diagram_xml="<definitions></definitions>",
+            model_id="demo-model_01",
+        )
+        uuid_model = model_storage.save_model(
+            name="UUID",
+            engine_json=_sample_engine(),
+            diagram_xml="<definitions></definitions>",
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+        )
+
+        assert slug_model["id"] == "demo-model_01"
+        assert uuid_model["id"] == "123e4567-e89b-12d3-a456-426614174000"
+        assert (tmp_dir / "demo-model_01.json").exists()
+        assert (tmp_dir / "123e4567-e89b-12d3-a456-426614174000.json").exists()
+    finally:
+        if old_env is None:
+            os.environ.pop("BPMN_MODELS_DIR", None)
+        else:
+            os.environ["BPMN_MODELS_DIR"] = old_env
+
+
+@pytest.mark.parametrize(
+    "unsafe_id",
+    [
+        "../outside",
+        "..\\outside",
+        "nested/path",
+        "nested\\path",
+        ".hidden",
+        "bad.id",
+        "bad id",
+        "bad$id",
+        "",
+    ],
+)
+def test_model_storage_rejects_unsafe_model_ids(tmp_path, unsafe_id):
+    tmp_dir, old_env = _setup_tmp_dir(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            model_storage.save_model(
+                name="Unsafe",
+                engine_json=_sample_engine(),
+                diagram_xml="<definitions></definitions>",
+                model_id=unsafe_id,
+            )
+        assert not list(tmp_dir.rglob("*.json"))
+    finally:
+        if old_env is None:
+            os.environ.pop("BPMN_MODELS_DIR", None)
+        else:
+            os.environ["BPMN_MODELS_DIR"] = old_env
+
+
+def test_wizard_model_endpoint_rejects_unsafe_model_id(tmp_path):
+    _tmp_dir, old_env = _setup_tmp_dir(tmp_path)
+    try:
+        client = _make_client()
+        payload = {
+            "id": "bad.id",
+            "name": "Unsafe",
+            "engine_json": _sample_engine(),
+            "diagram_xml": "<definitions></definitions>",
+        }
+
+        create_resp = client.post("/wizard/models", json=payload)
+        get_resp = client.get("/wizard/models/bad.id")
+
+        assert create_resp.status_code == 400
+        assert get_resp.status_code == 400
+    finally:
+        if old_env is None:
+            os.environ.pop("BPMN_MODELS_DIR", None)
+        else:
+            os.environ["BPMN_MODELS_DIR"] = old_env
+
+
+def test_model_storage_asserts_resolved_path_stays_inside_scope(tmp_path):
+    tmp_dir, old_env = _setup_tmp_dir(tmp_path)
+    try:
+        outside_path = tmp_path / "outside.json"
+        with pytest.raises(ValueError):
+            model_storage._assert_path_within_directory(outside_path, tmp_dir)
+    finally:
+        if old_env is None:
+            os.environ.pop("BPMN_MODELS_DIR", None)
+        else:
+            os.environ["BPMN_MODELS_DIR"] = old_env
+
+
+def test_org_model_storage_rejects_unsafe_model_id(tmp_path):
+    _tmp_dir, old_env = _setup_tmp_dir(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            org_models_storage.load_org_model("org-1", "../outside")
     finally:
         if old_env is None:
             os.environ.pop("BPMN_MODELS_DIR", None)

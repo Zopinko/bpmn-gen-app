@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
 
+from services.model_storage import _assert_path_within_directory, validate_model_id
 from services.storage_io import atomic_write_json
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,9 @@ def org_models_dir(org_id: str) -> Path:
 
 
 def org_model_path(org_id: str, model_id: str) -> Path:
-    return org_models_dir(org_id) / f"{model_id}.json"
+    directory = org_models_dir(org_id)
+    safe_id = validate_model_id(model_id)
+    return _assert_path_within_directory(directory / f"{safe_id}.json", directory)
 
 
 def _now_iso() -> str:
@@ -78,6 +81,7 @@ def load_org_model(org_id: str, org_model_id: str) -> Dict[str, Any]:
 
 
 def save_org_model(org_id: str, org_model_id: str, model: Dict[str, Any]) -> Dict[str, Any]:
+    org_model_id = validate_model_id(org_model_id)
     path = org_model_path(org_id, org_model_id)
     created_at = model.get("created_at")
     if path.exists():

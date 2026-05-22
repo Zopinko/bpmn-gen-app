@@ -244,9 +244,23 @@ const buildProcessTemplates = (t) => [
     input: t("wizard.process_template_onboarding_input"),
     output: t("wizard.process_template_onboarding_output"),
   },
+  {
+    id: "simple_task",
+    label: t("wizard.process_template_simple_task_label"),
+    processName: t("wizard.process_template_simple_task_name"),
+    roles: t("wizard.process_template_simple_task_roles"),
+    trigger: t("wizard.process_template_simple_task_trigger"),
+    input: t("wizard.process_template_simple_task_input"),
+    output: t("wizard.process_template_simple_task_output"),
+  },
 ];
 
 const buildLaneTemplates = (t) => [
+  {
+    id: "simple_basic",
+    label: t("wizard.lane_template_simple_label"),
+    text: t("wizard.lane_template_simple_text"),
+  },
   {
     id: "approve_basic",
     label: t("wizard.lane_template_approval_label"),
@@ -7857,10 +7871,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, [laneDescription, laneHasWarnings]);
   const laneApplyButtonLabel = useMemo(() => {
     const roleName = String(selectedLane?.name || selectedLane?.id || "").trim();
-    if (!roleName) return "Vytvoriť aktivity pre túto rolu";
+    if (!roleName) return t("wizard.lane_apply_for_current_role");
     const compactName = roleName.length > 28 ? `${roleName.slice(0, 28)}...` : roleName;
-    return `Vytvoriť aktivity pre: ${compactName}`;
-  }, [selectedLane]);
+    return t("wizard.lane_apply_for_role", { role: compactName });
+  }, [selectedLane, t]);
   useEffect(() => {
     if (!laneWarningCount) {
       setLaneHelpTipDismissed(false);

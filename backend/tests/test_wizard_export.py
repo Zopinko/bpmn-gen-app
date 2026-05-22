@@ -43,3 +43,29 @@ def test_export_bpmn_download_response():
     # Lane and flowNodeRef wiring should be present
     assert 'lane id="Hlavna"' in xml or 'lane id="Lane_1"' in xml
     assert '<sequenceFlow id="flow_2" sourceRef="task_1" targetRef="end_1"' in xml
+
+
+def test_public_generate_rejects_oversized_json_payload():
+    engine = _sample_engine()
+    engine["name"] = "A" * 300_000
+
+    resp = client.post("/generate", json=engine)
+
+    assert resp.status_code == 413
+    assert "too large" in resp.json()["detail"].lower()
+
+
+def test_linear_wizard_rejects_oversized_text_payload():
+    resp = client.post(
+        "/wizard/linear",
+        json={
+            "process_name": "Oversized",
+            "roles": ["Worker"],
+            "start_trigger": "A" * 300_000,
+            "output": "Done",
+            "steps": ["Step"],
+        },
+    )
+
+    assert resp.status_code == 413
+    assert "too large" in resp.json()["detail"].lower()

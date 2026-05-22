@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,15 @@ from services.storage_io import atomic_write_json
 raw_dir = os.getenv("BPMN_MODELS_DIR")
 _base_dir = Path(raw_dir) if raw_dir else Path("data/models")
 logger = logging.getLogger(__name__)
+
+_SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_SAFE_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{12}$"
+)
 
 
 def set_base_dir(path: str | Path) -> None:
@@ -27,8 +37,34 @@ def _models_dir() -> Path:
     return _base_dir
 
 
+def validate_model_id(model_id: str) -> str:
+    cleaned = str(model_id or "").strip()
+    if not cleaned:
+        raise ValueError("model_id is required.")
+    if "." in cleaned or "/" in cleaned or "\\" in cleaned:
+        raise ValueError("model_id contains unsafe path characters.")
+    if not (_SAFE_UUID_RE.fullmatch(cleaned) or _SAFE_SLUG_RE.fullmatch(cleaned)):
+        raise ValueError("model_id must be a UUID or safe slug.")
+    return cleaned
+
+
+def _assert_path_within_directory(path: Path, directory: Path) -> Path:
+    resolved_directory = directory.resolve()
+    resolved_path = path.resolve()
+    try:
+        resolved_path.relative_to(resolved_directory)
+    except ValueError as exc:
+        raise ValueError("Resolved model path escapes the storage directory.") from exc
+    return resolved_path
+
+
+def _safe_model_path(directory: Path, model_id: str) -> Path:
+    safe_id = validate_model_id(model_id)
+    return _assert_path_within_directory(directory / f"{safe_id}.json", directory)
+
+
 def _model_path(model_id: str) -> Path:
-    return _models_dir() / f"{model_id}.json"
+    return _safe_model_path(_models_dir(), model_id)
 
 
 def _user_models_dir(user_id: str) -> Path:
@@ -52,7 +88,8 @@ def delete_user_storage(user_id: str) -> int:
 
 
 def _user_model_path(user_id: str, model_id: str) -> Path:
-    return _user_models_dir(user_id) / f"{model_id}.json"
+    directory = _user_models_dir(user_id)
+    return _safe_model_path(directory, model_id)
 
 
 def _scoped_model_path(model_id: str, user_id: Optional[str] = None) -> Path:
@@ -75,7 +112,8 @@ def save_model(
     user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create or update a model. Returns full model."""
-    model_id = model_id or str(uuid4())
+    model_id = str(uuid4()) if model_id is None else model_id
+    model_id = validate_model_id(model_id)
     path = _user_model_path(user_id, model_id) if user_id else _model_path(model_id)
     created_at = _now_iso()
     existing_generator_input: Optional[Dict[str, Any]] = None

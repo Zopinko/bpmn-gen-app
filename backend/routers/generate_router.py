@@ -1,4 +1,8 @@
+import json
+import logging
+
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
+from pydantic import BaseModel
 from services.bpmn_svc import (
     append_tasks_to_lane_from_description,
     build_linear_engine_from_wizard,
@@ -28,12 +32,14 @@ from schemas.wizard import (
     WizardModelDetail,
     WizardModelList,
 )
-import logging
 from auth.deps import require_user
 from auth.service import AuthUser, resolve_accessible_org_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+MAX_GENERATION_PAYLOAD_BYTES = 256 * 1024
+MAX_BPMN_UPLOAD_BYTES = 1024 * 1024
 
 
 @router.get("/")
@@ -49,6 +55,34 @@ def _as_bpmn_download(xml_string: str, filename: str):
     )
 
 
+def _payload_to_jsonable(payload):
+    if isinstance(payload, BaseModel):
+        return payload.model_dump(mode="json")
+    return payload
+
+
+def _enforce_generation_payload_size(payload, limit: int = MAX_GENERATION_PAYLOAD_BYTES) -> None:
+    try:
+        raw = json.dumps(_payload_to_jsonable(payload), ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return
+    if len(raw.encode("utf-8")) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Request payload is too large. Limit is {limit} bytes.",
+        )
+
+
+async def _read_limited_upload(file: UploadFile, limit: int = MAX_BPMN_UPLOAD_BYTES) -> bytes:
+    content = await file.read(limit + 1)
+    if len(content) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"BPMN upload is too large. Limit is {limit} bytes.",
+        )
+    return content
+
+
 @router.post("/wizard/linear", response_model=LinearWizardResponse)
 def generate_linear_wizard_diagram(
     payload: LinearWizardRequest,
@@ -56,6 +90,7 @@ def generate_linear_wizard_diagram(
     """
     Build a simple linear BPMN diagram from a wizard payload without any AI calls.
     """
+    _enforce_generation_payload_size(payload)
     built = build_linear_engine_from_wizard(payload, return_issues=True)
     engine_json = built["engine_json"]
     issues = built.get("issues") or []
@@ -65,6 +100,7 @@ def generate_linear_wizard_diagram(
 
 @router.post("/wizard/lane/append", response_model=LaneAppendResponse)
 def wizard_append_lane(payload: LaneAppendRequest) -> LaneAppendResponse:
+    _enforce_generation_payload_size(payload)
     built = append_tasks_to_lane_from_description(payload)
     engine_json = normalize_engine_payload(built["engine_json"])
     if not str(engine_json.get("name") or "").strip():
@@ -84,6 +120,7 @@ def wizard_export_bpmn(payload: dict = Body(...)):
     Ak klient pošle obálku {"engine_json": {...}}, zoberieme vnútro;
     inak očakávame priamo engine_json.
     """
+    _enforce_generation_payload_size(payload)
     engine = payload.get("engine_json") if isinstance(payload, dict) else None
     if not isinstance(engine, dict):
         engine = payload
@@ -104,7 +141,7 @@ async def wizard_import_bpmn(file: UploadFile = File(...)):
     """
     Načíta BPMN XML (.bpmn) a skonvertuje ho na engine_json použiteľné vo wizarde.
     """
-    content = await file.read()
+    content = await _read_limited_upload(file)
     if not content:
         raise HTTPException(status_code=400, detail="Súbor je prázdny.")
 
@@ -142,15 +179,18 @@ def create_wizard_model(
         raise HTTPException(status_code=400, detail="diagram_xml je povinné a musí byť string.")
 
     validate_payload(engine)
-    model = storage_save_model(
-        name=name,
-        engine_json=engine,
-        diagram_xml=xml,
-        model_id=payload.get("id"),
-        generator_input=generator_input,
-        process_meta=process_meta,
-        user_id=current_user.id,
-    )
+    try:
+        model = storage_save_model(
+            name=name,
+            engine_json=engine,
+            diagram_xml=xml,
+            model_id=payload.get("id"),
+            generator_input=generator_input,
+            process_meta=process_meta,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "id": model["id"],
         "name": model["name"],
@@ -163,6 +203,8 @@ def create_wizard_model(
 def get_wizard_model(model_id: str, current_user: AuthUser = Depends(require_user)):
     try:
         model = storage_load_model(model_id, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
     return model
@@ -193,9 +235,14 @@ def list_wizard_models(
 def delete_wizard_model(model_id: str, current_user: AuthUser = Depends(require_user)):
     try:
         storage_load_model(model_id, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
-    delete_model(model_id, user_id=current_user.id)
+    try:
+        delete_model(model_id, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
 
 
@@ -211,18 +258,23 @@ def rename_wizard_model(
 
     try:
         existing = storage_load_model(model_id, user_id=current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Model nenájdený.")
 
-    updated = storage_save_model(
-        name=new_name.strip(),
-        engine_json=existing.get("engine_json") or {},
-        diagram_xml=existing.get("diagram_xml") or "",
-        model_id=model_id,
-        generator_input=existing.get("generator_input"),
-        process_meta=existing.get("process_meta"),
-        user_id=current_user.id,
-    )
+    try:
+        updated = storage_save_model(
+            name=new_name.strip(),
+            engine_json=existing.get("engine_json") or {},
+            diagram_xml=existing.get("diagram_xml") or "",
+            model_id=model_id,
+            generator_input=existing.get("generator_input"),
+            process_meta=existing.get("process_meta"),
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return updated
 
 
@@ -265,6 +317,7 @@ def put_project_notes(
 
 @router.post("/generate")
 async def generate(payload: dict = Body(...)):
+    _enforce_generation_payload_size(payload)
     if not payload:
         raise HTTPException(status_code=400, detail="Payload je povinný.")
 
@@ -295,6 +348,7 @@ async def generate(payload: dict = Body(...)):
 
 @router.post("/layout/reflow")
 async def reflow_layout(payload: dict = Body(...)):
+    _enforce_generation_payload_size(payload)
     if not payload:
         raise HTTPException(status_code=400, detail="Payload je povinný.")
 
@@ -333,6 +387,7 @@ async def autogenerate(payload: dict = Body(...)):
     - expects payload with engine_json
     - generates BPMN XML and returns it as download
     """
+    _enforce_generation_payload_size(payload)
     engine = payload.get("engine_json") if isinstance(payload, dict) else None
     if not isinstance(engine, dict):
         raise HTTPException(
