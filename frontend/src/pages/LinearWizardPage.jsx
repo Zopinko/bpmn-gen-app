@@ -7418,13 +7418,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const orgBreadcrumbItems = useMemo(() => {
     if (!orgTree) return [];
     const path = activeOrgPath && activeOrgPath.length ? activeOrgPath : [orgTree];
-    return path.map((node) => ({
-      id: node.id,
-      name: node.name || "Model organizacie",
-      type: node.type,
-      modelId: node?.processRef?.modelId,
-    }));
-  }, [orgTree, activeOrgPath]);
+    return path
+      .filter((node) => node?.id !== "root")
+      .map((node) => ({
+        id: node.id,
+        name: node.name || t("wizard.process_fallback_name"),
+        type: node.type,
+        modelId: node?.processRef?.modelId,
+      }));
+  }, [orgTree, activeOrgPath, t]);
 
   const handleOrgBreadcrumbClick = (item) => {
     if (!item) return;
@@ -8696,7 +8698,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   </div>
                 ) : null}
                 <div className="org-tree" ref={orgTreeRef}>
-                  {renderOrgTreeNode(filteredOrgTree)}
+                  {filteredOrgTree?.id === "root"
+                    ? (filteredOrgTree.children || []).map((child) => renderOrgTreeNode(child, 1))
+                    : renderOrgTreeNode(filteredOrgTree, 1)}
                 </div>
               </div>
             </div>
