@@ -4350,7 +4350,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (email) {
       return { createdByName: email, createdByEmail: email };
     }
-    return { createdByName: "Neznamy pouzivatel" };
+    return { createdByName: t("wizard.notes_actor_unknown") };
   };
 
   const formatNoteMetaLine = (item) => {
@@ -4359,7 +4359,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       String(item.createdByName || item.created_by_name || item.createdByEmail || item.created_by_email || "").trim();
     const createdAt = item.createdAt || item.created_at;
     const parts = [];
-    if (actor) parts.push(`Pridal: ${actor}`);
+    if (actor) parts.push(t("wizard.notes_added_by", { actor }));
     if (createdAt) {
       const when = formatDateTime(createdAt);
       if (when) parts.push(when);
@@ -4862,7 +4862,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
     } catch (e) {
       setProjectActivityItems([]);
-      setProjectActivityError(e?.message || "Nepodarilo sa nacitat aktivitu.");
+      setProjectActivityError(e?.message || t("wizard.activity_load_error"));
     } finally {
       if (!silent) {
         setProjectActivityLoading(false);
@@ -4871,22 +4871,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const describeProjectActivity = (item) => {
-    const actor = item?.actor_email || "Neznamy pouzivatel";
-    const name = item?.entity_name || item?.entity_id || "polozka";
+    const actor = item?.actor_email || t("wizard.activity_actor_unknown");
+    const name = item?.entity_name || item?.entity_id || t("wizard.activity_entity_unknown");
     const type = String(item?.event_type || "").toLowerCase();
-    if (type === "process_created") return `${actor} vytvoril proces "${name}".`;
-    if (type === "process_renamed") return `${actor} premenoval proces na "${name}".`;
-    if (type === "process_moved") return `${actor} presunul proces "${name}".`;
-    if (type === "process_deleted") return `${actor} odstranil proces "${name}".`;
-    if (type === "model_pushed_to_org") return `${actor} pushol model "${name}" do organizacie.`;
-    if (type === "member_added") return `${actor} pridal clena "${name}".`;
-    if (type === "member_removed") return `${actor} odstranil clena "${name}".`;
-    if (type === "invite_link_created") return `${actor} vytvoril invite link.`;
-    if (type === "invite_link_regenerated") return `${actor} regeneroval invite link.`;
-    if (type === "delete_requested") return `${actor} poziadal o odstranenie procesu "${name}".`;
-    if (type === "delete_request_approved") return `${actor} schvalil odstranenie procesu "${name}".`;
-    if (type === "delete_request_rejected") return `${actor} zamietol odstranenie procesu "${name}".`;
-    return `${actor} vykonal akciu "${type || "unknown"}".`;
+    const values = { actor, name, type: type || "unknown" };
+    if (type === "process_created") return t("wizard.activity_event_process_created", values);
+    if (type === "process_renamed") return t("wizard.activity_event_process_renamed", values);
+    if (type === "process_moved") return t("wizard.activity_event_process_moved", values);
+    if (type === "process_deleted") return t("wizard.activity_event_process_deleted", values);
+    if (type === "model_pushed_to_org") return t("wizard.activity_event_model_pushed_to_org", values);
+    if (type === "member_added") return t("wizard.activity_event_member_added", values);
+    if (type === "member_removed") return t("wizard.activity_event_member_removed", values);
+    if (type === "invite_link_created") return t("wizard.activity_event_invite_link_created", values);
+    if (type === "invite_link_regenerated") return t("wizard.activity_event_invite_link_regenerated", values);
+    if (type === "delete_requested") return t("wizard.activity_event_delete_requested", values);
+    if (type === "delete_request_approved") return t("wizard.activity_event_delete_request_approved", values);
+    if (type === "delete_request_rejected") return t("wizard.activity_event_delete_request_rejected", values);
+    return t("wizard.activity_event_unknown", values);
   };
 
   const getProjectActivityCategory = useCallback((item) => {
@@ -4922,24 +4923,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const type = String(item?.event_type || "").toLowerCase();
       if (type === "delete_requested") {
         return isPendingDeleteRequest(item)
-          ? { label: "Caka na rozhodnutie", tone: "pending" }
-          : { label: "Vybavene", tone: "muted" };
+          ? { label: t("wizard.activity_status_pending"), tone: "pending" }
+          : { label: t("wizard.activity_status_done"), tone: "muted" };
       }
       if (type === "delete_request_approved") {
-        return { label: "Schvalene", tone: "approved" };
+        return { label: t("wizard.activity_status_approved"), tone: "approved" };
       }
       if (type === "delete_request_rejected") {
-        return { label: "Zamietnute", tone: "rejected" };
+        return { label: t("wizard.activity_status_rejected"), tone: "rejected" };
       }
       if (type === "process_deleted") {
-        return { label: "Odstranene", tone: "danger" };
+        return { label: t("wizard.activity_status_deleted"), tone: "danger" };
       }
       if (type === "model_pushed_to_org") {
-        return { label: "Push do org", tone: "info" };
+        return { label: t("wizard.activity_status_pushed"), tone: "info" };
       }
       return null;
     },
-    [isPendingDeleteRequest],
+    [isPendingDeleteRequest, t],
   );
 
   const getProjectActivityCardClass = useCallback(
@@ -6252,8 +6253,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return null;
   };
 
-  const openMoveProcessModal = (node) => {
-    if (!node || node.type !== "process") return;
+  const openMoveOrgNodeModal = (node) => {
+    if (!node || !["folder", "process"].includes(node.type) || node.id === "root") return;
     if (!activeOrgCapabilities.canEditOrgModels) {
       setOrgError(t("wizard.org_edit_denied"));
       return;
@@ -6280,15 +6281,17 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   }, [activeOrgId]);
 
-  const openDeleteProcessModal = (node) => {
-    if (!node || node.type !== "process") return;
+  const openDeleteOrgNodeModal = (node) => {
+    if (!node || !["folder", "process"].includes(node.type) || node.id === "root") return;
     setOrgMenuNodeId(null);
     setOrgDeleteNode(node);
     setOrgDeleteRequestReason("");
     setOrgDeleteError(
       activeOrgCapabilities.canDirectDeleteOrgProcess
         ? null
-        : "Ako člen organizácie nemôžeš proces odstrániť priamo. Pošli túto požiadavku vlastníkovi.",
+        : node.type === "process"
+          ? t("wizard.delete_process_cannot_direct", { name: node.name || "-" })
+          : t("wizard.delete_folder_cannot_direct", { name: node.name || "-" }),
     );
     setOrgDeleteConfirmOpen(true);
     setOrgDeleteFinalConfirmOpen(false);
@@ -6376,8 +6379,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     closeOrgVersionsModal();
   };
 
-  const handleRenameOrgProcess = async (node) => {
-    if (!node || node.type !== "process") return;
+  const handleRenameOrgNode = async (node) => {
+    if (!node || !["folder", "process"].includes(node.type) || node.id === "root") return;
     if (!activeOrgId) {
       setOrgError(t("wizard.org_pick_or_create_first"));
       return;
@@ -6389,14 +6392,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     openWizardInputModal(
       {
         kicker: t("wizard.org_model_kicker"),
-        title: t("wizard.org_rename_title"),
-        label: t("wizard.org_rename_label"),
+        title: node.type === "folder" ? t("wizard.org_folder_rename_title") : t("wizard.org_rename_title"),
+        label: node.type === "folder" ? t("wizard.org_folder_name_label") : t("wizard.org_rename_label"),
         initialValue: node.name || "",
         confirmLabel: t("wizard.org_rename_confirm"),
       },
       async (value) => {
         const trimmed = String(value || "").trim();
-        if (!trimmed) return t("wizard.org_rename_required");
+        if (!trimmed) return node.type === "folder" ? t("wizard.org_folder_name_required") : t("wizard.org_rename_required");
         setOrgMenuNodeId(null);
         try {
           const result = await renameOrgNode(node.id, trimmed, activeOrgId);
@@ -6404,7 +6407,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           setOrgError(null);
           return null;
         } catch (e) {
-          const message = e?.message || t("wizard.org_rename_error");
+          const message =
+            e?.message ||
+            (node.type === "folder" ? t("wizard.org_folder_rename_error") : t("wizard.org_rename_error"));
           setOrgError(message);
           return message;
         }
@@ -6725,7 +6730,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setOrgPushOverwriteConfirmOpen(false);
   };
 
-  const handleConfirmMoveProcess = async () => {
+  const handleConfirmMoveOrgNode = async () => {
     if (!orgMoveNode?.id || !orgMoveTargetFolderId) return;
     if (!activeOrgId) {
       setOrgMoveError(t("wizard.org_pick_or_create_first"));
@@ -6767,7 +6772,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   };
 
-  const handleConfirmDeleteProcess = async () => {
+  const handleConfirmDeleteOrgNode = async () => {
     if (!orgDeleteNode?.id) return;
     if (!activeOrgId) {
       setOrgDeleteError(t("wizard.org_pick_or_create_first"));
@@ -6783,8 +6788,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         } else {
           await refreshOrgTree(activeOrgId);
         }
-        setInfo(t("wizard.org_process_deleted"));
+        setInfo(
+          orgDeleteNode.type === "folder"
+            ? t("wizard.org_folder_deleted")
+            : t("wizard.org_process_deleted"),
+        );
       } else {
+        if (orgDeleteNode.type === "folder") {
+          setOrgDeleteError(t("wizard.delete_folder_cannot_direct", { name: orgDeleteNode?.name || "-" }));
+          return;
+        }
         await requestOrgProcessDelete(orgDeleteNode.id, activeOrgId, orgDeleteRequestReason);
         setInfo(t("wizard.org_delete_request_sent"));
       }
@@ -6792,10 +6805,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setOrgDeleteFinalConfirmOpen(false);
       setOrgDeleteNode(null);
     } catch (e) {
-      setOrgDeleteError(e?.message || t("wizard.org_process_delete_error"));
+      setOrgDeleteError(
+        e?.message ||
+          (orgDeleteNode.type === "folder"
+            ? t("wizard.org_folder_delete_error")
+            : t("wizard.org_process_delete_error")),
+      );
     } finally {
       setOrgDeleteLoading(false);
     }
+  };
+
+  const collectFolderSubtreeIds = (node, ids = new Set()) => {
+    if (!node || node.type !== "folder") return ids;
+    ids.add(node.id);
+    (node.children || []).forEach((child) => collectFolderSubtreeIds(child, ids));
+    return ids;
   };
 
   const renderOrgFolderPickerNode = (node, depth = 0, options = {}) => {
@@ -6813,6 +6838,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         : (id) => setExpandedOrgFolders((prev) => ({ ...prev, [id]: !prev[id] }));
     const prefixDepth = Math.max(depth, 0);
     const processCount = orgProcessCountMap.get(node.id) || 0;
+    const disabledFolderIds = options.disabledFolderIds || new Set();
+    const isDisabledTarget = disabledFolderIds.has(node.id);
     return (
       <div
         key={`picker-${node.id}`}
@@ -6824,13 +6851,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           className="org-tree-row"
           role="button"
           tabIndex={0}
+          aria-disabled={isDisabledTarget ? "true" : undefined}
           onClick={() => {
+            if (isDisabledTarget) return;
             setSelectedId(node.id);
             toggleExpanded(node.id);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
+              if (isDisabledTarget) return;
               setSelectedId(node.id);
               toggleExpanded(node.id);
             }
@@ -6844,7 +6874,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             ))}
             {prefixDepth > 0 ? <span className="org-tree-prefix-connector" /> : null}
           </div>
-          <div className={`org-tree-node org-tree-node--folder ${selectedId === node.id ? "is-selected" : ""}`}>
+          <div
+            className={`org-tree-node org-tree-node--folder ${selectedId === node.id ? "is-selected" : ""} ${
+              isDisabledTarget ? "is-disabled" : ""
+            }`}
+          >
             <span className="org-tree-level-slot">
               <span className={`org-tree-level ${depth >= 1 ? `org-tree-level--l${depth}` : ""}`} aria-hidden>
                 {depth === 0 ? "ROOT" : `L${depth}`}
@@ -6887,8 +6921,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const directProcesses = rawChildren.filter((child) => child?.type === "process");
       const directFolders = rawChildren.filter((child) => child?.type === "folder");
       const orderedChildren = [...directProcesses, ...directFolders];
+      const isMenuOpen = orgMenuNodeId === node.id;
+      const canManageFolder = node.id !== "root";
       return (
-        <div key={node.id} className="org-tree-entry" data-depth={depth} style={{ "--org-depth": depth }}>
+        <div
+          key={node.id}
+          className={`org-tree-entry org-tree-entry--folder ${isMenuOpen ? "is-menu-open" : ""}`}
+          data-depth={depth}
+          style={{ "--org-depth": depth }}
+        >
           <div
             className="org-tree-row"
             data-folder-id={node.id}
@@ -6954,7 +6995,59 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {expanded ? "v" : ">"}
               </span>
             </button>
+            {canManageFolder ? (
+              <button
+                type="button"
+                className="org-tree-menu-btn"
+                aria-label={t("wizard.org_folder_menu", { defaultValue: "Layer menu" })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setOrgMenuAnchor({ x: rect.left, y: rect.top });
+                  setOrgMenuNodeId((prev) => (prev === node.id ? null : node.id));
+                }}
+              >
+                ...
+              </button>
+            ) : null}
           </div>
+          {isMenuOpen ? (
+            <div
+              className="org-tree-menu"
+              style={{
+                position: "fixed",
+                left: Math.max(12, (orgMenuAnchor?.x || 0) - 170),
+                top: Math.max(12, (orgMenuAnchor?.y || 0) - 6),
+                zIndex: 1000,
+              }}
+            >
+              <button
+                type="button"
+                className="org-tree-menu__item"
+                onClick={() => handleRenameOrgNode(node)}
+                disabled={!activeOrgCapabilities.canEditOrgModels}
+              >
+                {t("wizard.models_rename")}
+              </button>
+              <button
+                type="button"
+                className="org-tree-menu__item"
+                onClick={() => openMoveOrgNodeModal(node)}
+                disabled={!activeOrgCapabilities.canEditOrgModels}
+              >
+                {t("wizard.org_move_menu")}
+              </button>
+              <div className="org-tree-menu__divider" />
+              <button
+                type="button"
+                className="org-tree-menu__item org-tree-menu__item--danger"
+                onClick={() => openDeleteOrgNodeModal(node)}
+                disabled={!activeOrgCapabilities.canDirectDeleteOrgProcess}
+              >
+                {t("wizard.delete_process_action")}
+              </button>
+            </div>
+          ) : null}
           <div className={`org-tree-children ${expanded ? "is-open" : ""}`}>
             {orderedChildren.map((child) => renderOrgTreeNode(child, depth + 1))}
           </div>
@@ -6993,10 +7086,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         data-process-id={node.id}
         data-active={isActive ? "true" : "false"}
         style={{ "--org-depth": prefixDepth }}
-        onMouseLeave={() => {
-          setOrgMenuNodeId((prev) => (prev === node.id ? null : prev));
-          setOrgMenuAnchor(null);
-        }}
       >
         <button
           type="button"
@@ -7063,7 +7152,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <button
               type="button"
               className="org-tree-menu__item"
-              onClick={() => handleRenameOrgProcess(node)}
+              onClick={() => handleRenameOrgNode(node)}
               disabled={!activeOrgCapabilities.canEditOrgModels}
             >
               {t("wizard.models_rename")}
@@ -7074,7 +7163,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <button
               type="button"
               className="org-tree-menu__item"
-              onClick={() => openMoveProcessModal(node)}
+              onClick={() => openMoveOrgNodeModal(node)}
               disabled={!activeOrgCapabilities.canEditOrgModels}
             >
               {t("wizard.org_move_menu")}
@@ -7083,7 +7172,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <button
               type="button"
               className="org-tree-menu__item org-tree-menu__item--danger"
-              onClick={() => openDeleteProcessModal(node)}
+              onClick={() => openDeleteOrgNodeModal(node)}
             >
               {t("wizard.delete_process_action")}
             </button>
@@ -7092,6 +7181,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       </div>
     );
   };
+
+  useEffect(() => {
+    if (!orgMenuNodeId) return undefined;
+    const closeOrgMenuOnOutsidePointer = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".org-tree-menu") || target.closest(".org-tree-menu-btn")) return;
+      setOrgMenuNodeId(null);
+      setOrgMenuAnchor(null);
+    };
+    document.addEventListener("pointerdown", closeOrgMenuOnOutsidePointer);
+    return () => {
+      document.removeEventListener("pointerdown", closeOrgMenuOnOutsidePointer);
+    };
+  }, [orgMenuNodeId]);
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -9646,7 +9750,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </button>
               </div>
               <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
-                {t("wizard.process_label")}: <strong>{orgMoveNode?.name || "-"}</strong>
+                {orgMoveNode?.type === "folder" ? t("wizard.folder_label") : t("wizard.process_label")}:{" "}
+                <strong>{orgMoveNode?.name || "-"}</strong>
               </div>
               {orgMoveError ? <div className="wizard-error">{orgMoveError}</div> : null}
               {orgMoveTargetFolderId === orgMoveCurrentParentId ? (
@@ -9654,7 +9759,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   {t("wizard.org_move_same_folder")}
                 </div>
               ) : null}
-              <div className="org-tree">{renderOrgFolderPickerNode(orgTree)}</div>
+              <div className="org-tree">
+                {renderOrgFolderPickerNode(orgTree, 0, {
+                  disabledFolderIds:
+                    orgMoveNode?.type === "folder" ? collectFolderSubtreeIds(orgMoveNode) : new Set(),
+                })}
+              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                 <button className="btn" type="button" onClick={() => setOrgMoveModalOpen(false)} disabled={orgMoveLoading}>
                   {t("wizard.cancel")}
@@ -9662,7 +9772,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <button
                   className="btn btn-primary"
                   type="button"
-                  onClick={handleConfirmMoveProcess}
+                  onClick={handleConfirmMoveOrgNode}
                   disabled={orgMoveLoading || orgMoveTargetFolderId === orgMoveCurrentParentId}
                 >
                   {orgMoveLoading ? t("wizard.org_move_loading") : t("wizard.org_move_confirm")}
@@ -9825,10 +9935,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <div className="wizard-dialog-copy">
                   <p className="wizard-dialog-kicker">{t("wizard.process_label")}</p>
                   <h3 className="wizard-dialog-title">
-                    {activeOrgCapabilities.canDirectDeleteOrgProcess ? t("wizard.delete_process_title") : t("wizard.delete_request_title")}
+                    {orgDeleteNode?.type === "folder"
+                      ? t("wizard.delete_folder_title")
+                      : activeOrgCapabilities.canDirectDeleteOrgProcess
+                        ? t("wizard.delete_process_title")
+                        : t("wizard.delete_request_title")}
                   </h3>
                   <p className="wizard-dialog-subtitle">
-                    {activeOrgCapabilities.canDirectDeleteOrgProcess
+                    {orgDeleteNode?.type === "folder"
+                      ? t("wizard.delete_folder_subtitle")
+                      : activeOrgCapabilities.canDirectDeleteOrgProcess
                       ? t("wizard.delete_process_subtitle")
                       : t("wizard.delete_request_subtitle")}
                   </p>
@@ -9838,16 +9954,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </button>
               </div>
               <div className={`wizard-dialog-section ${activeOrgCapabilities.canDirectDeleteOrgProcess ? "wizard-dialog-section--danger" : "wizard-dialog-section--warning"}`}>
-                {activeOrgCapabilities.canDirectDeleteOrgProcess
-                  ? t("wizard.delete_process_tree_message", { name: orgDeleteNode?.name || "-" })
-                  : t("wizard.delete_process_cannot_direct", { name: orgDeleteNode?.name || "-" })}
+                {orgDeleteNode?.type === "folder"
+                  ? activeOrgCapabilities.canDirectDeleteOrgProcess
+                    ? t("wizard.delete_folder_tree_message", { name: orgDeleteNode?.name || "-" })
+                    : t("wizard.delete_folder_cannot_direct", { name: orgDeleteNode?.name || "-" })
+                  : activeOrgCapabilities.canDirectDeleteOrgProcess
+                    ? t("wizard.delete_process_tree_message", { name: orgDeleteNode?.name || "-" })
+                    : t("wizard.delete_process_cannot_direct", { name: orgDeleteNode?.name || "-" })}
               </div>
               <div className="wizard-dialog-subtitle">
-                {activeOrgCapabilities.canDirectDeleteOrgProcess
+                {orgDeleteNode?.type === "folder"
+                  ? t("wizard.delete_folder_irreversible")
+                  : activeOrgCapabilities.canDirectDeleteOrgProcess
                   ? t("wizard.delete_process_irreversible")
                   : t("wizard.delete_request_reason_hint")}
               </div>
-              {!activeOrgCapabilities.canDirectDeleteOrgProcess ? (
+              {!activeOrgCapabilities.canDirectDeleteOrgProcess && orgDeleteNode?.type === "process" ? (
                 <div className="wizard-dialog-section" style={{ display: "grid", gap: 6 }}>
                   <label htmlFor="org-delete-request-reason" style={{ fontSize: 12, opacity: 0.82 }}>
                     {t("wizard.delete_request_reason_label")}
@@ -9872,11 +9994,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <button className="btn btn-danger" type="button" onClick={openFinalDeleteConfirmModal} disabled={orgDeleteLoading}>
                     {t("wizard.delete_process_action")}
                   </button>
-                ) : (
-                  <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
+                ) : orgDeleteNode?.type === "process" ? (
+                  <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteOrgNode} disabled={orgDeleteLoading}>
                     {orgDeleteLoading ? t("wizard.delete_request_sending") : t("wizard.delete_request_action")}
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -9888,17 +10010,23 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <div className="wizard-models-header">
                 <div className="wizard-dialog-copy">
                   <p className="wizard-dialog-kicker">{t("wizard.final_confirmation_kicker")}</p>
-                  <h3 className="wizard-dialog-title">{t("wizard.delete_final_title")}</h3>
+                  <h3 className="wizard-dialog-title">
+                    {orgDeleteNode?.type === "folder" ? t("wizard.delete_folder_final_title") : t("wizard.delete_final_title")}
+                  </h3>
                 </div>
                 <button className="btn btn--small" type="button" onClick={closeDeleteProcessModal} disabled={orgDeleteLoading}>
                   {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-dialog-section wizard-dialog-section--danger">
-                {t("wizard.delete_final_message", { name: orgDeleteNode?.name || "-" })}
+                {orgDeleteNode?.type === "folder"
+                  ? t("wizard.delete_folder_final_message", { name: orgDeleteNode?.name || "-" })
+                  : t("wizard.delete_final_message", { name: orgDeleteNode?.name || "-" })}
               </div>
               <div className="wizard-dialog-subtitle">
-                {t("wizard.delete_process_irreversible")}
+                {orgDeleteNode?.type === "folder"
+                  ? t("wizard.delete_folder_irreversible")
+                  : t("wizard.delete_process_irreversible")}
               </div>
               {orgDeleteError ? <div className="wizard-error">{orgDeleteError}</div> : null}
               <div className="wizard-dialog-actions">
@@ -9914,7 +10042,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 >
                   {t("wizard.back")}
                 </button>
-                <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteProcess} disabled={orgDeleteLoading}>
+                <button className="btn btn-danger" type="button" onClick={handleConfirmDeleteOrgNode} disabled={orgDeleteLoading}>
                   {orgDeleteLoading ? t("wizard.delete_process_loading") : t("wizard.delete_final_yes")}
                 </button>
               </div>

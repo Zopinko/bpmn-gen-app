@@ -693,6 +693,10 @@ body {
   z-index: 10;
 }
 
+.org-tree-entry--folder.is-menu-open {
+  z-index: 10;
+}
+
 .org-tree-process-row.is-pulse .org-tree-node {
   animation: orgPulse 600ms ease-out;
 }
@@ -818,6 +822,7 @@ body {
   min-width: 26px;
 }
 
+.org-tree-entry:hover .org-tree-menu-btn,
 .org-tree-process-row:hover .org-tree-menu-btn {
   opacity: 1;
 }
@@ -836,6 +841,11 @@ body {
   animation: orgMoveHighlight 700ms ease-out;
 }
 
+.org-tree-node.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 @keyframes orgMoveHighlight {
   0% {
     box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.5);
@@ -848,7 +858,7 @@ body {
 .org-tree-menu {
   position: fixed;
   z-index: 1000;
-  min-width: 140px;
+  min-width: 170px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: #0f1623;
@@ -867,8 +877,17 @@ body {
   font-size: 12px;
 }
 
+.org-tree-menu__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .org-tree-menu__item:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.org-tree-menu__item:disabled:hover {
+  background: transparent;
 }
 
 .org-tree-menu__divider {

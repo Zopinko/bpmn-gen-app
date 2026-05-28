@@ -269,6 +269,36 @@ def test_member_cannot_delete_org_process(tmp_path):
         _restore_env(previous)
 
 
+def test_folder_cannot_be_moved_into_itself(tmp_path):
+    previous = _set_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        client = _authed_client("owner@example.com")
+        org_id = client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
+
+        created = client.post(
+            f"/api/org-model/folder?org_id={org_id}",
+            json={"parentId": "root", "name": "L1 Finance"},
+        )
+        assert created.status_code == 200
+        folder_id = created.json()["node"]["id"]
+
+        moved = client.post(
+            f"/api/org-model/move?org_id={org_id}",
+            json={"nodeId": folder_id, "targetParentId": folder_id},
+        )
+
+        assert moved.status_code == 400
+        assert "seba" in (moved.json().get("detail") or "").lower()
+        tree = client.get(f"/api/org-model?org_id={org_id}")
+        assert tree.status_code == 200
+        children = tree.json().get("children") or []
+        assert any(child.get("id") == folder_id for child in children)
+    finally:
+        _restore_env(previous)
+
+
 def test_viewer_cannot_mutate_org_tree(tmp_path):
     previous = _set_env(tmp_path)
     try:

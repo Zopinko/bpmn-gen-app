@@ -223,6 +223,8 @@ def _is_descendant(node: dict[str, Any], possible_descendant_id: str) -> bool:
 def move_node(org_id: str, node_id: str, new_parent_id: str) -> dict[str, Any]:
     if node_id == "root":
         raise ValueError("Root nie je mozne presuvat.")
+    if node_id == new_parent_id:
+        raise ValueError("Polozku nie je mozne presunut do seba samej.")
     tree = _read_tree(org_id)
     node, parent = _find_node_and_parent(tree, node_id)
     if not node or not parent:
