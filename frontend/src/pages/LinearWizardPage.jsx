@@ -5987,6 +5987,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       onXmlImported: handleXmlImported,
       overlayMessage: relayouting ? t("wizard.relayouting") : "",
       guideHighlight: guideHighlight?.map || null,
+      orgId: modelSource?.kind === "org" ? activeOrgId : "",
+      processNodeId: modelSource?.kind === "org" ? modelSource?.treeNodeId || "" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
       },
@@ -6008,6 +6010,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       guideHighlight,
       handleXmlImported,
       handleViewerLaneSelect,
+      activeOrgId,
       xml,
       modelSource,
       orgReadOnly,
@@ -8270,6 +8273,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             </div>
             <Link to="/organization" className="process-card-rail-link">
               {t("app.nav.organization")}
+            </Link>
+            <Link to="/workforce" className="process-card-rail-link">
+              Matica zastupitelnosti
             </Link>
             <Link to="/account" className="process-card-rail-link">
               {t("app.nav.profile")}

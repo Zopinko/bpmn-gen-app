@@ -1,10 +1,12 @@
-﻿import { useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import BpmnModeler from "bpmn-js/lib/Modeler";
 import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
+import WorkforceOverlay, { computeTaskRisk, RISK_BORDER } from "./WorkforceOverlay";
+import { listCompetencies } from "../api/workforce";
 
 const severityIcon = (severity) => {
   switch (severity) {
@@ -49,6 +51,8 @@ export default function MapViewer({
   onXmlImported,
   overlayMessage,
   guideHighlight = null,
+  orgId = "",
+  processNodeId = "",
   readOnly = false,
 }) {
   const { t } = useTranslation("map_viewer");
@@ -63,6 +67,10 @@ export default function MapViewer({
   const [toastMessage, setToastMessage] = useState("");
   const [localCanUndo, setLocalCanUndo] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
+  const [workforceMode, setWorkforceMode] = useState(false);
+  const [selectedWorkforceStep, setSelectedWorkforceStep] = useState(null);
+  const [stepCompetencies, setStepCompetencies] = useState({});
+  const workforceModeRef = useRef(false);
   const isImportingRef = useRef(false);
   const toastTimerRef = useRef(null);
   const hasSubtitle = Boolean(subtitle || subtitleMeta || subtitleBadge || subtitleTag);
@@ -76,6 +84,7 @@ export default function MapViewer({
   const changeTimerRef = useRef(null);
   const skipDiagramChangeRef = useRef(false);
   const laneHandleOverlayIdsRef = useRef([]);
+  const workforceOverlayIdsRef = useRef([]);
   const laneHandleMapRef = useRef(new Map());
   const laneDragStartMapRef = useRef(new Map());
   const guideHighlightRef = useRef({ elementId: null, pulseTimer: null });
@@ -122,6 +131,42 @@ export default function MapViewer({
       // ignore if toast event is not wired
     }
   };
+
+  const clearWorkforceOverlays = useCallback(() => {
+    const modeler = modelerRef.current;
+    const overlays = modeler?.get?.("overlays", false);
+    if (!overlays) {
+      workforceOverlayIdsRef.current = [];
+      return;
+    }
+    workforceOverlayIdsRef.current.forEach((id) => {
+      try {
+        overlays.remove(id);
+      } catch {
+        // ignore stale overlay ids
+      }
+    });
+    workforceOverlayIdsRef.current = [];
+  }, []);
+
+  const refreshWorkforceCompetencies = useCallback(async () => {
+    if (!workforceMode || !orgId || !processNodeId) {
+      setStepCompetencies({});
+      return;
+    }
+    try {
+      const items = await listCompetencies(orgId, { process_node_id: processNodeId });
+      const byStep = {};
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const key = String(item.step_id || "");
+        if (!key) return;
+        byStep[key] = [...(byStep[key] || []), item];
+      });
+      setStepCompetencies(byStep);
+    } catch {
+      setStepCompetencies({});
+    }
+  }, [workforceMode, orgId, processNodeId]);
 
   const openConfirmModal = ({ title, message, onConfirm }) => {
     setConfirmModal({
@@ -254,6 +299,10 @@ export default function MapViewer({
   useEffect(() => {
     diagramChangeRef.current = onDiagramChange;
   }, [onDiagramChange]);
+
+  useEffect(() => {
+    workforceModeRef.current = workforceMode;
+  }, [workforceMode]);
 
   useEffect(() => {
     const modeler = modelerRef.current;
@@ -1101,6 +1150,18 @@ export default function MapViewer({
       updateContextPad(element);
 
       const boType = element.businessObject && element.businessObject.$type;
+      const isTaskLikeForWorkforce = Boolean(mapNodeType(boType) && String(boType || "").includes("Task"));
+      if (workforceModeRef.current) {
+        if (isTaskLikeForWorkforce) {
+          const engineId = getEngineId(element) || ensureEngineId(element) || element.id;
+          setSelectedWorkforceStep({
+            id: engineId,
+            name: element.businessObject?.name || engineId,
+          });
+        } else {
+          closeWorkforceSelection();
+        }
+      }
       if (boType === "bpmn:Lane" || boType === "bpmn:Participant") {
         showLaneHandles(element);
         if (typeof onLaneSelect === "function" && boType === "bpmn:Lane") {
@@ -1119,6 +1180,21 @@ export default function MapViewer({
     };
 
     const canvas = modeler.get("canvas");
+
+    const clearWorkforceStepSelection = () => {
+      setSelectedWorkforceStep(null);
+    };
+
+    const handleSelectionChanged = (event) => {
+      if (!workforceModeRef.current) return;
+      const selected = Array.isArray(event?.newSelection) ? event.newSelection : [];
+      const element = selected[0] || null;
+      const boType = element?.businessObject?.$type || element?.type || "";
+      const isTaskLikeForWorkforce = Boolean(mapNodeType(boType) && String(boType || "").includes("Task"));
+      if (!isTaskLikeForWorkforce) {
+          clearWorkforceStepSelection();
+      }
+    };
 
     const handleElementHover = (event) => {
       const { element } = event;
@@ -1157,6 +1233,7 @@ export default function MapViewer({
 
     const handleCanvasClick = () => {
       lastClickedElementRef.current = null;
+      clearWorkforceStepSelection();
       if (ENABLE_LANE_HANDLES) {
         clearLaneHandles();
       }
@@ -1465,6 +1542,7 @@ export default function MapViewer({
         eventBus.on("shape.resize.cancel", stopGhostStyling);
       }
       eventBus.on("element.click", handleElementClick);
+      eventBus.on("selection.changed", handleSelectionChanged);
       eventBus.on("element.hover", handleElementHover);
       eventBus.on("element.out", handleElementOut);
       eventBus.on("canvas.click", handleCanvasClick);
@@ -1507,6 +1585,7 @@ export default function MapViewer({
           eventBus.off("shape.resize.cancel", stopGhostStyling);
         }
         eventBus.off("element.click", handleElementClick);
+        eventBus.off("selection.changed", handleSelectionChanged);
         eventBus.off("element.hover", handleElementHover);
         eventBus.off("element.out", handleElementOut);
         eventBus.off("canvas.click", handleCanvasClick);
@@ -1930,6 +2009,42 @@ export default function MapViewer({
     });
   }, [annotations, xml]);
 
+  useEffect(() => {
+    void refreshWorkforceCompetencies();
+  }, [refreshWorkforceCompetencies, xml]);
+
+  useEffect(() => {
+    const modeler = modelerRef.current;
+    const overlays = modeler?.get?.("overlays", false);
+    const elementRegistry = modeler?.get?.("elementRegistry", false);
+    clearWorkforceOverlays();
+    if (!workforceMode || !overlays || !elementRegistry) return;
+
+    elementRegistry.getAll().forEach((element) => {
+      if (!element || element.type === "label") return;
+      const boType = element.businessObject?.$type || element.type;
+      if (!mapNodeType(boType)) return;
+      const engineId = getEngineId(element) || element.businessObject?.id || element.id;
+      const competencies = stepCompetencies[String(engineId)] || [];
+      const risk = computeTaskRisk(competencies);
+      const marker = document.createElement("div");
+      marker.className = `workforce-node-overlay is-${risk}`;
+      marker.style.borderColor = RISK_BORDER[risk] || RISK_BORDER.unassigned;
+      marker.title = `Zastupitelnost: ${risk}`;
+      try {
+        const id = overlays.add(element, "workforce-node-overlay", {
+          position: { top: -5, left: -5 },
+          html: marker,
+        });
+        workforceOverlayIdsRef.current.push(id);
+      } catch {
+        // ignore missing/collapsed BPMN elements
+      }
+    });
+
+    return () => clearWorkforceOverlays();
+  }, [clearWorkforceOverlays, stepCompetencies, workforceMode, xml]);
+
   const displayError = error || importError;
   const guideCanvasClass =
     guideHighlight?.type === "connect"
@@ -1986,6 +2101,19 @@ export default function MapViewer({
                 <button className="map-toolbar__btn map-toolbar__btn--zoom" type="button" onClick={zoomFit} title={t("zoom_fit", { defaultValue: "Fit to view" })}>
                   Fit
                 </button>
+                  {orgId && processNodeId ? (
+                    <button
+                      className={`map-toolbar__btn map-toolbar__btn--workforce${workforceMode ? " is-active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setWorkforceMode((prev) => !prev);
+                        setSelectedWorkforceStep(null);
+                      }}
+                      title="Zastupitelnost"
+                    >
+                      Zastupitelnost
+                    </button>
+                  ) : null}
                   {onUndo || localCanUndo ? (
                     <button
                       className="map-toolbar__btn map-toolbar__btn--undo"
@@ -2033,6 +2161,16 @@ export default function MapViewer({
               ) : null}
             </div>
           </div><div ref={containerRef} className={`map-viewer__canvas ${guideCanvasClass}`} />
+        {workforceMode && selectedWorkforceStep ? (
+          <WorkforceOverlay
+            orgId={orgId}
+            processNodeId={processNodeId}
+            selectedStepId={selectedWorkforceStep.id}
+            stepName={selectedWorkforceStep.name}
+            onClose={() => setSelectedWorkforceStep(null)}
+            onChanged={refreshWorkforceCompetencies}
+          />
+        ) : null}
         {loading ? <div className="map-viewer__status map-viewer__status--loading">{t("loading")}</div> : null}
         {overlayMessage ? (
           <div className="map-viewer__status">{overlayMessage}</div>
