@@ -18,6 +18,7 @@ from routers.frajer_router import router as frajer_router
 from routers.mentor_router import router as mentor_router
 from routers.telemetry_router import router as telemetry_router
 from routers.controller_router import router as controller_router
+from routers.org_workforce_router import router as org_workforce_router
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(mentor_router)
     app.include_router(telemetry_router)
     app.include_router(controller_router)
+    app.include_router(org_workforce_router)
     mount_playground(app)
 
     return app

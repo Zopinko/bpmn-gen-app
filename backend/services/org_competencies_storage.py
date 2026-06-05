@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from services.storage_io import atomic_write_json
@@ -122,20 +122,82 @@ def _compute_risk(step_competencies: list[dict]) -> str:
     return "low"
 
 
+def _load_process_details(org_id: str, process_node_ids: set[str]) -> dict[str, dict[str, Any]]:
+    if not process_node_ids:
+        return {}
+
+    from services.org_model_storage import get_node, get_process_model_ref
+    from services.org_models_storage import load_org_model
+
+    details: dict[str, dict[str, Any]] = {}
+    for process_node_id in process_node_ids:
+        process_name = ""
+        step_names: dict[str, str] = {}
+        lane_names: dict[str, str] = {}
+        try:
+            node = get_node(org_id, process_node_id)
+            if isinstance(node, dict):
+                process_name = str(node.get("name") or "")
+            model_id = get_process_model_ref(org_id, process_node_id)
+            if model_id:
+                model = load_org_model(org_id, model_id)
+                engine_json = model.get("engine_json") if isinstance(model.get("engine_json"), dict) else {}
+                process_name = process_name or str(model.get("name") or engine_json.get("name") or "")
+                lanes = engine_json.get("lanes") if isinstance(engine_json.get("lanes"), list) else []
+                lane_names = {
+                    str(lane.get("id")): str(lane.get("name") or lane.get("id") or "")
+                    for lane in lanes
+                    if isinstance(lane, dict) and lane.get("id")
+                }
+                nodes = engine_json.get("nodes") if isinstance(engine_json.get("nodes"), list) else []
+                for item in nodes:
+                    if not isinstance(item, dict) or not item.get("id"):
+                        continue
+                    step_names[str(item["id"])] = str(item.get("name") or item.get("label") or item.get("id") or "")
+        except Exception as exc:
+            logger.debug("Could not enrich workforce matrix step names org=%s process=%s: %s", org_id, process_node_id, exc)
+        details[process_node_id] = {
+            "process_name": process_name,
+            "step_names": step_names,
+            "lane_names": lane_names,
+        }
+    return details
+
+
 def build_matrix(org_id: str, process_node_id: str | None = None) -> dict:
     from services.org_employees_storage import list_employees
 
     employees = list_employees(org_id)
     competencies = list_competencies(org_id, process_node_id=process_node_id)
+    process_details = _load_process_details(
+        org_id,
+        {str(c.get("process_node_id") or "") for c in competencies if c.get("process_node_id")},
+    )
 
     seen: dict[str, dict] = {}
     for c in competencies:
         key = f"{c['process_node_id']}::{c['step_id']}"
         if key not in seen:
-            seen[key] = {"step_id": c["step_id"], "process_node_id": c["process_node_id"]}
+            process_id = str(c["process_node_id"])
+            step_id = str(c["step_id"])
+            details = process_details.get(process_id, {})
+            seen[key] = {
+                "step_id": step_id,
+                "step_name": (details.get("step_names") or {}).get(step_id, step_id),
+                "process_node_id": process_id,
+                "process_name": details.get("process_name") or process_id,
+            }
     steps = list(seen.values())
 
-    cells = [{"emp_id": c["emp_id"], "step_id": c["step_id"], "level": c["level"]} for c in competencies]
+    cells = [
+        {
+            "emp_id": c["emp_id"],
+            "process_node_id": c["process_node_id"],
+            "step_id": c["step_id"],
+            "level": c["level"],
+        }
+        for c in competencies
+    ]
 
     risk = []
     for step in steps:
