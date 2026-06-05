@@ -80,3 +80,21 @@ def test_employees_are_org_scoped(tmp_path):
         assert len(list_employees("org2")) == 1
     finally:
         _restore_env(prev)
+
+
+def test_update_employee_not_found(tmp_path):
+    prev = _set_env(tmp_path)
+    try:
+        with pytest.raises(LookupError):
+            update_employee("org1", "nonexistent-id", name="New Name")
+    finally:
+        _restore_env(prev)
+
+
+def test_delete_employee_not_found(tmp_path):
+    prev = _set_env(tmp_path)
+    try:
+        with pytest.raises(LookupError):
+            delete_employee("org1", "nonexistent-id")
+    finally:
+        _restore_env(prev)
