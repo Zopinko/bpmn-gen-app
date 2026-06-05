@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 from services.storage_io import atomic_write_json
+
+logger = logging.getLogger(__name__)
 
 
 def _org_dir(org_id: str) -> Path:
@@ -28,8 +31,12 @@ def _load(org_id: str) -> list[dict]:
     path = _employees_path(org_id)
     if not path.exists():
         return []
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as exc:
+        logger.error("Corrupted employees.json for org=%s: %s", org_id, exc)
+        raise ValueError(f"Poškodené dáta zamestnancov pre org {org_id}") from exc
 
 
 def _save(org_id: str, employees: list[dict]) -> None:
@@ -48,6 +55,10 @@ def create_employee(org_id: str, emp_no: str, name: str, position: str | None = 
     employees = _load(org_id)
     if any(e["emp_no"] == emp_no for e in employees):
         raise ValueError(f"Zamestnanec s číslom {emp_no} už existuje.")
+    if not emp_no.strip():
+        raise ValueError("emp_no je povinné.")
+    if not name.strip():
+        raise ValueError("name je povinné.")
     employee = {
         "id": str(uuid4()),
         "emp_no": emp_no.strip(),
