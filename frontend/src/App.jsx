@@ -13,6 +13,7 @@ import AccountPage from "./pages/AccountPage";
 import OrganizationPage from "./pages/OrganizationPage";
 import JoinOrgPage from "./pages/JoinOrgPage";
 import AdminPanelPage from "./pages/AdminPanelPage";
+import WorkforcePage from "./pages/WorkforcePage";
 import "./App.css";
 
 function App() {
@@ -172,6 +173,7 @@ function AppLayout() {
               element={renderProtected(<AccountPage currentUser={authState.user} onLogout={handleLogout} />)}
             />
             <Route path="/organization" element={renderProtected(<OrganizationPage />)} />
+            <Route path="/workforce" element={renderProtected(<WorkforcePage />)} />
             <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route
