@@ -7,6 +7,13 @@
     #05070c;
 }
 
+.admin-monitor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .admin-monitor__header h1 {
   margin: 0;
   font-size: 1.4rem;
@@ -15,6 +22,28 @@
 .admin-monitor__header p {
   margin: 6px 0 0;
   color: #9ca3af;
+}
+
+.admin-monitor__back {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.admin-monitor__back:hover {
+  border-color: rgba(148, 163, 184, 0.55);
+  background: rgba(30, 41, 59, 0.8);
+  color: #e2e8f0;
 }
 
 .admin-monitor__tabs {
@@ -76,6 +105,33 @@
   font-size: 11px;
   background: rgba(30, 41, 59, 0.8);
   border: 1px solid rgba(71, 85, 105, 0.8);
+}
+
+.admin-monitor__tab.has-alert {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.admin-monitor__tab.has-alert.is-active {
+  border-color: rgba(239, 68, 68, 0.9);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+.admin-monitor__tab-alert {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.6);
+  color: #fff;
+  animation: tab-alert-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes tab-alert-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  50% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
 }
 
 .admin-monitor__panel {

@@ -31,3 +31,15 @@ export function deleteAdminUser(userId) {
     method: "DELETE",
   });
 }
+
+export function getAdminFeedback() {
+  return request("/api/admin/feedback");
+}
+
+export function submitFeedback(message, page = "") {
+  return request("/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, page }),
+  });
+}

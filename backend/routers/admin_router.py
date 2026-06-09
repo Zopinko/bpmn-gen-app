@@ -156,6 +156,14 @@ def list_admin_orgs():
     return {"count": len(items), "items": items}
 
 
+@router.get("/feedback")
+def list_admin_feedback():
+    from services.feedback_storage import list_feedback
+
+    items = list_feedback()
+    return {"count": len(items), "items": items}
+
+
 @router.get("/models")
 def list_admin_models():
     items = _org_model_items()

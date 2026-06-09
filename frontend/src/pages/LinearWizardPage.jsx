@@ -1,4 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { submitFeedback } from "../api/admin";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
@@ -1449,6 +1450,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [expandedModelGroups, setExpandedModelGroups] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mentorOpen, setMentorOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState("idle");
   const [storyOpen, setStoryOpen] = useState(false);
   const [laneOpen, setLaneOpen] = useState(false);
   const [storyDoc, setStoryDoc] = useState(null);
@@ -8275,7 +8279,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               {t("app.nav.organization")}
             </Link>
             <Link to="/workforce" className="process-card-rail-link">
-              Matica zastupitelnosti
+              Substitutability Matrix
             </Link>
             <Link to="/account" className="process-card-rail-link">
               {t("app.nav.profile")}
@@ -8285,6 +8289,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {t("app.nav.admin")}
               </Link>
             ) : null}
+            <button
+              type="button"
+              className="process-card-rail-link process-card-rail-link--feedback"
+              onClick={() => { setFeedbackOpen(true); setFeedbackStatus("idle"); setFeedbackMsg(""); }}
+            >
+              Feedback
+            </button>
           </div>
         ) : null}
           </>
@@ -10679,6 +10690,63 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         style={{ display: "none" }}
         onChange={handleImportChange}
       />
+
+      {feedbackOpen ? (
+        <div className="feedback-modal-backdrop" onClick={() => setFeedbackOpen(false)}>
+          <div className="feedback-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="feedback-modal__header">
+              <h3>Send Feedback</h3>
+              <button type="button" className="feedback-modal__close" onClick={() => setFeedbackOpen(false)}>
+                ×
+              </button>
+            </div>
+            {feedbackStatus === "done" ? (
+              <div className="feedback-modal__thanks">
+                <p>Thank you for your feedback!</p>
+                <button type="button" className="btn btn--small" onClick={() => setFeedbackOpen(false)}>
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <textarea
+                  className="feedback-modal__textarea"
+                  placeholder="What's working well? What could be better?"
+                  value={feedbackMsg}
+                  onChange={(e) => setFeedbackMsg(e.target.value)}
+                  rows={5}
+                  maxLength={4000}
+                  disabled={feedbackStatus === "sending"}
+                />
+                {feedbackStatus === "error" ? (
+                  <p className="feedback-modal__error">Failed to send. Please try again.</p>
+                ) : null}
+                <div className="feedback-modal__actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn--small"
+                    disabled={!feedbackMsg.trim() || feedbackStatus === "sending"}
+                    onClick={async () => {
+                      setFeedbackStatus("sending");
+                      try {
+                        await submitFeedback(feedbackMsg.trim(), window.location.pathname);
+                        setFeedbackStatus("done");
+                      } catch {
+                        setFeedbackStatus("error");
+                      }
+                    }}
+                  >
+                    {feedbackStatus === "sending" ? "Sending…" : "Send"}
+                  </button>
+                  <button type="button" className="btn btn--small" onClick={() => setFeedbackOpen(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

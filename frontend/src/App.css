@@ -8848,3 +8848,150 @@ body {
   }
 }
 
+/* ── Feedback modal ── */
+.feedback-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(2, 8, 23, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.feedback-modal {
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.6);
+  width: 100%;
+  max-width: 480px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.feedback-modal__header {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.feedback-modal__textarea {
+  width: 100%;
+  min-height: 120px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.feedback-modal__textarea:focus {
+  outline: none;
+  border-color: rgba(125, 211, 252, 0.5);
+}
+
+.feedback-modal__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.feedback-modal__send {
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 20px;
+  cursor: pointer;
+  transition: opacity 160ms ease;
+}
+
+.feedback-modal__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feedback-modal__cancel {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.feedback-modal__cancel:hover {
+  border-color: rgba(148, 163, 184, 0.6);
+  color: #e2e8f0;
+}
+
+.feedback-modal__thanks {
+  color: #86efac;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.feedback-modal__error {
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+/* Feedback button variant in rail */
+.process-card-rail-link--feedback {
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+
+.process-card-rail-link--feedback:hover {
+  border-color: rgba(99, 102, 241, 0.7);
+  background: linear-gradient(180deg, rgba(49, 46, 129, 0.5), rgba(30, 27, 75, 0.6));
+  color: #c7d2fe;
+}
+
+/* Admin feedback table */
+.admin-table--feedback .admin-table__message-preview {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-table--feedback .admin-table__page {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.admin-detail__feedback-body {
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+}
+

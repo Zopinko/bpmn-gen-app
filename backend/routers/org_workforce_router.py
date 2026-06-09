@@ -46,6 +46,7 @@ class CreateCompetencyRequest(BaseModel):
     process_node_id: str
     step_id: str
     level: CompetencyLevel
+    step_name: str = ""
 
 
 class UpdateCompetencyRequest(BaseModel):
@@ -163,6 +164,7 @@ def api_create_competency(
             process_node_id=_clean_required(payload.process_node_id, "process_node_id"),
             step_id=_clean_required(payload.step_id, "step_id"),
             level=payload.level,
+            step_name=payload.step_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

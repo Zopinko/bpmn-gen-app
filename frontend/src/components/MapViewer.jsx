@@ -2030,7 +2030,7 @@ export default function MapViewer({
       const marker = document.createElement("div");
       marker.className = `workforce-node-overlay is-${risk}`;
       marker.style.borderColor = RISK_BORDER[risk] || RISK_BORDER.unassigned;
-      marker.title = `Zastupitelnost: ${risk}`;
+      marker.title = `Substitutability: ${risk}`;
       try {
         const id = overlays.add(element, "workforce-node-overlay", {
           position: { top: -5, left: -5 },
@@ -2109,9 +2109,9 @@ export default function MapViewer({
                         setWorkforceMode((prev) => !prev);
                         setSelectedWorkforceStep(null);
                       }}
-                      title="Zastupitelnost"
+                      title="Substitutability"
                     >
-                      Zastupitelnost
+                      Substitutability
                     </button>
                   ) : null}
                   {onUndo || localCanUndo ? (

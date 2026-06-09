@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
-import { deleteAdminUser, getAdminModels, getAdminOrgs, getAdminUsers } from "../api/admin";
+import { deleteAdminUser, getAdminFeedback, getAdminModels, getAdminOrgs, getAdminUsers } from "../api/admin";
 import "./AdminPanelPage.css";
 
 const TABS = [
   { id: "users", loader: getAdminUsers },
   { id: "orgs", loader: getAdminOrgs },
   { id: "models", loader: getAdminModels },
+  { id: "feedback", loader: getAdminFeedback },
 ];
 
 const EMPTY_TAB = { loading: false, error: "", count: 0, items: [], loaded: false };
@@ -15,6 +17,7 @@ const RECENT_MODELS_LIMIT = 30;
 
 function AdminPanelPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("users");
   const [search, setSearch] = useState("");
   const [selectedItem, setSelectedItem] = useState(null);
@@ -23,6 +26,7 @@ function AdminPanelPage() {
     users: { ...EMPTY_TAB },
     orgs: { ...EMPTY_TAB },
     models: { ...EMPTY_TAB },
+    feedback: { ...EMPTY_TAB },
   });
 
   const loadTab = useCallback(async (tabId, { force = false } = {}) => {
@@ -128,6 +132,7 @@ function AdminPanelPage() {
       { id: "users", value: tabState.users.count },
       { id: "orgs", value: tabState.orgs.count },
       { id: "models", value: tabState.models.count },
+      { id: "feedback", value: tabState.feedback.count },
       { id: "sessions", value: activeSessions },
       { id: "verified", value: verifiedUsers },
     ];
@@ -162,6 +167,9 @@ function AdminPanelPage() {
           <h1>Admin panel</h1>
           <p>{t("admin.intro")}</p>
         </div>
+        <button type="button" className="admin-monitor__back" onClick={() => navigate("/")}>
+          ← Back
+        </button>
       </header>
 
       <div className="admin-monitor__summary">
@@ -180,11 +188,15 @@ function AdminPanelPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === tab.id}
-            className={`admin-monitor__tab ${activeTab === tab.id ? "is-active" : ""}`}
+            className={`admin-monitor__tab ${activeTab === tab.id ? "is-active" : ""} ${tab.id === "feedback" && tabState.feedback.count > 0 ? "has-alert" : ""}`}
             onClick={() => setActiveTab(tab.id)}
           >
             {t(`admin.tab_${tab.id}`)}
-            <span className="admin-monitor__tab-count">{tabState[tab.id].count}</span>
+            {tab.id === "feedback" && tabState.feedback.count > 0 ? (
+              <span className="admin-monitor__tab-alert">{tabState.feedback.count}</span>
+            ) : (
+              <span className="admin-monitor__tab-count">{tabState[tab.id].count}</span>
+            )}
           </button>
         ))}
       </div>
@@ -233,6 +245,9 @@ function AdminPanelPage() {
               ) : null}
               {activeTab === "models" ? (
                 <ModelsTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} t={t} />
+              ) : null}
+              {activeTab === "feedback" ? (
+                <FeedbackTable rows={filteredRows} onSelect={setSelectedItem} selectedItem={selectedItem} />
               ) : null}
             </div>
             <aside className="admin-detail">
@@ -384,6 +399,45 @@ function ModelsTable({ rows, onSelect, selectedItem, t }) {
   );
 }
 
+function FeedbackTable({ rows, onSelect, selectedItem }) {
+  return (
+    <div className="admin-table-wrap">
+      <table className="admin-table admin-table--feedback">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Message</th>
+            <th>Page</th>
+            <th>Sent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((row) => (
+              <tr
+                key={row.id}
+                className={selectedItem?.id === row.id ? "is-selected" : ""}
+                onClick={() => onSelect(row)}
+              >
+                <td title={row.user_id}>{row.user_email || "-"}</td>
+                <td className="admin-table__message-preview">{row.message ? row.message.slice(0, 120) : "-"}</td>
+                <td className="admin-table__page">{row.page || "-"}</td>
+                <td>{formatDateTimeValue(row.created_at)}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={4} className="admin-table__empty">
+                No feedback yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, onDeleteUser, deleteState, t }) {
   if (activeTab === "users") {
     return (
@@ -470,6 +524,33 @@ function AdminDetailDrawer({ activeTab, item, relatedContext, onClose, onDeleteU
     );
   }
 
+  if (activeTab === "feedback") {
+    return (
+      <div className="admin-detail__card">
+        <div className="admin-detail__head">
+          <div>
+            <div className="admin-detail__kicker">Feedback</div>
+            <h3>{item.user_email || item.user_id || "-"}</h3>
+          </div>
+          <button type="button" className="admin-detail__close" onClick={onClose}>
+            {t("admin.close")}
+          </button>
+        </div>
+        <DetailList
+          items={[
+            ["User", item.user_email || "-"],
+            ["Page", item.page || "-"],
+            ["Sent", formatDateTimeValue(item.created_at)],
+          ]}
+        />
+        <div className="admin-detail__block">
+          <div className="admin-detail__block-title">Message</div>
+          <p className="admin-detail__feedback-body">{item.message || "-"}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-detail__card">
       <div className="admin-detail__head">
@@ -541,6 +622,11 @@ function matchRow(tabId, row, needle) {
   }
   if (tabId === "orgs") {
     return [row.name, row.created_by_email, row.created_by_user_id].some((value) =>
+      String(value || "").toLowerCase().includes(needle),
+    );
+  }
+  if (tabId === "feedback") {
+    return [row.user_email, row.message, row.page].some((value) =>
       String(value || "").toLowerCase().includes(needle),
     );
   }

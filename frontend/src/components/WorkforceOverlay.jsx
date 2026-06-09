@@ -12,9 +12,9 @@ import {
 const LEVELS = ["primary", "backup", "training"];
 
 const LEVEL_LABELS = {
-  primary: "Primarny",
-  backup: "Zaloha",
-  training: "Zacvik",
+  primary: "Primary",
+  backup: "Backup",
+  training: "Training",
 };
 
 export const RISK_BORDER = {
@@ -57,7 +57,7 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
       setEmployees(Array.isArray(employeeItems) ? employeeItems : []);
       setCompetencies((Array.isArray(competencyItems) ? competencyItems : []).filter((item) => item.step_id === selectedStepId));
     } catch (e) {
-      setError(e?.message || "Nepodarilo sa nacitat kompetencie.");
+      setError(e?.message || "Failed to load competencies.");
     } finally {
       setLoading(false);
     }
@@ -101,7 +101,7 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
         empId = employee.id;
       }
       if (!empId) {
-        setError("Vyber alebo vytvor zamestnanca.");
+        setError("Select or create an employee.");
         return;
       }
       await createCompetency(orgId, {
@@ -109,6 +109,7 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
         process_node_id: processNodeId,
         step_id: selectedStepId,
         level: newLevel,
+        step_name: stepName || "",
       });
       setAdding(false);
       setCreateNew(false);
@@ -118,7 +119,7 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
       setNewLevel("backup");
       await refreshAfterChange();
     } catch (e) {
-      setError(e?.message || "Nepodarilo sa pridat kompetenciu.");
+      setError(e?.message || "Failed to add competency.");
     }
   };
 
@@ -128,7 +129,7 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
       await updateCompetency(orgId, competencyId, { level });
       await refreshAfterChange();
     } catch (e) {
-      setError(e?.message || "Nepodarilo sa zmenit uroven.");
+      setError(e?.message || "Failed to update level.");
     }
   };
 
@@ -138,14 +139,14 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
       await deleteCompetency(orgId, competencyId);
       await refreshAfterChange();
     } catch (e) {
-      setError(e?.message || "Nepodarilo sa odstranit kompetenciu.");
+      setError(e?.message || "Failed to remove competency.");
     }
   };
 
   const riskMessage = {
-    unassigned: "Nikto nie je priradeny k tomuto kroku.",
-    critical: "Len jedna osoba pozna tento krok. Je to riziko vypadku.",
-    low: "Chyba primarny vykonavatel alebo zaloha.",
+    unassigned: "Nobody is assigned to this step.",
+    critical: "Only one person knows this step. This is a single point of failure.",
+    low: "Missing primary assignee or backup.",
     none: "",
   }[risk];
 
@@ -153,17 +154,17 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
     <aside className="workforce-overlay-panel">
       <div className="workforce-overlay-panel__header">
         <div>
-          <p className="wizard-dialog-kicker">Zastupitelnost</p>
+          <p className="wizard-dialog-kicker">Substitutability</p>
           <h3>{stepName || selectedStepId}</h3>
         </div>
         <button className="btn btn--small" type="button" onClick={onClose}>
-          Zavriet
+          Close
         </button>
       </div>
 
       {error ? <p className="auth-message auth-message--error">{error}</p> : null}
       {riskMessage ? <div className={`workforce-overlay-risk is-${risk}`}>{riskMessage}</div> : null}
-      {loading ? <p className="organization-hint">Nacitavam...</p> : null}
+      {loading ? <p className="organization-hint">Loading...</p> : null}
 
       <div className="workforce-overlay-list">
         {competencies.map((competency) => {
@@ -187,23 +188,23 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
             </div>
           );
         })}
-        {!competencies.length && !loading ? <p className="organization-hint">Zatial ziadne priradenia.</p> : null}
+        {!competencies.length && !loading ? <p className="organization-hint">No assignments yet.</p> : null}
       </div>
 
       {adding ? (
         <div className="workforce-overlay-add">
           <label className="workforce-overlay-check">
             <input type="checkbox" checked={createNew} onChange={(event) => setCreateNew(event.target.checked)} />
-            Novy zamestnanec
+            New employee
           </label>
           {createNew ? (
             <>
-              <input value={newEmpNo} onChange={(event) => setNewEmpNo(event.target.value)} placeholder="Cislo zamestnanca" />
-              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Meno" />
+              <input value={newEmpNo} onChange={(event) => setNewEmpNo(event.target.value)} placeholder="Employee number" />
+              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Name" />
             </>
           ) : (
             <select value={selectedEmpId} onChange={(event) => setSelectedEmpId(event.target.value)}>
-              <option value="">Vyber zamestnanca</option>
+              <option value="">Select employee</option>
               {availableEmployees.map((employee) => (
                 <option key={employee.id} value={employee.id}>
                   {employee.emp_no} {employee.name}
@@ -220,16 +221,16 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
           </select>
           <div className="workforce-overlay-add__actions">
             <button className="btn btn-primary btn--small" type="button" onClick={handleAdd}>
-              Pridat
+              Add
             </button>
             <button className="btn btn--small" type="button" onClick={() => setAdding(false)}>
-              Zrusit
+              Cancel
             </button>
           </div>
         </div>
       ) : (
         <button className="btn btn-primary btn--small" type="button" onClick={() => setAdding(true)}>
-          Pridat zamestnanca
+          Add employee
         </button>
       )}
     </aside>

@@ -61,24 +61,30 @@ def create_competency(
     process_node_id: str,
     step_id: str,
     level: CompetencyLevel,
+    step_name: str = "",
 ) -> dict:
     if level not in VALID_LEVELS:
         raise ValueError(f"Neplatná úroveň: {level}. Povolené: {VALID_LEVELS}")
     competencies = _load(org_id)
+    clean_step_name = str(step_name or "").strip()
     for i, c in enumerate(competencies):
         if c["emp_id"] == emp_id and c["process_node_id"] == process_node_id and c["step_id"] == step_id:
             updated = dict(c)
             updated["level"] = level
+            if clean_step_name:
+                updated["step_name"] = clean_step_name
             competencies[i] = updated
             _save(org_id, competencies)
             return updated
-    competency = {
+    competency: dict[str, Any] = {
         "id": str(uuid4()),
         "emp_id": emp_id,
         "process_node_id": process_node_id,
         "step_id": step_id,
         "level": level,
     }
+    if clean_step_name:
+        competency["step_name"] = clean_step_name
     competencies.append(competency)
     _save(org_id, competencies)
     return competency
@@ -155,7 +161,7 @@ def _load_process_details(org_id: str, process_node_ids: set[str]) -> dict[str, 
                         continue
                     step_names[str(item["id"])] = str(item.get("name") or item.get("label") or item.get("id") or "")
         except Exception as exc:
-            logger.debug("Could not enrich workforce matrix step names org=%s process=%s: %s", org_id, process_node_id, exc)
+            logger.warning("Could not enrich workforce matrix step names org=%s process=%s: %s", org_id, process_node_id, exc)
         details[process_node_id] = {
             "process_name": process_name,
             "step_names": step_names,
@@ -181,9 +187,10 @@ def build_matrix(org_id: str, process_node_id: str | None = None) -> dict:
             process_id = str(c["process_node_id"])
             step_id = str(c["step_id"])
             details = process_details.get(process_id, {})
+            stored_step_name = str(c.get("step_name") or "").strip()
             seen[key] = {
                 "step_id": step_id,
-                "step_name": (details.get("step_names") or {}).get(step_id, step_id),
+                "step_name": stored_step_name or (details.get("step_names") or {}).get(step_id, step_id),
                 "process_node_id": process_id,
                 "process_name": details.get("process_name") or process_id,
             }
