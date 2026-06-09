@@ -5,7 +5,8 @@ import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-codes.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css";
-import WorkforceOverlay, { computeTaskRisk, RISK_BORDER } from "./WorkforceOverlay";
+import WorkforceOverlay from "./WorkforceOverlay";
+import { computeTaskRisk, RISK_BORDER } from "./workforceUtils";
 import { listCompetencies } from "../api/workforce";
 
 const severityIcon = (severity) => {
@@ -1159,7 +1160,7 @@ export default function MapViewer({
             name: element.businessObject?.name || engineId,
           });
         } else {
-          closeWorkforceSelection();
+          setSelectedWorkforceStep(null);
         }
       }
       if (boType === "bpmn:Lane" || boType === "bpmn:Participant") {

@@ -136,7 +136,7 @@ function AdminPanelPage() {
       { id: "sessions", value: activeSessions },
       { id: "verified", value: verifiedUsers },
     ];
-  }, [tabState.models.count, tabState.orgs.count, tabState.users.count, tabState.users.items]);
+  }, [tabState.feedback.count, tabState.models.count, tabState.orgs.count, tabState.users.count, tabState.users.items]);
 
   const currentLabel = t(`admin.tab_${activeTab}`);
 
