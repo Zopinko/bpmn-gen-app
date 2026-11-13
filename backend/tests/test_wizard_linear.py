@@ -136,6 +136,32 @@ def test_lane_append_conditional_uses_english_labels_for_en_locale():
     assert (gateway_id, tasks[1]["id"], "No") in flow_pairs
 
 
+def test_lane_append_keeps_both_decision_paths_connected_to_existing_end():
+    engine = _demo_engine()
+    engine["nodes"] = [
+        {"id": "start", "type": "startEvent", "name": "Start", "laneId": "lane_1"},
+        {"id": "end", "type": "endEvent", "name": "End", "laneId": "lane_1"},
+    ]
+    engine["flows"] = [{"id": "initial", "source": "start", "target": "end"}]
+
+    def append(description, model):
+        return append_tasks_to_lane_from_description(LaneAppendRequest(
+            lane_id="lane_1", description=description, engine_json=model, locale="en",
+        ))["engine_json"]
+
+    branched = append("If invoice is valid, then approve invoice, else return invoice", engine)
+    tasks = {node["name"]: node["id"] for node in _by_type(branched, "task")}
+    assert {flow["source"] for flow in branched["flows"] if flow["target"] == "end"} == set(tasks.values())
+
+    continued = append("Archive invoice", branched)
+    continued = append("Notify accounting", continued)
+    tasks = {node["name"]: node["id"] for node in _by_type(continued, "task")}
+    assert {flow["source"] for flow in continued["flows"] if flow["target"] == "end"} == {
+        tasks["return invoice"], tasks["Notify accounting"],
+    }
+    assert any(flow["source"] == tasks["Archive invoice"] and flow["target"] == tasks["Notify accounting"] for flow in continued["flows"])
+
+
 def test_lane_append_inline_decision_after_linear_steps():
     built = append_tasks_to_lane_from_description(
         LaneAppendRequest(

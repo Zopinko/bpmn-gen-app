@@ -30,10 +30,16 @@ def find_gateway_warnings(
             "inclusiveGateway",
             "parallelGateway",
         }:
-            inbound = indeg[node["id"]]
-            outbound = outdeg[node["id"]]
+            node_id = node.get("id")
+            if not node_id:
+                warnings.append(
+                    f"Gateway-like node missing id key (name='{node.get('name', '')}', type='{node_type}')"
+                )
+                continue
+            inbound = indeg[node_id]
+            outbound = outdeg[node_id]
             if inbound < 1 or outbound < 1:
                 warnings.append(
-                    f"Gateway {node['id']} ('{node.get('name', '')}') has indeg={inbound}, outdeg={outbound}"
+                    f"Gateway {node_id} ('{node.get('name', '')}') has indeg={inbound}, outdeg={outbound}"
                 )
     return warnings

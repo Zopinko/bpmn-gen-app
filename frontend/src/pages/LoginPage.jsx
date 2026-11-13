@@ -2,11 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { loginAuth } from "../api/auth";
-
-const PENDING_INVITE_STORAGE_KEY = "PENDING_ORG_INVITE_TOKEN";
+import { orgInvitePath, PENDING_ORG_INVITE_KEY } from "../organizationInvite";
 
 function mapLoginErrorMessage(statusCode, t) {
   if (statusCode === 401) return t("login.error_401");
+  if (statusCode === 403) return t("email_verification.login_required");
   if (statusCode === 429) return t("login.error_429");
   return t("login.error_generic");
 }
@@ -36,15 +36,15 @@ function LoginPage({ onLoginSuccess }) {
       setStatus({ loading: false, error: "" });
 
       const pendingInviteToken =
-        typeof window !== "undefined" ? window.localStorage.getItem(PENDING_INVITE_STORAGE_KEY) : "";
+        typeof window !== "undefined" ? window.localStorage.getItem(PENDING_ORG_INVITE_KEY) : "";
       if (pendingInviteToken) {
-        navigate(`/join-org/${pendingInviteToken}`, { replace: true });
+        navigate(orgInvitePath(pendingInviteToken), { replace: true });
       } else {
         navigate("/", { replace: true });
       }
     } catch (error) {
       const statusCode = Number.isInteger(error?.status) ? error.status : 0;
-      setStatus({ loading: false, error: mapLoginErrorMessage(statusCode, t) });
+      setStatus({ loading: false, error: mapLoginErrorMessage(statusCode, t), needsVerification: statusCode === 403 });
     }
   };
 
@@ -84,6 +84,9 @@ function LoginPage({ onLoginSuccess }) {
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
+        {status.needsVerification ? (
+          <Link to="/verify-email" state={{ email }}>{t("email_verification.resend")}</Link>
+        ) : null}
 
         <p className="auth-footer">
           {t("login.no_account")} <Link to="/register">{t("login.register_link")}</Link>

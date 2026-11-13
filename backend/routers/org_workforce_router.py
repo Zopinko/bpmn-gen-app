@@ -13,6 +13,7 @@ from services.org_competencies_storage import (
     delete_competencies_by_employee,
     delete_competency,
     list_competencies,
+    require_process_step,
     update_competency,
 )
 from services.org_employees_storage import (
@@ -157,15 +158,20 @@ def api_create_competency(
     emp_id = _clean_required(payload.emp_id, "emp_id")
     if not get_employee(resolved_org_id, emp_id):
         raise HTTPException(status_code=404, detail="Zamestnanec neexistuje.")
+    process_node_id = _clean_required(payload.process_node_id, "process_node_id")
+    step_id = _clean_required(payload.step_id, "step_id")
     try:
+        require_process_step(resolved_org_id, process_node_id, step_id)
         return create_competency(
             resolved_org_id,
             emp_id=emp_id,
-            process_node_id=_clean_required(payload.process_node_id, "process_node_id"),
-            step_id=_clean_required(payload.step_id, "step_id"),
+            process_node_id=process_node_id,
+            step_id=step_id,
             level=payload.level,
             step_name=payload.step_name,
         )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

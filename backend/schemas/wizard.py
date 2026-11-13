@@ -15,6 +15,7 @@ class LinearWizardRequest(BaseModel):
 class LinearWizardResponse(BaseModel):
     engine_json: Any
     issues: list[dict] | None = None
+    diagram_xml: str | None = None
 
 
 class LaneAppendRequest(BaseModel):

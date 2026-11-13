@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'src/hooks/useDualMap_clean.js']),
+  globalIgnores(['dist']),
+  // useDualMap_clean.js - legacy entry removed after task
   {
     files: ['**/*.{js,jsx}'],
     extends: [

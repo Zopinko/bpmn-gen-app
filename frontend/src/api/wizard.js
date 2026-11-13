@@ -10,7 +10,7 @@ function withLocalePayload(payload) {
 }
 
 export async function generateLinearWizardDiagram(payload) {
-  const response = await fetch(`${API_BASE}/wizard/linear`, {
+  const response = await fetch(`${API_BASE}/wizard/linear?include_xml=true`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(withLocalePayload(payload)),
@@ -89,11 +89,12 @@ export async function exportBpmn(engineJson) {
   return response.blob();
 }
 
-export async function importBpmn(file) {
+export async function importBpmn(file, { includeXml = false } = {}) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE}/wizard/import-bpmn`, {
+  const query = includeXml ? "?include_xml=true" : "";
+  const response = await fetch(`${API_BASE}/wizard/import-bpmn${query}`, {
     method: "POST",
     body: formData,
     credentials: "include",
@@ -561,10 +562,27 @@ export async function rejectOrgDeleteRequest(requestId, orgId) {
   return response.json();
 }
 
-export async function acceptOrgInvite(token) {
-  const response = await fetch(`${API_BASE}/api/orgs/invite/${encodeURIComponent(token)}/accept`, {
+export async function sendOrgInviteEmail(orgId, email) {
+  const response = await fetch(`${API_BASE}/api/orgs/${encodeURIComponent(orgId)}/invite-email`, {
     method: "POST",
     credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function acceptOrgInvite(token) {
+  const response = await fetch(`${API_BASE}/api/orgs/invite/accept`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
   });
   if (!response.ok) {
     let detail = null;

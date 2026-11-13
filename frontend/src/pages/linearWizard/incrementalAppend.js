@@ -44,11 +44,15 @@ export function applyIncrementalAppend({
 
   const prevNodeIds = new Set(prevNodes.map((n) => String(n?.id)));
   const prevFlowIds = new Set(prevFlows.map((f) => String(f?.id)));
+  const nextFlowIds = new Set(nextFlows.map((f) => String(f?.id)));
+  const removedFlowIds = new Set([...prevFlowIds].filter((id) => !nextFlowIds.has(id)));
 
   const newNodes = nextNodes.filter((n) => n?.id && !prevNodeIds.has(String(n.id)));
   const newFlows = nextFlows.filter((f) => f?.id && !prevFlowIds.has(String(f.id)));
 
-  if (!newNodes.length && !newFlows.length) return ok({ reason: "no_changes" });
+  if (!newNodes.length && !newFlows.length && !removedFlowIds.size) {
+    return ok({ reason: "no_changes" });
+  }
 
   const allElements = elementRegistry.getAll();
   const getEngineIdAttr = (el) => String(el?.businessObject?.$attrs?.["data-engine-id"] || "");
@@ -1051,9 +1055,10 @@ export function applyIncrementalAppend({
       };
       break;
     }
-    const already = Array.isArray(source.outgoing)
-      ? source.outgoing.some((c) => c?.target?.id === target.id)
-      : false;
+    const flowId = String(flow.id);
+    const already = source.outgoing?.some(
+      (connection) => String(connection.id) === flowId || getEngineIdAttr(connection) === flowId,
+    );
     if (already) continue;
     try {
       const connection = modeling.connect(source, target, { type: "bpmn:SequenceFlow" });
@@ -1112,6 +1117,23 @@ export function applyIncrementalAppend({
 
   if (flowFailure) return fail(flowFailure.reason, flowFailure.details);
 
+  for (const connection of allElements) {
+    if (!connection.source || !connection.target || getBoType(connection) !== "bpmn:SequenceFlow") {
+      continue;
+    }
+    const removed =
+      removedFlowIds.has(String(connection.id)) || removedFlowIds.has(getEngineIdAttr(connection));
+    if (!removed) continue;
+    try {
+      modeling.removeConnection(connection);
+    } catch (error) {
+      return fail("remove_connection_exception", {
+        flowId: getEngineIdAttr(connection) || connection.id,
+        error: String(error?.message || error),
+      });
+    }
+  }
+
   const newNodeIds = new Set(newNodes.map((n) => String(n?.id || "")).filter(Boolean));
   const newNodesByLane = new Map();
   newNodes.forEach((node) => {
@@ -1138,93 +1160,8 @@ export function applyIncrementalAppend({
     }
   });
 
-  // Keep EndEvent hook-up behavior.
-  const hasBranchContextNearNode = (el) => {
-    if (!el) return false;
-    const attrs = el?.businessObject?.$attrs || {};
-    if (
-      attrs["data-parallel-split-id"] ||
-      attrs["data-parallel-join-id"] ||
-      attrs["data-xor-split-id"] ||
-      attrs["data-xor-join-id"]
-    ) {
-      return true;
-    }
-    const incoming = Array.isArray(el.incoming) ? el.incoming : [];
-    const outgoing = Array.isArray(el.outgoing) ? el.outgoing : [];
-    const allConns = [...incoming, ...outgoing];
-    return allConns.some((conn) => {
-      const src = conn?.source;
-      const tgt = conn?.target;
-      const srcType = String(src?.businessObject?.$type || src?.type || "");
-      const tgtType = String(tgt?.businessObject?.$type || tgt?.type || "");
-      const srcIsGateway = srcType.includes("Gateway");
-      const tgtIsGateway = tgtType.includes("Gateway");
-      if (!srcIsGateway && !tgtIsGateway) return false;
-      const srcDeg =
-        (Array.isArray(src?.incoming) ? src.incoming.length : 0) +
-        (Array.isArray(src?.outgoing) ? src.outgoing.length : 0);
-      const tgtDeg =
-        (Array.isArray(tgt?.incoming) ? tgt.incoming.length : 0) +
-        (Array.isArray(tgt?.outgoing) ? tgt.outgoing.length : 0);
-      return srcDeg > 2 || tgtDeg > 2;
-    });
-  };
-  newNodesByLane.forEach((laneNodes, laneId) => {
-    const endNode = nextNodes.find(
-      (n) => String(n?.laneId || "") === laneId && String(n?.type || "").toLowerCase().includes("end"),
-    );
-    if (!endNode) return;
-    const endEl = findElementByEngineId(endNode.id);
-    if (!endEl) return;
-    const lastNew = laneNodes[laneNodes.length - 1];
-    const lastNewEl = lastNew ? findElementByEngineId(lastNew.id) : null;
-    if (!lastNewEl) return;
-
-    const incomingToEnd = Array.isArray(endEl.incoming) ? [...endEl.incoming] : [];
-    const existingEndIncoming = incomingToEnd[0] || null;
-    const existingSource = existingEndIncoming?.source || null;
-    const complexBranchEndHookup =
-      hasBranchContextNearNode(lastNewEl) || hasBranchContextNearNode(existingSource);
-    if (complexBranchEndHookup) {
-      return;
-    }
-    if (existingEndIncoming && existingEndIncoming.source?.id !== lastNewEl.id) {
-      try {
-        modeling.removeConnection(existingEndIncoming);
-      } catch {
-        // ignore remove errors
-      }
-      const src = existingEndIncoming.source;
-      if (src) {
-        const hasIncoming = Array.isArray(lastNewEl.incoming) ? lastNewEl.incoming.length > 0 : false;
-        if (!hasIncoming && src.id !== lastNewEl.id) {
-          try {
-            modeling.connect(src, lastNewEl, { type: "bpmn:SequenceFlow" });
-          } catch {
-            // ignore connect errors
-          }
-        }
-      }
-    }
-
-    const hasEndLink = Array.isArray(lastNewEl.outgoing)
-      ? lastNewEl.outgoing.some((c) => c?.target?.id === endEl.id)
-      : false;
-    if (!hasEndLink) {
-      try {
-        modeling.connect(lastNewEl, endEl, { type: "bpmn:SequenceFlow" });
-      } catch {
-        // ignore connect errors
-      }
-    }
-  });
-
   // Safety snap only for newly created nodes.
   const extraRerouteNodeIds = new Set();
-  const createdElementIds = new Set(
-    [...createdByEngineId.values()].map((el) => String(el?.id || "")).filter(Boolean),
-  );
   newNodesByLane.forEach((laneNodes, laneId) => {
     const laneEl = laneById.get(laneId);
     if (!laneEl) return;
@@ -1254,6 +1191,7 @@ export function applyIncrementalAppend({
         const srcType = String(src?.businessObject?.$type || src?.type || "");
         if (
           src &&
+          getElementLane(src)?.id === laneEl.id &&
           !srcType.includes("Gateway") &&
           !srcType.includes("StartEvent") &&
           !srcType.includes("EndEvent")
@@ -1261,7 +1199,12 @@ export function applyIncrementalAppend({
           preferredSourceRowMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
           targetMidY = preferredSourceRowMidY;
           shouldRerouteAfterSnap = true;
-        } else if (src && parallelJoinId && srcType.includes("ParallelGateway")) {
+        } else if (
+          src &&
+          getElementLane(src)?.id === laneEl.id &&
+          parallelJoinId &&
+          srcType.includes("ParallelGateway")
+        ) {
           preferredSourceRowMidY = Number(src.y || 0) + Number(src.height || 0) / 2;
           targetMidY = preferredSourceRowMidY;
           shouldRerouteAfterSnap = true;
@@ -1313,8 +1256,7 @@ export function applyIncrementalAppend({
       }
     });
 
-    // Low-risk guard for undo/redo UX:
-    // only realign StartEvent when it was created in this append, not on normal append-to-existing chain.
+    // Keep existing start events at their canvas positions.
     const nodesInLane = elementRegistry
       .getAll()
       .filter((el) => isFlowNode(el) && isInLane(el, laneEl));
@@ -1322,26 +1264,7 @@ export function applyIncrementalAppend({
       const elType = String(el?.businessObject?.$type || el?.type || "");
       if (!elType.includes("StartEvent")) return;
       const engineId = String(el?.businessObject?.$attrs?.["data-engine-id"] || "");
-      const isNewStart = Boolean(engineId && newNodeIds.has(engineId));
-      let shouldAlignExistingStart = false;
-      if (!isNewStart) {
-        const outgoing = Array.isArray(el.outgoing) ? el.outgoing : [];
-        if (outgoing.length === 1) {
-          const onlyConn = outgoing[0];
-          const target = onlyConn?.target || null;
-          const targetId = String(target?.id || "");
-          const targetAttrs = target?.businessObject?.$attrs || {};
-          const targetHasBranchContext = Boolean(
-            targetAttrs["data-parallel-split-id"] ||
-              targetAttrs["data-parallel-join-id"] ||
-              targetAttrs["data-xor-split-id"] ||
-              targetAttrs["data-xor-join-id"] ||
-              targetAttrs["data-branch"] === "alt",
-          );
-          shouldAlignExistingStart = Boolean(targetId && createdElementIds.has(targetId) && !targetHasBranchContext);
-        }
-      }
-      if (!isNewStart && !shouldAlignExistingStart) return;
+      if (!newNodeIds.has(engineId)) return;
       const h = Number(el.height || 0);
       if (!h) return;
       const baselineMidY = getBaselineMidY(laneEl);

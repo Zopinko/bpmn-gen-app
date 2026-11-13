@@ -17,7 +17,6 @@ def _set_env(tmp_path):
     previous = {
         "AUTH_DB_PATH": os.environ.get("AUTH_DB_PATH"),
         "BPMN_MODELS_DIR": os.environ.get("BPMN_MODELS_DIR"),
-        "SUPER_ADMIN_EMAILS": os.environ.get("SUPER_ADMIN_EMAILS"),
     }
     os.environ["AUTH_DB_PATH"] = str(db_path)
     os.environ["BPMN_MODELS_DIR"] = str(models_dir)
@@ -335,12 +334,12 @@ def test_org_scoped_endpoints_validate_membership_and_selected_org(tmp_path):
         _restore_env(previous)
 
 
-def test_superadmin_flag_from_auth_me_is_preserved(tmp_path):
+def test_superadmin_flag_from_auth_me_is_preserved(tmp_path, monkeypatch):
     previous = _set_env(tmp_path)
     try:
-        os.environ["SUPER_ADMIN_EMAILS"] = "super@example.com"
         run_auth_migrations()
-        register_user("super@example.com", "password123")
+        admin = register_user("super@example.com", "password123")
+        monkeypatch.setenv("SUPER_ADMIN_USER_IDS", admin.id)
         client = _authed_client("super@example.com")
 
         response = client.get("/api/auth/me")

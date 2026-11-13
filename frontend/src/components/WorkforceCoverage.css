@@ -1,0 +1,201 @@
+.workforce-workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workforce-coverage {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.workforce-coverage__intro h2,
+.workforce-coverage__intro p {
+  margin: 0;
+}
+
+.workforce-coverage__intro p {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.workforce-coverage__filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.workforce-coverage__filters select { min-width: 0; }
+
+.workforce-coverage__statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workforce-coverage__statuses button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: rgba(162, 162, 170, 0.05);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.workforce-coverage__statuses button[aria-pressed="true"] {
+  border-color: #777ae3;
+  background: rgba(85, 89, 220, 0.2);
+  color: var(--text-primary);
+}
+
+.workforce-coverage__statuses button strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.workforce-coverage__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a2a2aa;
+}
+
+.workforce-coverage__dot.is-critical { background: #f87171; }
+.workforce-coverage__dot.is-low { background: #fbbf24; }
+.workforce-coverage__dot.is-none { background: #4ade80; }
+
+.workforce-coverage__results {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.workforce-coverage__table-wrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: rgba(27, 27, 30, 0.35);
+}
+
+.workforce-coverage__table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 14px;
+}
+
+.workforce-coverage__table th,
+.workforce-coverage__table td {
+  padding: 12px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.workforce-coverage__table thead th {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workforce-coverage__table tbody tr {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.workforce-coverage__table tbody tr:hover { background: rgba(162, 162, 170, 0.045); }
+
+.workforce-coverage__step { width: 27%; }
+.workforce-coverage__step > * { display: block; }
+.workforce-coverage__step > span,
+.workforce-coverage__vacant {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.workforce-coverage__people ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workforce-coverage__action { text-align: right; }
+.workforce-coverage__action .btn { min-height: 36px; }
+.workforce-coverage__mobile-label { display: none; }
+
+.workforce-assignment-dialog {
+  width: min(460px, calc(100% - 28px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: #1d1d21;
+  color: var(--text-primary);
+}
+
+.workforce-assignment-dialog::backdrop { background: rgba(12, 12, 13, 0.72); }
+
+.workforce-assignment-dialog .workforce-overlay-panel {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 20px;
+  border: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 800px) {
+  .workforce-coverage__table-wrap { border: 0; background: transparent; }
+  .workforce-coverage__table,
+  .workforce-coverage__table tbody { display: block; }
+  .workforce-coverage__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .workforce-coverage__table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding: 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-panel);
+    background: rgba(27, 27, 30, 0.35);
+  }
+  .workforce-coverage__table th,
+  .workforce-coverage__table td { padding: 0; }
+  .workforce-coverage__step { grid-column: span 2; width: auto; }
+  .workforce-coverage__risk { justify-self: end; }
+  .workforce-coverage__mobile-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .workforce-coverage__action { grid-column: 1 / -1; }
+}
+
+@media (max-width: 520px) {
+  .workforce-coverage__filters { grid-template-columns: 1fr; }
+  .workforce-coverage__action .btn { width: 100%; }
+}

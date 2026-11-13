@@ -92,6 +92,9 @@ function AccountPage({ currentUser, onLogout }) {
           <div className="account-info-row">
             <span>{t("account.field_email")}</span>
             <strong>{currentUser?.email || t("account.unknown")}</strong>
+            {currentUser?.email && currentUser.email_verified === false ? (
+              <Link to="/verify-email" state={{ email: currentUser.email }}>{t("email_verification.title")}</Link>
+            ) : null}
           </div>
           <div className="account-info-row">
             <span>{t("account.field_user_id")}</span>

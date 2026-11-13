@@ -34,7 +34,7 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         for lane in lane_set:
             if _local(lane.tag) != "lane":
                 continue
-            lid = lane.get("id") or f"Lane_{len(lanes) + 1}"
+            lid = lane.get("data-engine-id") or lane.get("id") or f"Lane_{len(lanes) + 1}"
             lname = lane.get("name") or lid
             lanes.append({"id": lid, "name": lname})
             for fn_ref in lane.findall(".//{*}flowNodeRef"):
@@ -107,6 +107,7 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         nodes.append(node_payload)
         nodes_by_id[node_id] = node_payload
 
+    default_flows = {node.get("id"): node.get("default") for node in process_el if node.get("default")}
     flows: List[Dict[str, Any]] = []
     for seq in process_el.findall(".//{*}sequenceFlow"):
         fid = seq.get("id") or f"Flow_{len(flows) + 1}"
@@ -128,6 +129,8 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
             flow_payload["name"] = flow_name
         if cond_text:
             flow_payload["condition"] = cond_text
+        if default_flows.get(src) == fid:
+            flow_payload["default"] = True
 
         flows.append(flow_payload)
 

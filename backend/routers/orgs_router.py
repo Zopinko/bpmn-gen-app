@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from auth.deps import require_user
 from auth.service import (
     accept_org_invite,
     AuthUser,
+    OrgInviteSendLimit,
     add_org_member,
     create_org_with_owner,
     delete_org_by_owner,
@@ -16,9 +17,9 @@ from auth.service import (
     get_user_orgs,
     get_user_primary_org,
     get_user_org_role,
-    is_user_member_of_org,
     list_org_members,
     regenerate_org_invite,
+    send_org_invite_email,
     remove_org_member_by_email,
     leave_org,
     update_org_member_role_by_email,
@@ -148,9 +149,8 @@ def add_org_member_endpoint(payload: AddOrgMemberRequest, current_user: AuthUser
     user_id = find_user_id_by_email(email)
     if not user_id:
         raise HTTPException(status_code=404, detail="Pouzivatel s tymto emailom neexistuje.")
-    if is_user_member_of_org(user_id, org_id):
+    if not add_org_member(user_id=user_id, org_id=org_id, role=role):
         return {"ok": True, "already_member": True}
-    add_org_member(user_id=user_id, org_id=org_id, role=role)
     record_org_event(
         org_id,
         actor_user_id=current_user.id,
@@ -266,9 +266,8 @@ def get_org_invite_link(
             metadata={"expires_at": invite.get("expires_at")},
         )
     elif create_if_missing:
-        latest_before = get_latest_org_invite(resolved_org_id)
         invite = get_or_create_org_invite(resolved_org_id, current_user.id)
-        if invite and str(invite.get("id") or "") != str((latest_before or {}).get("id") or ""):
+        if invite["created"]:
             record_org_event(
                 resolved_org_id,
                 actor_user_id=current_user.id,
@@ -293,14 +292,43 @@ def get_org_invite_link(
     }
 
 
+class OrgInviteEmailRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class AcceptOrgInviteRequest(BaseModel):
+    token: str = Field(max_length=512)
+
+
+@router.post("/{org_id}/invite-email", status_code=202)
+def queue_org_invite_endpoint(org_id: str, payload: OrgInviteEmailRequest, current_user: AuthUser = Depends(require_user)):
+    try:
+        send_org_invite_email(org_id, current_user.id, payload.email, current_user.language)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except OrgInviteSendLimit as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Email delivery is unavailable.") from exc
+    return {"queued": True}
+
+
 @router.post("/invite/{token}/accept", response_model=AcceptOrgInviteResponse)
 def accept_org_invite_endpoint(token: str, current_user: AuthUser = Depends(require_user)):
     try:
         result = accept_org_invite(token, current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return result
 
+
+@router.post("/invite/accept", response_model=AcceptOrgInviteResponse)
+def accept_org_invite_from_body(payload: AcceptOrgInviteRequest, current_user: AuthUser = Depends(require_user)):
+    return accept_org_invite_endpoint(payload.token, current_user)
 
 
 

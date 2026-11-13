@@ -4,7 +4,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
-import { useHeaderStepper } from "../components/HeaderStepperContext";
+import WorkspaceIcon from "../components/WorkspaceIcon";
+import WorkspaceInspector from "../components/WorkspaceInspector";
+import WorkspaceShortcuts from "../components/WorkspaceShortcuts";
+import WorkspaceStructure from "../components/WorkspaceStructure";
+import { findDiagramElement, getElementEngineId } from "../components/workspaceNodes";
 import {
   appendLaneFromDescription,
   generateLinearWizardDiagram,
@@ -1387,7 +1391,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const { modelId: routeModelId } = useParams();
   const isDemoMode = Boolean(isDemo);
   const fileInputRef = useRef(null);
-  const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
   const [demoSetupOpen, setDemoSetupOpen] = useState(isDemoMode);
   const [demoBuilding, setDemoBuilding] = useState(false);
@@ -1400,6 +1403,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [exportLoading, setExportLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [loadLoading, setLoadLoading] = useState(false);
   const [error, setError] = useState(null);
   const [info, setInfo] = useState(null);
@@ -1440,6 +1444,47 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideEnabled = true;
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
+  const [mapSelection, setMapSelection] = useState(null);
+  const [structureOpen, setStructureOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem("bpmngen.ws.structureOpen") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [focusMode, setFocusMode] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [guideExpanded, setGuideExpanded] = useState(false);
+  const toggleStructure = useCallback(() => {
+    setStructureOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("bpmngen.ws.structureOpen", next ? "1" : "0");
+      } catch {
+        // storage unavailable; keep in-memory state
+      }
+      return next;
+    });
+  }, []);
+  const attachMapSelectionListener = useCallback((modeler) => {
+    const eventBus = modeler?.get?.("eventBus");
+    if (!eventBus?.on) return;
+    eventBus.on("selection.changed", (event) => {
+      const selected = Array.isArray(event?.newSelection) ? event.newSelection : [];
+      let element = selected[0] || null;
+      if (element?.type === "label" && element.labelTarget) element = element.labelTarget;
+      const boType = String(element?.businessObject?.$type || "");
+      if (!element || element.waypoints || !boType || /Process|Collaboration|Participant/.test(boType)) {
+        setMapSelection(null);
+        return;
+      }
+      setMapSelection({
+        id: getElementEngineId(element),
+        name: String(element.businessObject?.name || ""),
+        type: boType.replace(/^bpmn:/, ""),
+      });
+    });
+  }, []);
   const [guideHighlight, setGuideHighlight] = useState(null);
   const [homeGuideMessageIndex, setHomeGuideMessageIndex] = useState(0);
   const [activeLaneId, setActiveLaneId] = useState(null);
@@ -1511,8 +1556,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [processPanelHeight, setProcessPanelHeight] = useState(620);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
-  const [mentorNotes, setMentorNotes] = useState([]);
-  const [mentorLastRunAt, setMentorLastRunAt] = useState(null);
   const storyEngineRef = useRef(null);
   const guidePatchTimerRef = useRef(null);
   const guideHighlightTimerRef = useRef(null);
@@ -1557,8 +1600,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [replyOpenById, setReplyOpenById] = useState({});
 
   const [replyEditing, setReplyEditing] = useState({ noteId: null, replyId: null, text: "" });
-  const [lastSavedAt, setLastSavedAt] = useState(null);
-  const [lastExportedAt, setLastExportedAt] = useState(null);
   const previousActiveOrgIdRef = useRef(null);
 
   const sampleSequenceFlowWaypoints = useCallback((activeModeler, limit = 5) => {
@@ -1580,8 +1621,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingNoteText, setEditingNoteText] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
-  const lanePreviewOverlayIdsRef = useRef([]);
-  const lanePreviewTimerRef = useRef(null);
   const demoAppendStatsRef = useRef({
     attempts: 0,
     fallbacks: 0,
@@ -1840,17 +1879,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     openSingleCard(cardKey);
   };
 
-  const toggleRailSection = (key) => {
-    setRailSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const normalizeNodeId = (node) => node?.id || node?.nodeId || node?.refId || null;
 
   const guideRequestIdRef = useRef(0);
   const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
   const guideModelLoadedKeyRef = useRef(null);
   const guideLastReasonRef = useRef("init");
-  const pendingGuideReviewReasonRef = useRef(null);
+  const pendingSkeletonReviewRef = useRef(null);
   const modelVersionRef = useRef(modelVersion);
 
   useEffect(() => {
@@ -2528,8 +2563,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (actionId === "SAVE_PROCESS") {
-      await handleSaveModel();
-      setGuideState(null);
+      const saveResult = await handleSaveModel();
+      if (saveResult?.ok) setGuideState(null);
       return;
     }
     if (actionId === "MOVE_TO_ORG") {
@@ -2544,7 +2579,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return;
       }
       const saveResult = await handleSaveModel();
-      const savedModelId = saveResult?.modelId || routeModelId || null;
+      const savedModelId = saveResult?.modelId;
       if (!savedModelId) {
         return;
       }
@@ -3055,7 +3090,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return importedEngine;
   }, [bumpModelVersion]);
 
-  const getSyncedCanvasSnapshot = useCallback(async () => {
+  const getCanvasDiagramXml = useCallback(async () => {
     const modeler = modelerRef.current;
     if (!modeler?.saveXML) {
       throw new Error("Modeler nie je inicializovaný.");
@@ -3064,16 +3099,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!diagramXml || !diagramXml.trim()) {
       throw new Error("Diagram sa nepodarilo serializovať.");
     }
+    return diagramXml;
+  }, []);
+
+  const getSyncedCanvasSnapshot = useCallback(async () => {
+    const diagramXml = await getCanvasDiagramXml();
     const file = new File([diagramXml], "diagram.bpmn", { type: "application/bpmn+xml" });
     const importResp = await importBpmn(file);
     const syncedEngine = importResp?.engine_json || importResp;
     if (!syncedEngine) {
       throw new Error("Nepodarilo sa zosynchronizovať model pred uložením.");
     }
-    setEngineJson(syncedEngine);
-    setXmlFull(diagramXml, "save_snapshot_sync");
     return { engine: syncedEngine, diagramXml };
-  }, []);
+  }, [getCanvasDiagramXml]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -3091,6 +3129,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   useEffect(() => {
     if (!guideEnabled) return;
     if (!guideState?.key || !engineJson) return;
+    if (pendingSkeletonReviewRef.current?.engine === engineJson) return;
     if (guideState.key.startsWith("task_no_")) {
       runGuideReview("engine_change");
     }
@@ -3100,17 +3139,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!guideEnabled) return;
     if (!engineJson) return;
     if (modelVersion <= 0) return;
+    const pendingReview = pendingSkeletonReviewRef.current;
+    if (pendingReview?.engine === engineJson) {
+      if (!pendingReview.imported) return;
+      pendingSkeletonReviewRef.current = null;
+      runGuideReview("skeleton_generated", activeLaneId || null);
+      return;
+    }
     runGuideReview("model_change", activeLaneId || null);
   }, [guideEnabled, engineJson, modelVersion, activeLaneId, runGuideReview]);
-
-  useEffect(() => {
-    if (!guideEnabled) return;
-    if (!engineJson) return;
-    const pendingReason = pendingGuideReviewReasonRef.current;
-    if (!pendingReason) return;
-    pendingGuideReviewReasonRef.current = null;
-    runGuideReview(pendingReason, activeLaneId || null);
-  }, [guideEnabled, engineJson, activeLaneId, runGuideReview]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -3248,39 +3285,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
     }
   }, [selectedLane, modelVersion, resolveLaneElement]);
-
-  const headerStepperState = useMemo(
-    () => ({
-      processName:
-        (processCard.generatorInput.processName || "").trim() ||
-        engineJson?.processName ||
-        engineJson?.name ||
-        "",
-      lanes: engineJson?.lanes || [],
-      nodes: engineJson?.nodes || [],
-      flows: engineJson?.flows || [],
-      mentorNotes,
-      mentorLastRunAt,
-      lastSavedAt,
-      lastExportedAt,
-      storyGeneratedAt,
-    }),
-    [
-      engineJson,
-      lastExportedAt,
-      lastSavedAt,
-      storyGeneratedAt,
-      mentorLastRunAt,
-      mentorNotes,
-      processCard.generatorInput.processName,
-    ],
-  );
-
-  useEffect(() => {
-    setHeaderStepperState(headerStepperState);
-  }, [headerStepperState, setHeaderStepperState]);
-
-  useEffect(() => () => setHeaderStepperState(null), [setHeaderStepperState]);
 
   const regenerateStory = useCallback(() => {
     if (!engineJson) {
@@ -3769,10 +3773,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(false);
     setHasUnsavedChanges(false);
     setPreviewVersionTag("");
-    setMentorNotes([]);
-    setMentorLastRunAt(null);
-    setLastSavedAt(null);
-    setLastExportedAt(null);
     setGuideState(null);
     setGuideFindings([]);
     historyRef.current = [];
@@ -3821,17 +3821,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         processName,
         roles: roleLines.join("\n"),
       });
-      const generatePromise = generateLinearWizardDiagram(payload);
-      await sleep(450);
-      setDemoBuildStep(1);
-      await sleep(450);
-      setDemoBuildStep(2);
-      const response = await generatePromise;
+      const [response] = await Promise.all([
+        generateLinearWizardDiagram(payload),
+        (async () => {
+          await sleep(450);
+          setDemoBuildStep(1);
+          await sleep(450);
+          setDemoBuildStep(2);
+        })(),
+      ]);
       const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
+      const xmlText = response?.diagram_xml;
+      if (!generatedEngine || !xmlText) {
+        throw new Error("Chýba model alebo diagram v odpovedi.");
       }
-      const xmlText = await renderEngineXml(generatedEngine);
       setEngineJson(generatedEngine);
       setXmlFull(xmlText, "demo_generate");
       setModelSource({ kind: "sandbox" });
@@ -3984,6 +3987,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     undoInProgressRef.current = true;
     setEngineJson(snapshot.engine);
     setXmlFull(snapshot.xml, "undo_snapshot");
+    setHasUnsavedChanges(true);
     lastSyncedXmlRef.current = snapshot.xml;
     if (Array.isArray(snapshot.engine?.lanes) && snapshot.engine.lanes.length) {
       setProcessCard((prev) => ({
@@ -4267,48 +4271,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setRegenerateConfirmOpen(true);
       return;
     }
-    setIsLoading(true);
-    try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
-      }
-      const payload = mapGeneratorInputToPayload(processCard.generatorInput);
-      const response = await generateLinearWizardDiagram(payload);
-      const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
-      }
-      pendingGuideReviewReasonRef.current = "skeleton_generated";
-      setEngineJson(generatedEngine);
-      setGuideState(buildImmediateGuideCard(generatedEngine));
-      const xmlText = await renderEngineXml(generatedEngine);
-      setXmlFull(xmlText, "handleGenerate");
-      setHasUnsavedChanges(true);
-    } catch (e) {
-      const message = e?.message || "Failed to generate diagram";
-      setError(message);
-    } finally {
-      setIsLoading(false);
-    }
+    await generateModelFromProcessCard();
   };
 
   const handleConfirmRegenerate = async () => {
     setRegenerateConfirmOpen(false);
+    await generateModelFromProcessCard();
+  };
+
+  const generateModelFromProcessCard = async () => {
     setIsLoading(true);
     try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
-      }
       const payload = mapGeneratorInputToPayload(processCard.generatorInput);
       const response = await generateLinearWizardDiagram(payload);
       const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
+      const xmlText = response?.diagram_xml;
+      if (!generatedEngine || !xmlText) {
+        throw new Error("Chýba model alebo diagram v odpovedi.");
       }
-      pendingGuideReviewReasonRef.current = "skeleton_generated";
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
+      pendingSkeletonReviewRef.current = { engine: generatedEngine, xml: xmlText, imported: false };
       setEngineJson(generatedEngine);
       setGuideState(buildImmediateGuideCard(generatedEngine));
-      const xmlText = await renderEngineXml(generatedEngine);
       setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
     } catch (e) {
@@ -4992,7 +4978,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const unreadProjectNotesCount = useMemo(() => notesUnreadIdsRef.current.size, [projectNotes, projectNotesLastSeenAt]);
   const visibleActivityPendingCount = activeOrgCapabilities.canApproveDeleteRequests ? pendingDeleteRequests.length : 0;
-  const totalTeamUnreadCount = unreadProjectNotesCount + visibleActivityPendingCount;
 
   const nonRequestActivityItems = useMemo(
     () =>
@@ -5291,67 +5276,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return { x, y };
   };
 
-  const clearLanePreviewOverlays = () => {
-    const modeler = modelerRef.current;
-    if (!modeler) return;
-    const overlays = modeler.get("overlays");
-    if (!overlays) return;
-    lanePreviewOverlayIdsRef.current.forEach((id) => overlays.remove(id));
-    lanePreviewOverlayIdsRef.current = [];
-  };
-
-  const _getPreviewShapeSize = (type) => {
-    if (type === "xor" || type === "and") {
-      return { width: 220, height: 110 };
-    }
-    return { width: 160, height: 68 };
-  };
-
-  const _createPreviewNode = (item, size) => {
-    const container = document.createElement("div");
-    const isGateway = item.type === "xor" || item.type === "and";
-    container.className = `lane-preview-shape lane-preview-shape--${isGateway ? "gateway" : "task"}`;
-    container.style.width = `${size.width}px`;
-    container.style.height = `${size.height}px`;
-    if (isGateway) {
-      const diamond = document.createElement("div");
-      diamond.className = "lane-preview-shape__diamond";
-
-      const content = document.createElement("div");
-      content.className = "lane-preview-shape__content";
-
-      const badge = document.createElement("div");
-      badge.className = "lane-preview-shape__badge";
-      badge.textContent = item.type === "and" ? "AND" : "XOR";
-      content.appendChild(badge);
-
-      const label = document.createElement("div");
-      label.className = "lane-preview-shape__label";
-      label.textContent = item.text;
-      content.appendChild(label);
-
-      diamond.appendChild(content);
-      container.appendChild(diamond);
-
-      const branchTop = document.createElement("div");
-      branchTop.className = "lane-preview-branch lane-preview-branch--top";
-      container.appendChild(branchTop);
-
-      const branchBottom = document.createElement("div");
-      branchBottom.className = "lane-preview-branch lane-preview-branch--bottom";
-      container.appendChild(branchBottom);
-    } else {
-      const content = document.createElement("div");
-      content.className = "lane-preview-shape__content";
-      const label = document.createElement("div");
-      label.className = "lane-preview-shape__label";
-      label.textContent = item.text;
-      content.appendChild(label);
-      container.appendChild(content);
-    }
-    return container;
-  };
-
   const _handleLaneShapeCreate = () => {
     if (!activeLaneShape) return;
     if (!selectedLane) {
@@ -5427,20 +5351,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setError(null);
   };
 
-
-  useEffect(() => {
-    if (lanePreviewTimerRef.current) {
-      window.clearTimeout(lanePreviewTimerRef.current);
-      lanePreviewTimerRef.current = null;
-    }
-
-    // Lane typing preview overlay is deprecated; always keep it disabled.
-    clearLanePreviewOverlays();
-    return undefined;
-  }, [laneDescription, selectedLane, engineJson]);
-
-  useEffect(() => () => clearLanePreviewOverlays(), []);
-
   const handleAppendToLane = async () => {
     if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
@@ -5465,7 +5375,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     cancelPendingRelayouts();
-    clearLanePreviewOverlays();
     setIsLoading(true);
     setError(null);
     try {
@@ -5540,11 +5449,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
       }
       const modeler = modelerRef.current;
-      const hasStartEventInUpdatedEngine = Array.isArray(updatedEngine?.nodes)
-        ? updatedEngine.nodes.some((node) => String(node?.type || "").toLowerCase().includes("start"))
-        : false;
+      const currentNodes = Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : [];
+      const onlyStartEvent =
+        currentNodes.length === 1 && String(currentNodes[0]?.type || "").toLowerCase().includes("start");
       const currentNodeIds = new Set(
-        (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : [])
+        currentNodes
           .map((node) => String(node?.id || ""))
           .filter(Boolean),
       );
@@ -5556,12 +5465,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return type.includes("start") || type.includes("end");
       };
       const isGatewayNode = (node) => String(node?.type || "").toLowerCase().includes("gateway");
-      const existingLaneWorkNodes = (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : []).filter(
-        (node) => String(node?.laneId || "") === String(laneId || "") && !isStartOrEndNode(node),
-      );
       const shouldFullRenderForInitialStartLabel = Boolean(
-        hasStartEventInUpdatedEngine &&
-          existingLaneWorkNodes.length === 0 &&
+        onlyStartEvent &&
           newNodesFromAppend.length === 1 &&
           !isStartOrEndNode(newNodesFromAppend[0]) &&
           !isGatewayNode(newNodesFromAppend[0]),
@@ -5647,7 +5552,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
               setHasUnsavedChanges(true);
               setLaneDescription("");
-              clearLanePreviewOverlays();
               setInfo("Kroky boli pridané (fallback render).");
               setLaneOpen(false);
               bumpModelVersion();
@@ -5662,7 +5566,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        clearLanePreviewOverlays();
         setLaneOpen(false);
         if (isDemoMode) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
@@ -5709,7 +5612,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setXmlFull(fullXml, "appendLane:fallback_full_rerender");
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        clearLanePreviewOverlays();
         setInfo("Kroky boli pridané (fallback render).");
         setLaneOpen(false);
         if (isDemoMode) {
@@ -5764,6 +5666,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const handleSaveModel = async () => {
+    if (saveInFlightRef.current) return null;
     if (isDemoMode) {
       setInfo(t("wizard.demo_save_disabled"));
       return;
@@ -5787,6 +5690,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setError(null);
     setInfo(null);
+    saveInFlightRef.current = true;
     setSaveLoading(true);
     try {
       if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_LAYOUT_STABILITY) {
@@ -5849,21 +5753,36 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
         saveResult = { ok: true, modelId: newModelId, name: payload.name, source: "org" };
       } else {
+        const modelId = modelSource?.modelId || globalThis.crypto?.randomUUID?.();
+        if (modelId) {
+          payload.id = modelId;
+          if (!modelSource?.modelId) {
+            setModelSource({ kind: "sandbox", modelId });
+          }
+        }
         const saved = await saveWizardModel(payload);
-        saveResult = { ok: true, modelId: saved?.id || null, name: payload.name, source: "sandbox" };
+        if (!saved?.id) {
+          throw new Error(t("wizard.save_error"));
+        }
+        if (saved.id !== modelId) {
+          setModelSource({ kind: "sandbox", modelId: saved.id });
+        }
+        saveResult = { ok: true, modelId: saved.id, name: payload.name, source: "sandbox" };
       }
-      setLastSavedAt(Date.now());
-      setInfo("Model bol ulozeny.");
+      setEngineJson(syncedEngine);
+      setXmlFull(diagramXml, "save_snapshot_sync");
+      setInfo(t("wizard.model_saved"));
       setHasUnsavedChanges(false);
       return saveResult;
     } catch (e) {
       const message =
         e?.status === 409
           ? e?.message || "Proces bol medzicasom zmeneny inym pouzivatelom. Obnov najnovsiu verziu a skus ulozit znova."
-          : e?.message || "Nepodarilo sa ulozit model.";
+          : e?.message || t("wizard.save_error");
       setError(message);
       return null;
     } finally {
+      saveInFlightRef.current = false;
       setSaveLoading(false);
     }
   };
@@ -5914,7 +5833,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, []);
 
   const handleXmlImported = useCallback(
-    (modeler) => {
+    (modeler, importedXml) => {
+      const pendingReview = pendingSkeletonReviewRef.current;
+      if (pendingReview?.xml === importedXml) {
+        pendingReview.imported = true;
+      }
       restoreRelayoutContext(modeler);
       bumpModelVersion();
     },
@@ -5962,6 +5885,152 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     [guideEnabled, guideState, applyGuideHighlight],
   );
 
+  const revealInMap = useCallback((engineId) => {
+    const modeler = modelerRef.current;
+    const element = findDiagramElement(modeler, engineId);
+    if (!element) return null;
+    try {
+      modeler.get("selection").select(element);
+      modeler.get("canvas").scrollToElement?.(element, { top: 120, bottom: 120, left: 120, right: 120 });
+    } catch {
+      // diagram not ready; selection is best effort
+    }
+    return element;
+  }, []);
+
+  const handleStructureLaneSelect = useCallback(
+    (lane) => {
+      if (!lane?.id) return;
+      const element = revealInMap(lane.id);
+      handleViewerLaneSelect({
+        id: lane.id,
+        engineId: lane.id,
+        canvasId: element?.id || "",
+        name: lane.name || "",
+      });
+      setMapSelection({ id: String(lane.id), name: lane.name || "", type: "Lane" });
+    },
+    [revealInMap, handleViewerLaneSelect],
+  );
+
+  const handleStructureNodeSelect = useCallback(
+    (node) => {
+      if (!node?.id) return;
+      const element = revealInMap(node.id);
+      if (!element) {
+        setMapSelection({ id: String(node.id), name: node.name || "", type: node.type || "" });
+      }
+    },
+    [revealInMap],
+  );
+
+  const handleInspectorOpenLane = useCallback(
+    (laneId, laneName) => {
+      handleStructureLaneSelect({ id: laneId, name: laneName });
+    },
+    [handleStructureLaneSelect],
+  );
+
+  useEffect(() => {
+    if (!xml) {
+      setMapSelection(null);
+      setFocusMode(false);
+    }
+  }, [xml]);
+
+  useEffect(() => {
+    const isTyping = (target) => {
+      const tag = String(target?.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target?.isContentEditable);
+    };
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || isTyping(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key === "\\") {
+        event.preventDefault();
+        toggleStructure();
+        return;
+      }
+      if (event.key === "?" && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Escape") {
+        if (shortcutsOpen) {
+          setShortcutsOpen(false);
+          return;
+        }
+        setFocusMode(false);
+        return;
+      }
+      if ((event.key === "t" || event.key === "T") && xml) {
+        event.preventDefault();
+        toggleStructure();
+        return;
+      }
+      if ((event.key === "f" || event.key === "F") && xml) {
+        event.preventDefault();
+        setFocusMode((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shortcutsOpen, toggleStructure, xml]);
+
+  const layoutFitReadyRef = useRef(false);
+  useEffect(() => {
+    // the diagram container changed size: re-measure it and re-centre the diagram
+    if (!layoutFitReadyRef.current) {
+      layoutFitReadyRef.current = true;
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const canvas = modelerRef.current?.get("canvas");
+        if (!canvas) return;
+        canvas.resized();
+        canvas.zoom("fit-viewport", "auto");
+        if (canvas.zoom() > 1) canvas.zoom(1, "auto");
+      } catch {
+        // modeler not ready
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusMode, structureOpen]);
+
+  useEffect(() => {
+    // a left card slides over the map: move the diagram so the edited role stays visible
+    if (!laneOpen || !selectedLane) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const modeler = modelerRef.current;
+        const cards = document.querySelector(".ws-cards");
+        if (!modeler || !cards || getComputedStyle(cards).position !== "absolute") return;
+        const element =
+          findDiagramElement(modeler, selectedLane.engineId || selectedLane.id) ||
+          (selectedLane.canvasId ? modeler.get("elementRegistry").get(selectedLane.canvasId) : null);
+        if (!element) return;
+        const canvas = modeler.get("canvas");
+        const viewbox = canvas.viewbox();
+        const scale = viewbox.scale || 1;
+        const containerRect = canvas.getContainer().getBoundingClientRect();
+        const safeLeft = cards.getBoundingClientRect().right - containerRect.left + 24;
+        const elementLeft = (element.x - viewbox.x) * scale;
+        if (elementLeft >= safeLeft) return;
+        canvas.viewbox({
+          x: viewbox.x - (safeLeft - elementLeft) / scale,
+          y: viewbox.y,
+          width: viewbox.width,
+          height: viewbox.height,
+        });
+      } catch {
+        // diagram not ready
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [laneOpen, selectedLane]);
+
   const viewerProps = useMemo(
     () => ({
       title: t("wizard.process_card_preview_title"),
@@ -5991,13 +6060,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       onXmlImported: handleXmlImported,
       overlayMessage: relayouting ? t("wizard.relayouting") : "",
       guideHighlight: guideHighlight?.map || null,
-      orgId: modelSource?.kind === "org" ? activeOrgId : "",
+      orgId: modelSource?.kind === "org" ? modelSource.orgId : "",
       processNodeId: modelSource?.kind === "org" ? modelSource?.treeNodeId || "" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
+        attachMapSelectionListener(modeler);
       },
     }),
     [
+      attachMapSelectionListener,
       error,
       handleDiagramChange,
       handleSaveModel,
@@ -6014,7 +6085,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       guideHighlight,
       handleXmlImported,
       handleViewerLaneSelect,
-      activeOrgId,
       xml,
       modelSource,
       orgReadOnly,
@@ -6030,9 +6100,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!loadedEngine || !diagram) {
       throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
     }
-    if (engineJson && xml && !undoInProgressRef.current) {
-      pushHistorySnapshot(engineJson, xml);
-    }
+    historyRef.current = [];
+    setHistoryCount(0);
     setEngineJson(loadedEngine);
     setXmlFull(diagram, "applyLoadedModel");
     setSelectedLane(null);
@@ -6048,6 +6117,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setModelsOpen(false);
     }
     setDrawerOpen(false);
+  };
+
+  const applyOrgModelWithProcessContext = async (model, modelId, orgId) => {
+    let treeNodeId = String(model?.tree_node_id || "").trim();
+    if (!treeNodeId) {
+      // Direct links can open before the organization tree has been loaded.
+      const tree = await getOrgModel(orgId).catch(() => orgTree);
+      treeNodeId = findProcessPathByModelId(tree, modelId)?.at(-1)?.id || "";
+    }
+    applyLoadedModel(model, { source: { kind: "org", orgId, modelId, treeNodeId } });
   };
 
   const showMissingDiagram = useCallback((message) => {
@@ -6078,15 +6157,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(true);
     try {
       const resp = await loadWizardModel(id);
-      applyLoadedModel(resp, { source: { kind: "sandbox" } });
+      applyLoadedModel(resp, { source: { kind: "sandbox", modelId: id } });
       setInfo(t("wizard.model_loaded"));
     } catch (e) {
       const isNotFound =
         e?.status === 404 || (typeof e?.message === "string" && e.message.includes("HTTP 404"));
-      if (isNotFound && activeOrgId) {
+      const orgId = activeOrgId || currentUser?.org_id;
+      if (isNotFound && orgId) {
         try {
-          const orgResp = await loadOrgModel(id, activeOrgId);
-          applyLoadedModel(orgResp, { source: { kind: "org", orgId: activeOrgId, modelId: id } });
+          const orgResp = await loadOrgModel(id, orgId);
+          await applyOrgModelWithProcessContext(orgResp, id, orgId);
           setOrgVersionPreview(null);
           setPreviewVersionTag("");
           setInfo(t("wizard.model_loaded"));
@@ -6498,12 +6578,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(true);
     try {
       const resp = await loadOrgModel(modelId, activeOrgId);
-      const treeNodeId =
-        String(resp?.tree_node_id || "").trim() ||
-        String(findProcessPathByModelId(orgTree, modelId, [])?.slice(-1)?.[0]?.id || "").trim();
-      applyLoadedModel(resp, {
-        source: { kind: "org", orgId: activeOrgId, modelId, ...(treeNodeId ? { treeNodeId } : {}) },
-      });
+      await applyOrgModelWithProcessContext(resp, modelId, activeOrgId);
       setOrgVersionPreview(null);
       setPreviewVersionTag("");
       lastRouteModelIdRef.current = modelId;
@@ -7474,6 +7549,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         pendingOpenResolveRef.current = resolve;
         pendingOpenCancelRef.current = () => resolve(false);
         pendingOpenActionRef.current = null;
+        setError(null);
+        setInfo(null);
         setSavePromptOpen(true);
       });
     };
@@ -7529,35 +7606,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     pendingOpenActionRef.current = action;
+    setError(null);
+    setInfo(null);
     setSavePromptOpen(true);
   };
 
   const handleSaveAndOpen = async () => {
-    if (isDemoMode) {
-      setSavePromptOpen(false);
-      handleOpenWithoutSave();
-      return;
+    if (!isDemoMode) {
+      const result = await handleSaveModel();
+      if (!result?.ok) return;
     }
-    setSavePromptOpen(false);
-    await handleSaveModel();
-    setInfo(t("wizard.model_saved"));
-    setHasUnsavedChanges(false);
-    const resolve = pendingOpenResolveRef.current;
-    pendingOpenResolveRef.current = null;
-    pendingOpenCancelRef.current = null;
-    if (resolve) {
-      resolve(true);
-    }
-    const action = pendingOpenActionRef.current;
-    pendingOpenActionRef.current = null;
-    if (action) {
-      window.setTimeout(() => {
-        action();
-      }, 1000);
-    }
+    continuePendingOpen();
   };
 
-  const handleOpenWithoutSave = () => {
+  const continuePendingOpen = () => {
+    if (saveInFlightRef.current) return;
     const resolve = pendingOpenResolveRef.current;
     pendingOpenResolveRef.current = null;
     pendingOpenCancelRef.current = null;
@@ -7573,6 +7636,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const handleCancelOpen = () => {
+    if (saveInFlightRef.current) return;
     const cancel = pendingOpenCancelRef.current;
     pendingOpenResolveRef.current = null;
     pendingOpenCancelRef.current = null;
@@ -7659,6 +7723,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setModelsActionLoading(true);
         try {
           await deleteWizardModel(id);
+          setModelSource((source) =>
+            source.kind === "sandbox" && source.modelId === id ? { kind: "sandbox" } : source,
+          );
           await fetchModels();
           setInfo(t("wizard.model_delete_success"));
         } catch (e) {
@@ -7732,7 +7799,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     try {
       const resp = await loadWizardModel(id);
       const fallbackTag = resp?.process_meta?.version ? String(resp.process_meta.version) : "";
-      applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" }, versionTag: versionTag || fallbackTag });
+      applyLoadedModel(resp, {
+        closeModels: true,
+        source: { kind: "sandbox", modelId: id },
+        versionTag: versionTag || fallbackTag,
+      });
       setInfo(t("wizard.model_loaded"));
     } catch (e) {
       const message = e?.message || t("wizard.model_load_error");
@@ -7866,17 +7937,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setInfo(null);
     setExportLoading(true);
     try {
-      const { engine: syncedEngine, diagramXml } = await getSyncedCanvasSnapshot();
-      const name = syncedEngine?.name || syncedEngine?.processName || syncedEngine?.processId || "process";
-      await saveWizardModel({
-        name,
-        engine_json: syncedEngine,
-        diagram_xml: diagramXml,
-        generator_input: processCard.generatorInput,
-        process_meta: processCard.processMeta,
-      });
-      setLastExportedAt(Date.now());
-
+      const diagramXml = await getCanvasDiagramXml();
+      const name = engineJson?.name || engineJson?.processName || engineJson?.processId || deriveDefaultName();
       const safeName = (name || "process").replace(/[^\w.-]+/g, "_").replace(/_+/g, "_");
       const filename = `${safeName || "process"}.bpmn`;
       const blob = new Blob([diagramXml], { type: "application/bpmn+xml" });
@@ -7888,7 +7950,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setInfo(t("wizard.model_loaded"));
+      setInfo(t("wizard.export_success"));
     } catch (e) {
       const message = e?.message || t("wizard.export_error");
       setError(message);
@@ -7949,11 +8011,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (engineJson && xml && !undoInProgressRef.current) {
         pushHistorySnapshot(engineJson, xml);
       }
-      const response = await importBpmn(file);
+      const response = await importBpmn(file, { includeXml: true });
       const importedEngine = response?.engine_json || response;
+      const newXml = response?.diagram_xml || (await renderEngineXml(importedEngine));
       setEngineJson(importedEngine);
-      const newXml = await renderEngineXml(importedEngine);
       setXmlFull(newXml, "importBpmn");
+      if (modelSource.kind === "sandbox") {
+        setModelSource({ kind: "sandbox" });
+      }
       setSelectedLane(null);
       setLaneDescription("");
       setInfo(t("wizard.import_success"));
@@ -8081,230 +8146,264 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     modelSource?.kind !== "org" && guideEnabled && !guideWorkspaceActive && !xml;
   const homeGuideMessage =
     homeGuideMessages[homeGuideMessageIndex % homeGuideMessages.length] || homeGuideMessages[0];
+  const inspectorVisible = Boolean(
+    xml && mapSelection && !(drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen),
+  );
 
   return (
-    <div className="process-card-layout" ref={layoutRef}>
-      <div className="process-card-rail">
-        <Link to="/" className="process-card-rail-brand" aria-label={t("app.brand_label")}>
-          <span className="process-card-rail-brand__text">BPMN.Gen</span>
+    <div className={`ws-shell ${focusMode ? "ws-shell--focus" : ""}`}>
+      {focusMode ? (
+        <div className="ws-focus-pill" role="status">
+          <span className="ws-focus-pill__dot" aria-hidden="true" />
+          <span className="ws-focus-pill__label">{t("workspace.focus_on")}</span>
+          <span className="ws-focus-pill__hint">
+            {t("workspace.focus_hint")} <kbd>F</kbd> {t("workspace.or")} <kbd>Esc</kbd>
+          </span>
+          <button type="button" className="ws-focus-pill__btn" onClick={() => setFocusMode(false)}>
+            {t("workspace.focus_exit_short")}
+          </button>
+        </div>
+      ) : null}
+      <WorkspaceShortcuts open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <header className="ws-topbar">
+        <Link to="/" className="ws-topbar__brand" aria-label={t("app.brand_label")}>
+          <span className="ws-topbar__logo" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="ws-topbar__brand-text">BPMN.Gen</span>
         </Link>
-        {isDemoMode ? (
-          <div className="process-card-rail-group is-open">
-            <button type="button" className="process-card-rail-header" onClick={() => setDemoSetupOpen(true)}>
-              <span>DEMO</span>
+        <nav className="ws-tabs" aria-label={t("workspace.tabs_label")}>
+          <button
+            type="button"
+            className={`ws-tab ${!drawerOpen && !storyOpen && !orgOpen ? "is-active" : ""}`}
+            aria-pressed={!drawerOpen && !storyOpen && !orgOpen}
+            onClick={() => openSingleCard(null)}
+          >
+            {t("workspace.tab_map")}
+          </button>
+          <button
+            type="button"
+            className={`ws-tab ${drawerOpen ? "is-active" : ""}`}
+            aria-pressed={drawerOpen}
+            onClick={() => toggleSingleCard("drawer")}
+          >
+            {t("wizard.rail_show_process_card")}
+          </button>
+          <button
+            type="button"
+            className={`ws-tab ${storyOpen ? "is-active" : ""}`}
+            aria-pressed={storyOpen}
+            onClick={() => toggleSingleCard("story")}
+          >
+            {t("wizard.rail_show_story")}
+          </button>
+          {!isDemoMode ? (
+            <button
+              type="button"
+              className={`ws-tab ${orgOpen ? "is-active" : ""}`}
+              aria-pressed={orgOpen}
+              onClick={() => toggleSingleCard("org")}
+            >
+              {t("wizard.rail_show_org_model")}
             </button>
-            <div className="process-card-rail-content">
-              <button type="button" className="process-card-toggle" onClick={() => setDemoSetupOpen(true)}>
+          ) : null}
+        </nav>
+        <div className="ws-topbar__process">
+          {isDemoMode ? (
+            <span className="ws-badge ws-badge--demo" title={t("wizard.banner_demo_text", { maxRoles: DEMO_LIMITS.maxRoles })}>
+              Demo
+            </span>
+          ) : null}
+          {xml ? (
+            <>
+              <span className={`ws-badge ws-badge--${modelSource?.kind === "org" ? "org" : "sandbox"}`}>
+                {modelSource?.kind === "org" ? t("wizard.process_card_badge_org") : t("wizard.process_card_badge_sandbox")}
+              </span>
+              <span className="ws-topbar__process-name" title={previewName}>{previewName}</span>
+              {previewVersionTag ? <span className="ws-topbar__meta">{previewVersionTag}</span> : null}
+            </>
+          ) : (
+            <span className="ws-topbar__meta">{t("workspace.no_model")}</span>
+          )}
+        </div>
+        <div className="ws-topbar__actions">
+          {xml ? (
+            <button
+              type="button"
+              className="ws-btn ws-btn--icon"
+              title={`${t("workspace.focus_enter")} (F)`}
+              aria-label={t("workspace.focus_enter")}
+              onClick={() => setFocusMode(true)}
+            >
+              <WorkspaceIcon name="focus" size={15} />
+            </button>
+          ) : null}
+          {isDemoMode ? (
+            <>
+              <button type="button" className="ws-btn" onClick={() => setDemoSetupOpen(true)}>
                 {t("app.nav.demo_info")}
               </button>
-              <button type="button" className="process-card-toggle process-card-toggle--new-model" onClick={resetDemoState}>
+              <button type="button" className="ws-btn" onClick={resetDemoState}>
                 {t("app.nav.demo_reset")}
               </button>
-              <a className="process-card-toggle" href="/register">
+              <a className="ws-btn ws-btn--primary" href="/register">
                 {t("app.nav.create_account")}
               </a>
-            </div>
-          </div>
-        ) : (
-          <>
-        <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
-            <span>{t("wizard.rail_process_group")}</span>
-          </button>
-          {railSections.process ? (
-            <div className="process-card-rail-content">
-              <button
-                type="button"
-                className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
-                style={
-                  drawerOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("drawer")}
-              >
-                {drawerOpen ? t("wizard.rail_hide_process_card") : t("wizard.rail_show_process_card")}
-              </button>
-
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
-                style={
-                  storyOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("story")}
-              >
-                {storyOpen ? t("wizard.rail_hide_story") : t("wizard.rail_show_story")}
-              </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--new-model"
-                onClick={handleNewModel}
-              >
+            </>
+          ) : (
+            <>
+              <button type="button" className="ws-btn" onClick={handleNewModel}>
+                <WorkspaceIcon name="plus" size={14} />
                 {t("wizard.rail_new_model")}
               </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
-            <span>{t("wizard.rail_models_group")}</span>
-          </button>
-          {railSections.save ? (
-            <div className="process-card-rail-content">
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--models"
-                onClick={openModels}
-              >
-                {t("wizard.rail_saved_models")}
+              <button type="button" className="ws-btn" onClick={handleImportClick} disabled={importLoading}>
+                <WorkspaceIcon name="upload" size={14} />
+                {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
               </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--save"
-                onClick={handleSaveModel}
-                disabled={saveLoading}
-              >
-                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
-              </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--io"
-                onClick={handleExportBpmn}
-                disabled={exportLoading}
-              >
+              <button type="button" className="ws-btn" onClick={handleExportBpmn} disabled={exportLoading}>
+                <WorkspaceIcon name="download" size={14} />
                 {exportLoading ? t("wizard.rail_exporting") : t("wizard.rail_export")}
               </button>
               <button
                 type="button"
-                className="process-card-toggle process-card-toggle--io"
-                onClick={handleImportClick}
-                disabled={importLoading}
+                className="ws-btn ws-btn--primary"
+                onClick={handleSaveModel}
+                disabled={saveLoading || isReadOnlyMode}
               >
-                {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
+                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
               </button>
-            </div>
-          ) : null}
+            </>
+          )}
         </div>
+      </header>
 
-        <div className={`process-card-rail-group process-card-rail-group--team ${railSections.project ? "is-open" : ""}`}>
-          <button
-            type="button"
-            className="process-card-rail-header process-card-rail-header--stacked"
-            onClick={() => toggleRailSection("project")}
-          >
-            <span>{t("wizard.rail_team_group")}</span>
-            {totalTeamUnreadCount > 0 ? (
-              <span
-                className="process-card-rail-header__badge"
-                aria-label={`${totalTeamUnreadCount} noviniek v time`}
-              >
-                {totalTeamUnreadCount}
-              </span>
-            ) : null}
-          </button>
-          {railSections.project ? (
-            <div className="process-card-rail-content process-card-rail-content--team">
-              <button
-                type="button"
-                className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
-                style={
-                  orgOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("org")}
-              >
-                {orgOpen ? t("wizard.rail_hide_org_model") : t("wizard.rail_show_org_model")}
-              </button>
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
-                onClick={() => setNotesOpen(true)}
-              >
-                {t("wizard.rail_notes")}
-                {unreadProjectNotesCount > 0 ? (
-                  <span className="process-card-toggle__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
-                    {unreadProjectNotesCount}
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-activity ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
-                onClick={() => setActivityOpen(true)}
-              >
-                {t("wizard.rail_activity")}
-                {visibleActivityPendingCount > 0 ? (
-                  <span className="process-card-toggle__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
-                    {visibleActivityPendingCount}
-                  </span>
-                ) : null}
-              </button>
-              <button type="button" className="process-card-toggle process-card-toggle--team" onClick={openOrgsModal}>
-                {t("wizard.rail_org_admin")}
-              </button>
-            </div>
-          ) : null}
-        </div>
+    <div
+      className={`process-card-layout ${xml && structureOpen ? "ws-layout--tree" : ""} ${inspectorVisible ? "ws-layout--inspector" : ""}`}
+      ref={layoutRef}
+    >
+      <nav className="ws-rail" aria-label={t("workspace.rail_label")}>
+        {xml ? (
+          <>
+            <button
+              type="button"
+              className={`ws-rail__btn ${structureOpen ? "is-active" : ""}`}
+              title={`${t("workspace.toggle_structure")} (T)`}
+              aria-label={t("workspace.toggle_structure")}
+              aria-pressed={structureOpen}
+              onClick={toggleStructure}
+            >
+              <WorkspaceIcon name="tree" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+          </>
+        ) : null}
+        {isDemoMode ? (
+          <>
+            <button type="button" className="ws-rail__btn" title={t("app.nav.demo_info")} aria-label={t("app.nav.demo_info")} onClick={() => setDemoSetupOpen(true)}>
+              <WorkspaceIcon name="info" />
+            </button>
+            <button type="button" className="ws-rail__btn" title={t("app.nav.demo_reset")} aria-label={t("app.nav.demo_reset")} onClick={resetDemoState}>
+              <WorkspaceIcon name="reset" />
+            </button>
+            <a className="ws-rail__btn" href="/register" title={t("app.nav.create_account")} aria-label={t("app.nav.create_account")}>
+              <WorkspaceIcon name="register" />
+            </a>
+          </>
+        ) : (
+          <>
+            <Link to="/" className="ws-rail__btn" title={t("workspace.home")} aria-label={t("workspace.home")}>
+              <WorkspaceIcon name="home" />
+            </Link>
+            <button type="button" className="ws-rail__btn" title={t("wizard.rail_saved_models")} aria-label={t("wizard.rail_saved_models")} onClick={openModels}>
+              <WorkspaceIcon name="models" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+            <button
+              type="button"
+              className={`ws-rail__btn ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
+              title={t("wizard.rail_notes")}
+              aria-label={t("wizard.rail_notes")}
+              onClick={() => setNotesOpen(true)}
+            >
+              <WorkspaceIcon name="notes" />
+              {unreadProjectNotesCount > 0 ? (
+                <span className="ws-rail__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
+                  {unreadProjectNotesCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className={`ws-rail__btn ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
+              title={t("wizard.rail_activity")}
+              aria-label={t("wizard.rail_activity")}
+              onClick={() => setActivityOpen(true)}
+            >
+              <WorkspaceIcon name="activity" />
+              {visibleActivityPendingCount > 0 ? (
+                <span className="ws-rail__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
+                  {visibleActivityPendingCount}
+                </span>
+              ) : null}
+            </button>
+            <button type="button" className="ws-rail__btn" title={t("wizard.rail_org_admin")} aria-label={t("wizard.rail_org_admin")} onClick={openOrgsModal}>
+              <WorkspaceIcon name="settings" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+            <Link to="/organization" className="ws-rail__btn" title={t("app.nav.organization")} aria-label={t("app.nav.organization")}>
+              <WorkspaceIcon name="organization" />
+            </Link>
+            <Link to="/workforce" className="ws-rail__btn" title={t("workspace.workforce")} aria-label={t("workspace.workforce")}>
+              <WorkspaceIcon name="workforce" />
+            </Link>
+          </>
+        )}
+        <span className="ws-rail__spacer" />
         {currentUser ? (
-          <div className="process-card-rail-footer">
-            <div className="process-card-rail-footer__meta">
-              <span className="process-card-rail-footer__email">{currentUser.email}</span>
-              <span className="process-card-rail-footer__org">
-                {activeOrgId
-                  ? t("app.nav.active_org", { name: activeOrgName || activeOrgId })
-                  : t("app.nav.no_active_org")}
-              </span>
-            </div>
-            <Link to="/organization" className="process-card-rail-link">
-              {t("app.nav.organization")}
-            </Link>
-            <Link to="/workforce" className="process-card-rail-link">
-              Substitutability Matrix
-            </Link>
-            <Link to="/account" className="process-card-rail-link">
-              {t("app.nav.profile")}
-            </Link>
+          <>
             {currentUser?.admin_panel_available === true && currentUser?.is_super_admin === true ? (
-              <Link to="/admin" className="process-card-rail-link">
-                {t("app.nav.admin")}
+              <Link to="/admin" className="ws-rail__btn" title={t("app.nav.admin")} aria-label={t("app.nav.admin")}>
+                <WorkspaceIcon name="admin" />
               </Link>
             ) : null}
             <button
               type="button"
-              className="process-card-rail-link process-card-rail-link--feedback"
+              className="ws-rail__btn"
+              title={t("workspace.feedback")}
+              aria-label={t("workspace.feedback")}
               onClick={() => { setFeedbackOpen(true); setFeedbackStatus("idle"); setFeedbackMsg(""); }}
             >
-              Feedback
+              <WorkspaceIcon name="feedback" />
             </button>
-          </div>
-        ) : null}
+            <Link
+              to="/account"
+              className="ws-rail__avatar"
+              title={`${t("app.nav.profile")} · ${currentUser.email}`}
+              aria-label={t("app.nav.profile")}
+            >
+              {(currentUser.email || "?").slice(0, 2).toUpperCase()}
+            </Link>
           </>
-        )}
+        ) : null}
+      </nav>
 
-      </div>
+      {xml && structureOpen ? (
+        <WorkspaceStructure
+          engineJson={engineJson}
+          processName={previewName}
+          findings={guideFindings}
+          selectedId={mapSelection?.id || ""}
+          onSelectLane={handleStructureLaneSelect}
+          onSelectNode={handleStructureNodeSelect}
+        />
+      ) : null}
 
       {drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen ? (
         <div
+          className="ws-cards"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -8572,7 +8671,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {error ? <div className="wizard-error">{error}</div> : null}
                 {info ? <div className="wizard-toast">{info}</div> : null}
                 {modelSource?.kind === "org" ? (
-                  <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
+                  <div className="wizard-toast" style={{ background: "rgba(27, 27, 30, 0.6)" }}>
                     {orgReadOnly ? t("wizard.process_card_mode_readonly") : t("wizard.process_card_mode_edit")}
                     {orgReadOnly ? (
                       <button
@@ -8601,12 +8700,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 justifyContent: "center",
                 gap: 8,
                 background: isResizingPanels
-                  ? "linear-gradient(90deg, rgba(47,92,160,0.5), rgba(47,92,160,0.35))"
-                  : "linear-gradient(90deg, rgba(47,92,160,0.28), rgba(47,92,160,0.18))",
+                  ? "linear-gradient(90deg, rgba(47, 51, 160, 0.5), rgba(47, 51, 160, 0.35))"
+                  : "linear-gradient(90deg, rgba(47, 51, 160, 0.28), rgba(47, 51, 160, 0.18))",
                 transition: "background 120ms ease",
                 borderTop: "1px solid rgba(255,255,255,0.08)",
                 borderBottom: "1px solid rgba(255,255,255,0.08)",
-                boxShadow: isResizingPanels ? "0 0 0 1px rgba(47,92,160,0.4) inset" : "none",
+                boxShadow: isResizingPanels ? "0 0 0 1px rgba(47, 51, 160, 0.4) inset" : "none",
               }}
               onMouseDown={(e) => {
                 verticalResizeStart.current = { y: e.clientY, h: processPanelHeight };
@@ -9095,7 +9194,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div
               style={{
                 height: 1,
-                background: "linear-gradient(90deg, rgba(47,92,160,0.2), rgba(47,92,160,0.4), rgba(47,92,160,0.2))",
+                background: "linear-gradient(90deg, rgba(47, 51, 160, 0.2), rgba(47, 51, 160, 0.4), rgba(47, 51, 160, 0.2))",
               }}
             />
           ) : null}
@@ -9111,7 +9210,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="demo-banner__actions">
                 <button className="btn btn--small" type="button" onClick={resetDemoState}>
-                  {t("wizard.demo_reset")}
+                  {t("app.nav.demo_reset")}
                 </button>
                 <a className="btn btn--small btn-primary" href="/register">
                   {t("wizard.banner_demo_continue")}
@@ -9125,9 +9224,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 marginBottom: 10,
                 padding: "10px 12px",
                 borderRadius: 10,
-                background: "rgba(15, 23, 42, 0.8)",
-                border: "1px solid rgba(94, 234, 212, 0.25)",
-                color: "#e2e8f0",
+                background: "rgba(27, 27, 30, 0.8)",
+                border: "1px solid rgba(104, 108, 224, 0.25)",
+                color: "#e8e8ea",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -9178,7 +9277,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           ) : null}
           <div className="wizard-viewer">
             {showGuideBanners ? (
-              <div className="guide-bar">
+              <div className={`guide-bar ${guideExpanded ? "is-expanded" : "is-compact"}`}>
+                <button
+                  type="button"
+                  className="guide-bar__expand"
+                  aria-expanded={guideExpanded}
+                  aria-label={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  title={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  onClick={() => setGuideExpanded((v) => !v)}
+                />
                 <div className="guide-bar__text">
                   {guideState?.title ? (
                     <div className="guide-bar__title">{guideState.title}</div>
@@ -9235,7 +9342,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </div>
               </div>
             ) : showHomeGuideBanner ? (
-              <div className="guide-bar guide-bar--welcome">
+              <div className={`guide-bar guide-bar--welcome ${guideExpanded ? "is-expanded" : "is-compact"}`}>
+                <button
+                  type="button"
+                  className="guide-bar__expand"
+                  aria-expanded={guideExpanded}
+                  aria-label={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  title={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  onClick={() => setGuideExpanded((v) => !v)}
+                />
                 <div className="guide-bar__text">
                   <div className="guide-bar__title">{t("wizard.banner_guide_title")}</div>
                   <div>{homeGuideMessage}</div>
@@ -9278,10 +9393,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       fontWeight: 800,
                       fontSize: 15,
                       letterSpacing: 0.2,
-                      background: "linear-gradient(135deg, rgba(59,130,246,0.35), rgba(30,58,138,0.55))",
-                      border: "1px solid rgba(96,165,250,0.6)",
-                      color: "#eff6ff",
-                      boxShadow: "0 10px 30px rgba(30, 58, 138, 0.25)",
+                      background: "linear-gradient(135deg, rgba(85, 89, 220, 0.35), rgba(30, 34, 138, 0.55))",
+                      border: "1px solid rgba(119, 122, 227, 0.6)",
+                      color: "#f7f7f7",
+                      boxShadow: "0 10px 30px rgba(30, 34, 138, 0.25)",
                       maxWidth: 520,
                     }}
                   >
@@ -10079,19 +10194,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <p className="wizard-dialog-kicker">{t("wizard.sandbox_kicker")}</p>
                   <h3 className="wizard-dialog-title">{t("wizard.save_model_prompt_title")}</h3>
                 </div>
-                <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
+                <button className="btn btn--small" type="button" onClick={handleCancelOpen} disabled={saveLoading}>
                   {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
                 {t("wizard.save_model_prompt_message")}
               </div>
+              {error ? <div className="wizard-error" role="alert">{error}</div> : null}
+              {!error && info ? <div className="wizard-info" role="status">{info}</div> : null}
               <div className="wizard-save-prompt__actions">
-                <button className="btn" type="button" onClick={handleOpenWithoutSave}>
+                <button className="btn" type="button" onClick={continuePendingOpen} disabled={saveLoading}>
                   {t("wizard.save_model_prompt_skip")}
                 </button>
-                <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
-                  {t("wizard.save_model_prompt_save")}
+                <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen} disabled={saveLoading}>
+                  {saveLoading ? t("wizard.rail_saving") : t("wizard.save_model_prompt_save")}
                 </button>
               </div>
             </div>
@@ -10683,6 +10800,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         ) : null}
       </div>
 
+      {inspectorVisible ? (
+        <WorkspaceInspector
+          selection={mapSelection}
+          engineJson={engineJson}
+          readOnly={isReadOnlyMode}
+          onClose={() => {
+            setMapSelection(null);
+            try {
+              modelerRef.current?.get("selection").select(null);
+            } catch {
+              // ignore
+            }
+          }}
+          onOpenLane={handleInspectorOpenLane}
+          onSelectNode={handleStructureNodeSelect}
+        />
+      ) : null}
+
       <input
         ref={fileInputRef}
         type="file"
@@ -10747,6 +10882,51 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           </div>
         </div>
       ) : null}
+    </div>
+      <footer className="ws-statusbar">
+        {xml ? (
+          <>
+            {isReadOnlyMode ? (
+              <span className="ws-statusbar__item">
+                <span className="ws-dot ws-dot--muted" aria-hidden="true" />
+                {t("workspace.read_only")}
+              </span>
+            ) : isDemoMode ? null : (
+              <span className="ws-statusbar__item">
+                <span className={`ws-dot ${hasUnsavedChanges ? "ws-dot--warn" : "ws-dot--ok"}`} aria-hidden="true" />
+                {hasUnsavedChanges ? t("workspace.unsaved") : t("workspace.saved")}
+              </span>
+            )}
+            <span className="ws-statusbar__item">
+              {t("workspace.lanes")} {Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0}
+            </span>
+            <span className="ws-statusbar__item">
+              {t("workspace.nodes")} {Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0}
+            </span>
+            {previewVersionLabel ? <span className="ws-statusbar__item">{previewVersionLabel}</span> : null}
+          </>
+        ) : (
+          <span className="ws-statusbar__item">{t("workspace.no_model")}</span>
+        )}
+        <button
+          type="button"
+          className="ws-statusbar__btn ws-statusbar__item--end"
+          aria-haspopup="dialog"
+          aria-expanded={shortcutsOpen}
+          onClick={() => setShortcutsOpen((prev) => !prev)}
+        >
+          <WorkspaceIcon name="keyboard" size={13} />
+          {t("workspace.shortcuts")}
+          <kbd>?</kbd>
+        </button>
+        <span className="ws-statusbar__item">
+          {isDemoMode
+            ? "Demo"
+            : [activeOrgId ? activeOrgName || activeOrgId : t("app.nav.no_active_org"), currentUser?.email]
+                .filter(Boolean)
+                .join(" · ")}
+        </span>
+      </footer>
     </div>
   );
 }

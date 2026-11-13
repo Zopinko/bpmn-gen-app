@@ -6,9 +6,10 @@ import logging
 from threading import Lock
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from auth.deps import is_admin_panel_available, is_super_admin_user
+from auth.email_verification import request_email_verification, verify_email
 from auth.service import (
     AuthUser,
     authenticate_user,
@@ -48,6 +49,10 @@ class LoginRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(max_length=128)
 
 
 class ResetPasswordRequest(BaseModel):
@@ -180,6 +185,23 @@ def register(payload: RegisterRequest, request: Request):
             raise HTTPException(status_code=409, detail=message)
         raise HTTPException(status_code=400, detail=message)
     return {"message": "Registracia bola uspesna.", "user": _user_payload(user)}
+
+
+@router.post("/verify-email")
+def confirm_email_verification(payload: VerifyEmailRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="verify_email", limit=10)
+    try:
+        verify_email(payload.token.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"email_verified": True}
+
+
+@router.post("/resend-verification")
+def resend_email_verification(payload: ForgotPasswordRequest, request: Request):
+    _enforce_rate_limit(request, endpoint_key="resend_verification", limit=5)
+    request_email_verification(payload.email)
+    return {"message": "If an unverified account exists for this email, a verification link will be sent."}
 
 
 @router.post("/login")

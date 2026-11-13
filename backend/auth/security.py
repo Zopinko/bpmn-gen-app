@@ -100,14 +100,22 @@ def ensure_org_invite_secret_configured() -> None:
     _org_invite_signing_secret()
 
 
-def make_org_invite_public_token(invite_id: str) -> str:
+def _make_signed_token(identifier: str, purpose: str = "") -> str:
     signature = hmac.new(
         _org_invite_signing_secret(),
-        invite_id.encode("utf-8"),
+        f"{purpose}{identifier}".encode("utf-8"),
         hashlib.sha256,
     ).digest()
     signature_b64 = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
-    return f"{invite_id}.{signature_b64}"
+    return f"{identifier}.{signature_b64}"
+
+
+def make_org_invite_public_token(invite_id: str) -> str:
+    return _make_signed_token(invite_id)
+
+
+def make_email_verification_token(verification_id: str) -> str:
+    return _make_signed_token(verification_id, purpose="email-verification:")
 
 
 def parse_org_invite_public_token(token: str) -> str | None:
@@ -115,7 +123,7 @@ def parse_org_invite_public_token(token: str) -> str | None:
     if "." not in cleaned:
         return None
     invite_id, _, provided_signature = cleaned.partition(".")
-    if not invite_id or not provided_signature:
+    if not invite_id or not provided_signature or not provided_signature.isascii():
         return None
     expected = make_org_invite_public_token(invite_id).partition(".")[2]
     if not hmac.compare_digest(provided_signature, expected):

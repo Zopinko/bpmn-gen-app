@@ -7,3 +7,6 @@ pyyaml
 python-multipart>=0.0.9
 argon2-cffi>=23.1.0
 httpx>=0.27,<1
+cryptography>=50.0.2,<51
+pyotp==2.9.0
+qrcode==8.2

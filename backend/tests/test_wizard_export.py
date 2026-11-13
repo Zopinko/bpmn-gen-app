@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from main import app
+from services.bpmn_import import bpmn_xml_to_engine
 
 
 client = TestClient(app)
@@ -69,3 +70,32 @@ def test_linear_wizard_rejects_oversized_text_payload():
 
     assert resp.status_code == 413
     assert "too large" in resp.json()["detail"].lower()
+
+
+def test_linear_wizard_can_return_layout_with_the_model():
+    payload = {
+        "process_name": "Invoice approval",
+        "roles": ["Reviewer"],
+        "start_trigger": "Invoice received",
+        "output": "Invoice processed",
+        "steps": ["Review invoice"],
+        "locale": "en",
+    }
+
+    original = client.post("/wizard/linear", json=payload)
+    assert original.status_code == 200
+    assert set(original.json()) == {"engine_json", "issues"}
+
+    response = client.post("/wizard/linear?include_xml=true", json=payload)
+    assert response.status_code == 200
+    result = response.json()
+    diagram = result["diagram_xml"]
+    assert "BPMNShape" in diagram
+    rendered_separately = client.post("/generate", json=result["engine_json"])
+    assert rendered_separately.status_code == 200
+    assert rendered_separately.text == diagram
+    rendered = bpmn_xml_to_engine(diagram)
+    assert rendered["processId"] == result["engine_json"]["processId"]
+    assert {(f["source"], f["target"]) for f in rendered["flows"]} == {
+        (f["source"], f["target"]) for f in result["engine_json"]["flows"]
+    }

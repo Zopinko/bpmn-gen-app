@@ -2,6 +2,7 @@
 from xml.etree import ElementTree as ET
 
 from services.bpmn_svc import generate_bpmn_from_json  # predpokladané API
+from services.bpmn_import import bpmn_xml_to_engine
 
 
 def _root(xml_text: str):
@@ -41,6 +42,54 @@ def _seq_flow_name(root, source: str, target: str) -> str | None:
             ):
                 return el.attrib.get("name")
     return None
+
+
+def test_bpmn_round_trip_keeps_default_branch_and_distinct_end_events():
+    xml = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+      <process id="Process_1" name="Invoice review">
+        <startEvent id="start"/>
+        <exclusiveGateway id="decision" default="fallback"/>
+        <task id="approve"/>
+        <endEvent id="approved"/>
+        <endEvent id="rejected"/>
+        <sequenceFlow id="start_flow" sourceRef="start" targetRef="decision"/>
+        <sequenceFlow id="condition" sourceRef="decision" targetRef="approve">
+          <conditionExpression>amount &gt; 5</conditionExpression>
+        </sequenceFlow>
+        <sequenceFlow id="done" sourceRef="approve" targetRef="approved"/>
+        <sequenceFlow id="fallback" sourceRef="decision" targetRef="rejected"/>
+      </process>
+    </definitions>"""
+
+    imported = bpmn_xml_to_engine(xml)
+    assert [flow["id"] for flow in imported["flows"] if flow.get("default")] == ["fallback"]
+    rendered = generate_bpmn_from_json(imported)
+    root = _root(rendered)
+    assert root.find(".//{*}exclusiveGateway").get("default") == "fallback"
+    reopened = bpmn_xml_to_engine(rendered)
+    assert {node["id"] for node in reopened["nodes"] if node["type"] == "endEvent"} == {"approved", "rejected"}
+    assert {(f["id"], f["source"], f["target"], f.get("condition"), f.get("default")) for f in reopened["flows"]} == {
+        (f["id"], f["source"], f["target"], f.get("condition"), f.get("default")) for f in imported["flows"]
+    }
+
+
+def test_renderer_keeps_existing_gateway_join_as_end_event_predecessor():
+    lane = {"id": "lane_1", "name": "Operations"}
+    engine = {
+        "processId": "Process_1", "name": "Parallel work", "lanes": [lane],
+        "nodes": [
+            {"id": node_id, "type": kind, "name": node_id, "laneId": lane["id"]}
+            for node_id, kind in [("task_1", "task"), ("task_2", "task"), ("join", "parallelGateway"), ("end", "endEvent")]
+        ],
+        "flows": [
+            {"id": f"f_{source}", "source": source, "target": target}
+            for source, target in [("task_1", "join"), ("task_2", "join"), ("join", "end")]
+        ],
+    }
+
+    root = _root(generate_bpmn_from_json(engine))
+    assert _has_seq_flow(root, "join", "end")
+    assert not _has_seq_flow(root, "task_2", "end")
 
 
 def test_xor_split_join():

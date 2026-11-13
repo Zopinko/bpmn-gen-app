@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from services.org_model_storage import get_node, get_tree
+from services.org_models_storage import load_org_model
 from services.storage_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
 CompetencyLevel = Literal["primary", "backup", "training"]
 VALID_LEVELS = {"primary", "backup", "training"}
+TASK_TYPES = {"task", "userTask", "serviceTask"}
 
 
 def _org_dir(org_id: str) -> Path:
@@ -96,6 +99,7 @@ def update_competency(org_id: str, competency_id: str, level: CompetencyLevel) -
     competencies = _load(org_id)
     for i, c in enumerate(competencies):
         if c["id"] == competency_id:
+            require_process_step(org_id, c["process_node_id"], c["step_id"])
             updated = dict(c)
             updated["level"] = level
             competencies[i] = updated
@@ -128,94 +132,82 @@ def _compute_risk(step_competencies: list[dict]) -> str:
     return "low"
 
 
-def _load_process_details(org_id: str, process_node_ids: set[str]) -> dict[str, dict[str, Any]]:
-    if not process_node_ids:
-        return {}
+def list_process_steps(org_id: str, process_node_id: str | None = None) -> dict[tuple[str, str], dict]:
+    if process_node_id:
+        process = get_node(org_id, process_node_id)
+        if not process or process.get("type") != "process":
+            return {}
+        pending = [process]
+    else:
+        pending = [get_tree(org_id)]
 
-    from services.org_model_storage import get_node, get_process_model_ref
-    from services.org_models_storage import load_org_model
-
-    details: dict[str, dict[str, Any]] = {}
-    for process_node_id in process_node_ids:
-        process_name = ""
-        step_names: dict[str, str] = {}
-        lane_names: dict[str, str] = {}
+    steps = {}
+    while pending:
+        process = pending.pop()
+        if process.get("type") != "process":
+            pending.extend(reversed(process.get("children", [])))
+            continue
+        process_id = str(process["id"])
+        model_id = (process.get("processRef") or {}).get("modelId")
+        if not model_id:
+            continue
         try:
-            node = get_node(org_id, process_node_id)
-            if isinstance(node, dict):
-                process_name = str(node.get("name") or "")
-            model_id = get_process_model_ref(org_id, process_node_id)
-            if model_id:
-                model = load_org_model(org_id, model_id)
-                engine_json = model.get("engine_json") if isinstance(model.get("engine_json"), dict) else {}
-                process_name = process_name or str(model.get("name") or engine_json.get("name") or "")
-                lanes = engine_json.get("lanes") if isinstance(engine_json.get("lanes"), list) else []
-                lane_names = {
-                    str(lane.get("id")): str(lane.get("name") or lane.get("id") or "")
-                    for lane in lanes
-                    if isinstance(lane, dict) and lane.get("id")
-                }
-                nodes = engine_json.get("nodes") if isinstance(engine_json.get("nodes"), list) else []
-                for item in nodes:
-                    if not isinstance(item, dict) or not item.get("id"):
-                        continue
-                    step_names[str(item["id"])] = str(item.get("name") or item.get("label") or item.get("id") or "")
-        except Exception as exc:
-            logger.warning("Could not enrich workforce matrix step names org=%s process=%s: %s", org_id, process_node_id, exc)
-        details[process_node_id] = {
-            "process_name": process_name,
-            "step_names": step_names,
-            "lane_names": lane_names,
-        }
-    return details
+            model = load_org_model(org_id, model_id)
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("Could not load workforce process org=%s process=%s: %s", org_id, process_id, exc)
+            continue
+        engine = model.get("engine_json")
+        nodes = engine.get("nodes") if isinstance(engine, dict) else None
+        if not isinstance(nodes, list):
+            continue
+        process_name = str(process.get("name") or model.get("name") or process_id)
+        for node in nodes:
+            if not isinstance(node, dict) or str(node.get("type")) not in TASK_TYPES or not node.get("id"):
+                continue
+            step_id = str(node["id"])
+            steps[process_id, step_id] = {
+                "process_node_id": process_id,
+                "process_name": process_name,
+                "step_id": step_id,
+                "step_name": str(node.get("name") or node.get("label") or step_id),
+            }
+    return steps
+
+
+def require_process_step(org_id: str, process_node_id: str, step_id: str) -> None:
+    if (process_node_id, step_id) not in list_process_steps(org_id, process_node_id):
+        raise LookupError("Krok neexistuje v aktuálnom procese.")
 
 
 def build_matrix(org_id: str, process_node_id: str | None = None) -> dict:
     from services.org_employees_storage import list_employees
 
     employees = list_employees(org_id)
+    employee_ids = {employee["id"] for employee in employees}
+    steps = list_process_steps(org_id, process_node_id)
     competencies = list_competencies(org_id, process_node_id=process_node_id)
-    process_details = _load_process_details(
-        org_id,
-        {str(c.get("process_node_id") or "") for c in competencies if c.get("process_node_id")},
-    )
-
-    seen: dict[str, dict] = {}
+    cells = []
+    assignments_by_step: dict[tuple[str, str], list[dict]] = {}
     for c in competencies:
-        key = f"{c['process_node_id']}::{c['step_id']}"
-        if key not in seen:
-            process_id = str(c["process_node_id"])
-            step_id = str(c["step_id"])
-            details = process_details.get(process_id, {})
-            stored_step_name = str(c.get("step_name") or "").strip()
-            seen[key] = {
-                "step_id": step_id,
-                "step_name": stored_step_name or (details.get("step_names") or {}).get(step_id, step_id),
-                "process_node_id": process_id,
-                "process_name": details.get("process_name") or process_id,
-            }
-    steps = list(seen.values())
-
-    cells = [
-        {
+        key = (c["process_node_id"], c["step_id"])
+        if key not in steps or c["emp_id"] not in employee_ids:
+            continue
+        cell = {
             "emp_id": c["emp_id"],
             "process_node_id": c["process_node_id"],
             "step_id": c["step_id"],
             "level": c["level"],
         }
-        for c in competencies
+        cells.append(cell)
+        assignments_by_step.setdefault(key, []).append(cell)
+
+    risk = [
+        {
+            "process_node_id": process_id,
+            "step_id": step_id,
+            "risk": _compute_risk(assignments_by_step.get((process_id, step_id), [])),
+        }
+        for process_id, step_id in steps
     ]
 
-    risk = []
-    for step in steps:
-        step_comps = [
-            c for c in competencies
-            if c["step_id"] == step["step_id"] and c["process_node_id"] == step["process_node_id"]
-        ]
-        risk.append({
-            "step_id": step["step_id"],
-            "process_node_id": step["process_node_id"],
-            "risk": _compute_risk(step_comps),
-        })
-
-    return {"employees": employees, "steps": steps, "cells": cells, "risk": risk}
+    return {"employees": employees, "steps": list(steps.values()), "cells": cells, "risk": risk}

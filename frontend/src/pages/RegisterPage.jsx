@@ -12,23 +12,22 @@ function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [status, setStatus] = useState({ loading: false, error: "", success: "" });
+  const [status, setStatus] = useState({ loading: false, error: "" });
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (password !== confirmPassword) {
-      setStatus({ loading: false, error: t("register.passwords_mismatch"), success: "" });
+      setStatus({ loading: false, error: t("register.passwords_mismatch") });
       return;
     }
-    setStatus({ loading: true, error: "", success: "" });
+    setStatus({ loading: true, error: "" });
     try {
-      const result = await registerAuth({ email, password, language: i18n.resolvedLanguage || i18n.language || "en" });
+      await registerAuth({ email, password, language: i18n.resolvedLanguage || i18n.language || "en" });
       const sid = new URLSearchParams(location.search).get("sid");
       void trackSignupCompleted(sid || undefined);
-      setStatus({ loading: false, error: "", success: result?.message || t("register.success_generic") });
-      setTimeout(() => navigate("/login"), 800);
+      navigate("/verify-email", { replace: true, state: { email, justRegistered: true } });
     } catch (error) {
-      setStatus({ loading: false, error: error.message, success: "" });
+      setStatus({ loading: false, error: error.message });
     }
   };
 
@@ -76,7 +75,6 @@ function RegisterPage() {
         </button>
 
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
-        {status.success ? <p className="auth-message auth-message--success">{status.success}</p> : null}
 
         <p className="auth-footer">
           {t("register.has_account")} <Link to="/login">{t("register.login_link")}</Link>

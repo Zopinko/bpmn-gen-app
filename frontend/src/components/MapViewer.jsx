@@ -1772,7 +1772,7 @@ export default function MapViewer({
         laneHandleMapRef.current.clear();
 
         if (typeof onXmlImported === "function") {
-          onXmlImported(modeler);
+          onXmlImported(modeler, xml);
         }
 
         const emitLaneOrder = (orderedNames) => {
@@ -2024,14 +2024,14 @@ export default function MapViewer({
     elementRegistry.getAll().forEach((element) => {
       if (!element || element.type === "label") return;
       const boType = element.businessObject?.$type || element.type;
-      if (!mapNodeType(boType)) return;
+      if (!mapNodeType(boType) || !boType.includes("Task")) return;
       const engineId = getEngineId(element) || element.businessObject?.id || element.id;
       const competencies = stepCompetencies[String(engineId)] || [];
       const risk = computeTaskRisk(competencies);
       const marker = document.createElement("div");
       marker.className = `workforce-node-overlay is-${risk}`;
       marker.style.borderColor = RISK_BORDER[risk] || RISK_BORDER.unassigned;
-      marker.title = `Substitutability: ${risk}`;
+      marker.title = t(`translation:workforce.risk_${risk}`);
       try {
         const id = overlays.add(element, "workforce-node-overlay", {
           position: { top: -5, left: -5 },
@@ -2044,7 +2044,7 @@ export default function MapViewer({
     });
 
     return () => clearWorkforceOverlays();
-  }, [clearWorkforceOverlays, stepCompetencies, workforceMode, xml]);
+  }, [clearWorkforceOverlays, stepCompetencies, t, workforceMode, xml]);
 
   const displayError = error || importError;
   const guideCanvasClass =
@@ -2110,9 +2110,9 @@ export default function MapViewer({
                         setWorkforceMode((prev) => !prev);
                         setSelectedWorkforceStep(null);
                       }}
-                      title="Substitutability"
+                      aria-pressed={workforceMode}
                     >
-                      Substitutability
+                      {t("translation:workforce.title")}
                     </button>
                   ) : null}
                   {onUndo || localCanUndo ? (
@@ -2164,6 +2164,7 @@ export default function MapViewer({
           </div><div ref={containerRef} className={`map-viewer__canvas ${guideCanvasClass}`} />
         {workforceMode && selectedWorkforceStep ? (
           <WorkforceOverlay
+            key={JSON.stringify([orgId, processNodeId, selectedWorkforceStep.id])}
             orgId={orgId}
             processNodeId={processNodeId}
             selectedStepId={selectedWorkforceStep.id}

@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { acceptOrgInvite } from "../api/wizard";
-
-const PENDING_INVITE_STORAGE_KEY = "PENDING_ORG_INVITE_TOKEN";
+import { PENDING_ORG_INVITE_KEY } from "../organizationInvite";
 
 function mapInviteErrorMessage(rawMessage, t) {
   const message = String(rawMessage || "").toLowerCase();
+  if (message === "invite_email_mismatch") return t("join_org.error_email_mismatch");
+  if (message === "invite_email_unverified") return t("join_org.error_email_unverified");
   if (message.includes("vypršal")) {
     return t("join_org.error_expired");
   }
@@ -23,14 +24,17 @@ function mapInviteErrorMessage(rawMessage, t) {
   return t("join_org.error_generic");
 }
 
-function JoinOrgPage() {
+function JoinOrgPage({ currentUser, onSwitchAccount }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { token } = useParams();
+  const { token: pathToken } = useParams();
+  const { hash } = useLocation();
+  const token = pathToken || new URLSearchParams(hash.slice(1)).get("token");
   const [status, setStatus] = useState({ loading: true, error: "", message: "" });
 
   useEffect(() => {
     let isCancelled = false;
+    let redirectTimer;
     const run = async () => {
       if (!token) {
         setStatus({ loading: false, error: t("join_org.error_invalid"), message: "" });
@@ -44,7 +48,7 @@ function JoinOrgPage() {
         if (typeof window !== "undefined") {
           if (org?.id) window.localStorage.setItem("ACTIVE_ORG_ID", org.id);
           if (org?.name) window.localStorage.setItem("ACTIVE_ORG_NAME", org.name);
-          window.localStorage.removeItem(PENDING_INVITE_STORAGE_KEY);
+          window.localStorage.removeItem(PENDING_ORG_INVITE_KEY);
           window.dispatchEvent(new Event("active-org-changed"));
         }
         const alreadyMember = Boolean(response?.membership?.already_member);
@@ -56,28 +60,35 @@ function JoinOrgPage() {
             ? t("join_org.already_member", { name: orgName })
             : t("join_org.success", { name: orgName }),
         });
-        window.setTimeout(() => {
+        redirectTimer = window.setTimeout(() => {
           navigate("/", { replace: true });
         }, 1100);
       } catch (error) {
         if (isCancelled) return;
         if (error?.status === 401) {
           if (typeof window !== "undefined") {
-            window.localStorage.setItem(PENDING_INVITE_STORAGE_KEY, token);
+            window.localStorage.setItem(PENDING_ORG_INVITE_KEY, token);
           }
           navigate("/login", { replace: true });
           return;
+        }
+        if (error?.message === "invite_email_unverified") {
+          window.localStorage.setItem(PENDING_ORG_INVITE_KEY, token);
+        } else if (error?.status === 400 && window.localStorage.getItem(PENDING_ORG_INVITE_KEY) === token) {
+          window.localStorage.removeItem(PENDING_ORG_INVITE_KEY);
         }
         setStatus({
           loading: false,
           error: mapInviteErrorMessage(error?.message, t),
           message: "",
+          code: error?.message,
         });
       }
     };
     void run();
     return () => {
       isCancelled = true;
+      window.clearTimeout(redirectTimer);
     };
   }, [navigate, token, t]);
 
@@ -88,6 +99,15 @@ function JoinOrgPage() {
         {status.loading ? <p>{t("join_org.loading")}</p> : null}
         {status.message ? <p className="auth-message auth-message--success">{status.message}</p> : null}
         {status.error ? <p className="auth-message auth-message--error">{status.error}</p> : null}
+        {status.code === "invite_email_unverified" ? (
+          <Link to="/verify-email" state={{ email: currentUser?.email }}>{t("email_verification.title")}</Link>
+        ) : null}
+        {status.code === "invite_email_mismatch" && currentUser ? (
+          <button type="button" onClick={() => {
+            window.localStorage.setItem(PENDING_ORG_INVITE_KEY, token);
+            void onSwitchAccount();
+          }}>{t("join_org.switch_account")}</button>
+        ) : null}
         {!status.loading ? (
           <p className="auth-footer">
             <Link to="/">{t("join_org.back")}</Link>
