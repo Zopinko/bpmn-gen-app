@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   createCompetency,
@@ -8,27 +9,34 @@ import {
   listEmployees,
   updateCompetency,
 } from "../api/workforce";
-import { computeTaskRisk, RISK_BORDER } from "./workforceUtils";
+import { computeTaskRisk } from "./workforceUtils";
 
 const LEVELS = ["primary", "backup", "training"];
 
 const LEVEL_LABELS = {
-  primary: "Primary",
-  backup: "Backup",
-  training: "Training",
+  primary: "workforce.col_primary",
+  backup: "workforce.col_backup",
+  training: "workforce.col_training",
 };
 
-export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId, stepName, onClose, onChanged }) {
+export default function WorkforceOverlay({
+  orgId, processNodeId, selectedStepId, stepName, processName,
+  startAdding = false, initialLevel = "backup", onClose, onChanged,
+}) {
+  const { t } = useTranslation();
   const [employees, setEmployees] = useState([]);
   const [competencies, setCompetencies] = useState([]);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(startAdding);
   const [createNew, setCreateNew] = useState(false);
   const [selectedEmpId, setSelectedEmpId] = useState("");
-  const [newLevel, setNewLevel] = useState("backup");
+  const [createdEmployee, setCreatedEmployee] = useState(null);
+  const [newLevel, setNewLevel] = useState(initialLevel);
   const [newEmpNo, setNewEmpNo] = useState("");
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!orgId || !processNodeId || !selectedStepId) return;
@@ -41,12 +49,14 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
       ]);
       setEmployees(Array.isArray(employeeItems) ? employeeItems : []);
       setCompetencies((Array.isArray(competencyItems) ? competencyItems : []).filter((item) => item.step_id === selectedStepId));
+      setLoaded(true);
     } catch (e) {
-      setError(e?.message || "Failed to load competencies.");
+      setLoaded(false);
+      setError(e?.message || t("workforce.error_load_assignments"));
     } finally {
       setLoading(false);
     }
-  }, [orgId, processNodeId, selectedStepId]);
+  }, [orgId, processNodeId, selectedStepId, t]);
 
   useEffect(() => {
     void load();
@@ -64,6 +74,8 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
     [assignedEmpIds, employees],
   );
   const risk = useMemo(() => computeTaskRisk(competencies), [competencies]);
+  const useNewPerson = createNew || !availableEmployees.length;
+  const retryEmployee = !useNewPerson && selectedEmpId === createdEmployee?.id ? createdEmployee : null;
 
   const refreshAfterChange = useCallback(async () => {
     await load();
@@ -72,84 +84,86 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
     }
   }, [load, onChanged]);
 
-  const handleAdd = async () => {
-    if (!orgId || !processNodeId || !selectedStepId) return;
+  const saveAssignment = async (action, errorKey) => {
+    if (!loaded || loading || saving) return;
+    setSaving(true);
     setError("");
     try {
+      await action();
+      await refreshAfterChange();
+    } catch (e) {
+      setError(e?.message || t(errorKey));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAdd = async (event) => {
+    event.preventDefault();
+    if (!orgId || !processNodeId || !selectedStepId) return;
+    await saveAssignment(async () => {
       let empId = selectedEmpId;
-      if (createNew) {
+      let savedEmployee = retryEmployee;
+      if (useNewPerson) {
         const employee = await createEmployee(orgId, {
           emp_no: newEmpNo,
           name: newName,
           position: "",
         });
         empId = employee.id;
+        savedEmployee = employee;
+        // Keep the new person available if saving the assignment fails.
+        setEmployees((items) => [...items, employee]);
+        setCreatedEmployee(employee);
+        setSelectedEmpId(empId);
+        setCreateNew(false);
       }
-      if (!empId) {
-        setError("Select or create an employee.");
-        return;
+      try {
+        await createCompetency(orgId, {
+          emp_id: empId,
+          process_node_id: processNodeId,
+          step_id: selectedStepId,
+          level: newLevel,
+          step_name: stepName || "",
+        });
+      } catch (e) {
+        if (!savedEmployee) throw e;
+        if (useNewPerson) await onChanged?.();
+        throw new Error(t("workforce.error_partial_assignment", {
+          name: savedEmployee.name,
+          reason: e?.message || t("workforce.error_save_assignment"),
+        }));
       }
-      await createCompetency(orgId, {
-        emp_id: empId,
-        process_node_id: processNodeId,
-        step_id: selectedStepId,
-        level: newLevel,
-        step_name: stepName || "",
-      });
       setAdding(false);
       setCreateNew(false);
+      setCreatedEmployee(null);
       setSelectedEmpId("");
       setNewEmpNo("");
       setNewName("");
       setNewLevel("backup");
-      await refreshAfterChange();
-    } catch (e) {
-      setError(e?.message || "Failed to add competency.");
-    }
+    }, "workforce.error_save_assignment");
   };
 
-  const handleLevelChange = async (competencyId, level) => {
-    setError("");
-    try {
-      await updateCompetency(orgId, competencyId, { level });
-      await refreshAfterChange();
-    } catch (e) {
-      setError(e?.message || "Failed to update level.");
-    }
-  };
-
-  const handleRemove = async (competencyId) => {
-    setError("");
-    try {
-      await deleteCompetency(orgId, competencyId);
-      await refreshAfterChange();
-    } catch (e) {
-      setError(e?.message || "Failed to remove competency.");
-    }
-  };
-
-  const riskMessage = {
-    unassigned: "Nobody is assigned to this step.",
-    critical: "Only one person knows this step. This is a single point of failure.",
-    low: "Missing primary assignee or backup.",
-    none: "",
-  }[risk];
+  const riskMessage = risk === "none" ? "" : t(`workforce.overlay_risk_${risk}`);
+  const busy = !loaded || loading || saving;
+  const submitLabel = retryEmployee ? "workforce.retry_assignment" : "workforce.add_assignment";
 
   return (
     <aside className="workforce-overlay-panel">
       <div className="workforce-overlay-panel__header">
         <div>
-          <p className="wizard-dialog-kicker">Substitutability</p>
+          <p className="wizard-dialog-kicker">{processName || t("workforce.title")}</p>
           <h3>{stepName || selectedStepId}</h3>
         </div>
         <button className="btn btn--small" type="button" onClick={onClose}>
-          Close
+          {t("workforce.close")}
         </button>
       </div>
 
-      {error ? <p className="auth-message auth-message--error">{error}</p> : null}
-      {riskMessage ? <div className={`workforce-overlay-risk is-${risk}`}>{riskMessage}</div> : null}
-      {loading ? <p className="organization-hint">Loading...</p> : null}
+      {error ? <p className="auth-message auth-message--error" role="alert">{error}</p> : null}
+      {loaded && !loading && riskMessage ? <div className={`workforce-overlay-risk is-${risk}`}>{riskMessage}</div> : null}
+      {loading ? <p className="organization-hint">{t("workforce.loading")}</p> : null}
+      {!loaded && !loading ? <button className="btn btn--small" type="button" onClick={load}>{t("workforce.refresh")}</button> : null}
 
       <div className="workforce-overlay-list">
         {competencies.map((competency) => {
@@ -160,64 +174,73 @@ export default function WorkforceOverlay({ orgId, processNodeId, selectedStepId,
                 <strong>{employee?.emp_no || "-"}</strong>
                 <span>{employee?.name || competency.emp_id}</span>
               </div>
-              <select value={competency.level} onChange={(event) => handleLevelChange(competency.id, event.target.value)}>
+              <select aria-label={t("workforce.assignment_level_for", { name: employee?.name || competency.emp_id })} value={competency.level} disabled={busy} onChange={(event) => {
+                const level = event.target.value;
+                void saveAssignment(() => updateCompetency(orgId, competency.id, { level }), "workforce.error_save_assignment");
+              }}>
                 {LEVELS.map((level) => (
                   <option key={level} value={level}>
-                    {LEVEL_LABELS[level]}
+                    {t(LEVEL_LABELS[level])}
                   </option>
                 ))}
               </select>
-              <button className="btn btn--small btn-danger" type="button" onClick={() => handleRemove(competency.id)}>
+              <button className="btn btn--small btn-danger" type="button" disabled={busy} aria-label={t("workforce.delete_assignment")} onClick={() => void saveAssignment(() => deleteCompetency(orgId, competency.id), "workforce.error_delete_assignment")}>
                 X
               </button>
             </div>
           );
         })}
-        {!competencies.length && !loading ? <p className="organization-hint">No assignments yet.</p> : null}
+        {loaded && !competencies.length && !loading ? <p className="organization-hint">{t("workforce.no_assignments")}</p> : null}
       </div>
 
-      {adding ? (
-        <div className="workforce-overlay-add">
-          <label className="workforce-overlay-check">
-            <input type="checkbox" checked={createNew} onChange={(event) => setCreateNew(event.target.checked)} />
-            New employee
-          </label>
-          {createNew ? (
+      {adding && loaded ? (
+        <form className="workforce-overlay-add" onSubmit={handleAdd}>
+          {availableEmployees.length ? (
+            <label className="workforce-overlay-check">
+              <input type="checkbox" checked={createNew} onChange={(event) => setCreateNew(event.target.checked)} disabled={busy} />
+              {t("workforce.new_person")}
+            </label>
+          ) : null}
+          {useNewPerson ? (
             <>
-              <input value={newEmpNo} onChange={(event) => setNewEmpNo(event.target.value)} placeholder="Employee number" />
-              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Name" />
+              <label className="wizard-field">
+                <span>{t("workforce.person_number")}</span>
+                <input value={newEmpNo} onChange={(event) => setNewEmpNo(event.target.value)} required disabled={busy} />
+              </label>
+              <label className="wizard-field">
+                <span>{t("workforce.person_name")}</span>
+                <input value={newName} onChange={(event) => setNewName(event.target.value)} required disabled={busy} />
+              </label>
             </>
           ) : (
-            <select value={selectedEmpId} onChange={(event) => setSelectedEmpId(event.target.value)}>
-              <option value="">Select employee</option>
-              {availableEmployees.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employee.emp_no} {employee.name}
-                </option>
-              ))}
-            </select>
+            <label className="wizard-field">
+              <span>{t("workforce.select_person")}</span>
+              <select aria-label={t("workforce.select_person")} value={selectedEmpId} onChange={(event) => setSelectedEmpId(event.target.value)} required disabled={busy}>
+                <option value="">{t("workforce.select_person")}</option>
+                {availableEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.emp_no} {employee.name}</option>)}
+              </select>
+            </label>
           )}
-          <select value={newLevel} onChange={(event) => setNewLevel(event.target.value)}>
-            {LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {LEVEL_LABELS[level]}
-              </option>
-            ))}
-          </select>
+          <label className="wizard-field">
+            <span>{t("workforce.assignment_level")}</span>
+            <select aria-label={t("workforce.assignment_level")} value={newLevel} onChange={(event) => setNewLevel(event.target.value)} disabled={busy}>
+              {LEVELS.map((level) => <option key={level} value={level}>{t(LEVEL_LABELS[level])}</option>)}
+            </select>
+          </label>
           <div className="workforce-overlay-add__actions">
-            <button className="btn btn-primary btn--small" type="button" onClick={handleAdd}>
-              Add
+            <button className="btn btn-primary btn--small" type="submit" disabled={busy}>
+              {saving ? t("workforce.saving") : t(submitLabel)}
             </button>
-            <button className="btn btn--small" type="button" onClick={() => setAdding(false)}>
-              Cancel
+            <button className="btn btn--small" type="button" onClick={() => setAdding(false)} disabled={saving}>
+              {t("workforce.cancel")}
             </button>
           </div>
-        </div>
-      ) : (
-        <button className="btn btn-primary btn--small" type="button" onClick={() => setAdding(true)}>
-          Add employee
+        </form>
+      ) : loaded ? (
+        <button className="btn btn-primary btn--small" type="button" disabled={busy} onClick={() => setAdding(true)}>
+          {t("workforce.add_assignment")}
         </button>
-      )}
+      ) : null}
     </aside>
   );
 }

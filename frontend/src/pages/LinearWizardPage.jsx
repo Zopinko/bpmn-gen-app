@@ -4,7 +4,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
-import { useHeaderStepper } from "../components/HeaderStepperContext";
 import {
   appendLaneFromDescription,
   generateLinearWizardDiagram,
@@ -1387,7 +1386,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const { modelId: routeModelId } = useParams();
   const isDemoMode = Boolean(isDemo);
   const fileInputRef = useRef(null);
-  const { setState: setHeaderStepperState } = useHeaderStepper();
   const [processCard, setProcessCard] = useState(() => createEmptyProcessCardState());
   const [demoSetupOpen, setDemoSetupOpen] = useState(isDemoMode);
   const [demoBuilding, setDemoBuilding] = useState(false);
@@ -1400,6 +1398,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [exportLoading, setExportLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [loadLoading, setLoadLoading] = useState(false);
   const [error, setError] = useState(null);
   const [info, setInfo] = useState(null);
@@ -1511,8 +1510,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [processPanelHeight, setProcessPanelHeight] = useState(620);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
-  const [mentorNotes, setMentorNotes] = useState([]);
-  const [mentorLastRunAt, setMentorLastRunAt] = useState(null);
   const storyEngineRef = useRef(null);
   const guidePatchTimerRef = useRef(null);
   const guideHighlightTimerRef = useRef(null);
@@ -1557,8 +1554,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [replyOpenById, setReplyOpenById] = useState({});
 
   const [replyEditing, setReplyEditing] = useState({ noteId: null, replyId: null, text: "" });
-  const [lastSavedAt, setLastSavedAt] = useState(null);
-  const [lastExportedAt, setLastExportedAt] = useState(null);
   const previousActiveOrgIdRef = useRef(null);
 
   const sampleSequenceFlowWaypoints = useCallback((activeModeler, limit = 5) => {
@@ -1580,8 +1575,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editingNoteText, setEditingNoteText] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
-  const lanePreviewOverlayIdsRef = useRef([]);
-  const lanePreviewTimerRef = useRef(null);
   const demoAppendStatsRef = useRef({
     attempts: 0,
     fallbacks: 0,
@@ -1850,7 +1843,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideLastSignatureRef = useRef({ sig: null, ts: 0 });
   const guideModelLoadedKeyRef = useRef(null);
   const guideLastReasonRef = useRef("init");
-  const pendingGuideReviewReasonRef = useRef(null);
+  const pendingSkeletonReviewRef = useRef(null);
   const modelVersionRef = useRef(modelVersion);
 
   useEffect(() => {
@@ -2528,8 +2521,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     if (actionId === "SAVE_PROCESS") {
-      await handleSaveModel();
-      setGuideState(null);
+      const saveResult = await handleSaveModel();
+      if (saveResult?.ok) setGuideState(null);
       return;
     }
     if (actionId === "MOVE_TO_ORG") {
@@ -2544,7 +2537,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return;
       }
       const saveResult = await handleSaveModel();
-      const savedModelId = saveResult?.modelId || routeModelId || null;
+      const savedModelId = saveResult?.modelId;
       if (!savedModelId) {
         return;
       }
@@ -3055,7 +3048,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return importedEngine;
   }, [bumpModelVersion]);
 
-  const getSyncedCanvasSnapshot = useCallback(async () => {
+  const getCanvasDiagramXml = useCallback(async () => {
     const modeler = modelerRef.current;
     if (!modeler?.saveXML) {
       throw new Error("Modeler nie je inicializovaný.");
@@ -3064,16 +3057,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!diagramXml || !diagramXml.trim()) {
       throw new Error("Diagram sa nepodarilo serializovať.");
     }
+    return diagramXml;
+  }, []);
+
+  const getSyncedCanvasSnapshot = useCallback(async () => {
+    const diagramXml = await getCanvasDiagramXml();
     const file = new File([diagramXml], "diagram.bpmn", { type: "application/bpmn+xml" });
     const importResp = await importBpmn(file);
     const syncedEngine = importResp?.engine_json || importResp;
     if (!syncedEngine) {
       throw new Error("Nepodarilo sa zosynchronizovať model pred uložením.");
     }
-    setEngineJson(syncedEngine);
-    setXmlFull(diagramXml, "save_snapshot_sync");
     return { engine: syncedEngine, diagramXml };
-  }, []);
+  }, [getCanvasDiagramXml]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -3091,6 +3087,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   useEffect(() => {
     if (!guideEnabled) return;
     if (!guideState?.key || !engineJson) return;
+    if (pendingSkeletonReviewRef.current?.engine === engineJson) return;
     if (guideState.key.startsWith("task_no_")) {
       runGuideReview("engine_change");
     }
@@ -3100,17 +3097,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!guideEnabled) return;
     if (!engineJson) return;
     if (modelVersion <= 0) return;
+    const pendingReview = pendingSkeletonReviewRef.current;
+    if (pendingReview?.engine === engineJson) {
+      if (!pendingReview.imported) return;
+      pendingSkeletonReviewRef.current = null;
+      runGuideReview("skeleton_generated", activeLaneId || null);
+      return;
+    }
     runGuideReview("model_change", activeLaneId || null);
   }, [guideEnabled, engineJson, modelVersion, activeLaneId, runGuideReview]);
-
-  useEffect(() => {
-    if (!guideEnabled) return;
-    if (!engineJson) return;
-    const pendingReason = pendingGuideReviewReasonRef.current;
-    if (!pendingReason) return;
-    pendingGuideReviewReasonRef.current = null;
-    runGuideReview(pendingReason, activeLaneId || null);
-  }, [guideEnabled, engineJson, activeLaneId, runGuideReview]);
 
   useEffect(() => {
     if (!guideEnabled) return;
@@ -3248,39 +3243,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
     }
   }, [selectedLane, modelVersion, resolveLaneElement]);
-
-  const headerStepperState = useMemo(
-    () => ({
-      processName:
-        (processCard.generatorInput.processName || "").trim() ||
-        engineJson?.processName ||
-        engineJson?.name ||
-        "",
-      lanes: engineJson?.lanes || [],
-      nodes: engineJson?.nodes || [],
-      flows: engineJson?.flows || [],
-      mentorNotes,
-      mentorLastRunAt,
-      lastSavedAt,
-      lastExportedAt,
-      storyGeneratedAt,
-    }),
-    [
-      engineJson,
-      lastExportedAt,
-      lastSavedAt,
-      storyGeneratedAt,
-      mentorLastRunAt,
-      mentorNotes,
-      processCard.generatorInput.processName,
-    ],
-  );
-
-  useEffect(() => {
-    setHeaderStepperState(headerStepperState);
-  }, [headerStepperState, setHeaderStepperState]);
-
-  useEffect(() => () => setHeaderStepperState(null), [setHeaderStepperState]);
 
   const regenerateStory = useCallback(() => {
     if (!engineJson) {
@@ -3769,10 +3731,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(false);
     setHasUnsavedChanges(false);
     setPreviewVersionTag("");
-    setMentorNotes([]);
-    setMentorLastRunAt(null);
-    setLastSavedAt(null);
-    setLastExportedAt(null);
     setGuideState(null);
     setGuideFindings([]);
     historyRef.current = [];
@@ -3821,17 +3779,20 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         processName,
         roles: roleLines.join("\n"),
       });
-      const generatePromise = generateLinearWizardDiagram(payload);
-      await sleep(450);
-      setDemoBuildStep(1);
-      await sleep(450);
-      setDemoBuildStep(2);
-      const response = await generatePromise;
+      const [response] = await Promise.all([
+        generateLinearWizardDiagram(payload),
+        (async () => {
+          await sleep(450);
+          setDemoBuildStep(1);
+          await sleep(450);
+          setDemoBuildStep(2);
+        })(),
+      ]);
       const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
+      const xmlText = response?.diagram_xml;
+      if (!generatedEngine || !xmlText) {
+        throw new Error("Chýba model alebo diagram v odpovedi.");
       }
-      const xmlText = await renderEngineXml(generatedEngine);
       setEngineJson(generatedEngine);
       setXmlFull(xmlText, "demo_generate");
       setModelSource({ kind: "sandbox" });
@@ -3984,6 +3945,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     undoInProgressRef.current = true;
     setEngineJson(snapshot.engine);
     setXmlFull(snapshot.xml, "undo_snapshot");
+    setHasUnsavedChanges(true);
     lastSyncedXmlRef.current = snapshot.xml;
     if (Array.isArray(snapshot.engine?.lanes) && snapshot.engine.lanes.length) {
       setProcessCard((prev) => ({
@@ -4267,48 +4229,30 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setRegenerateConfirmOpen(true);
       return;
     }
-    setIsLoading(true);
-    try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
-      }
-      const payload = mapGeneratorInputToPayload(processCard.generatorInput);
-      const response = await generateLinearWizardDiagram(payload);
-      const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
-      }
-      pendingGuideReviewReasonRef.current = "skeleton_generated";
-      setEngineJson(generatedEngine);
-      setGuideState(buildImmediateGuideCard(generatedEngine));
-      const xmlText = await renderEngineXml(generatedEngine);
-      setXmlFull(xmlText, "handleGenerate");
-      setHasUnsavedChanges(true);
-    } catch (e) {
-      const message = e?.message || "Failed to generate diagram";
-      setError(message);
-    } finally {
-      setIsLoading(false);
-    }
+    await generateModelFromProcessCard();
   };
 
   const handleConfirmRegenerate = async () => {
     setRegenerateConfirmOpen(false);
+    await generateModelFromProcessCard();
+  };
+
+  const generateModelFromProcessCard = async () => {
     setIsLoading(true);
     try {
-      if (engineJson && xml && !undoInProgressRef.current) {
-        pushHistorySnapshot(engineJson, xml);
-      }
       const payload = mapGeneratorInputToPayload(processCard.generatorInput);
       const response = await generateLinearWizardDiagram(payload);
       const generatedEngine = response?.engine_json;
-      if (!generatedEngine) {
-        throw new Error("Chýba engine_json v odpovedi.");
+      const xmlText = response?.diagram_xml;
+      if (!generatedEngine || !xmlText) {
+        throw new Error("Chýba model alebo diagram v odpovedi.");
       }
-      pendingGuideReviewReasonRef.current = "skeleton_generated";
+      if (engineJson && xml && !undoInProgressRef.current) {
+        pushHistorySnapshot(engineJson, xml);
+      }
+      pendingSkeletonReviewRef.current = { engine: generatedEngine, xml: xmlText, imported: false };
       setEngineJson(generatedEngine);
       setGuideState(buildImmediateGuideCard(generatedEngine));
-      const xmlText = await renderEngineXml(generatedEngine);
       setXmlFull(xmlText, "handleGenerate");
       setHasUnsavedChanges(true);
     } catch (e) {
@@ -5291,67 +5235,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     return { x, y };
   };
 
-  const clearLanePreviewOverlays = () => {
-    const modeler = modelerRef.current;
-    if (!modeler) return;
-    const overlays = modeler.get("overlays");
-    if (!overlays) return;
-    lanePreviewOverlayIdsRef.current.forEach((id) => overlays.remove(id));
-    lanePreviewOverlayIdsRef.current = [];
-  };
-
-  const _getPreviewShapeSize = (type) => {
-    if (type === "xor" || type === "and") {
-      return { width: 220, height: 110 };
-    }
-    return { width: 160, height: 68 };
-  };
-
-  const _createPreviewNode = (item, size) => {
-    const container = document.createElement("div");
-    const isGateway = item.type === "xor" || item.type === "and";
-    container.className = `lane-preview-shape lane-preview-shape--${isGateway ? "gateway" : "task"}`;
-    container.style.width = `${size.width}px`;
-    container.style.height = `${size.height}px`;
-    if (isGateway) {
-      const diamond = document.createElement("div");
-      diamond.className = "lane-preview-shape__diamond";
-
-      const content = document.createElement("div");
-      content.className = "lane-preview-shape__content";
-
-      const badge = document.createElement("div");
-      badge.className = "lane-preview-shape__badge";
-      badge.textContent = item.type === "and" ? "AND" : "XOR";
-      content.appendChild(badge);
-
-      const label = document.createElement("div");
-      label.className = "lane-preview-shape__label";
-      label.textContent = item.text;
-      content.appendChild(label);
-
-      diamond.appendChild(content);
-      container.appendChild(diamond);
-
-      const branchTop = document.createElement("div");
-      branchTop.className = "lane-preview-branch lane-preview-branch--top";
-      container.appendChild(branchTop);
-
-      const branchBottom = document.createElement("div");
-      branchBottom.className = "lane-preview-branch lane-preview-branch--bottom";
-      container.appendChild(branchBottom);
-    } else {
-      const content = document.createElement("div");
-      content.className = "lane-preview-shape__content";
-      const label = document.createElement("div");
-      label.className = "lane-preview-shape__label";
-      label.textContent = item.text;
-      content.appendChild(label);
-      container.appendChild(content);
-    }
-    return container;
-  };
-
   const _handleLaneShapeCreate = () => {
     if (!activeLaneShape) return;
     if (!selectedLane) {
@@ -5427,20 +5310,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setError(null);
   };
 
-
-  useEffect(() => {
-    if (lanePreviewTimerRef.current) {
-      window.clearTimeout(lanePreviewTimerRef.current);
-      lanePreviewTimerRef.current = null;
-    }
-
-    // Lane typing preview overlay is deprecated; always keep it disabled.
-    clearLanePreviewOverlays();
-    return undefined;
-  }, [laneDescription, selectedLane, engineJson]);
-
-  useEffect(() => () => clearLanePreviewOverlays(), []);
-
   const handleAppendToLane = async () => {
     if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
@@ -5465,7 +5334,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     cancelPendingRelayouts();
-    clearLanePreviewOverlays();
     setIsLoading(true);
     setError(null);
     try {
@@ -5540,11 +5408,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
       }
       const modeler = modelerRef.current;
-      const hasStartEventInUpdatedEngine = Array.isArray(updatedEngine?.nodes)
-        ? updatedEngine.nodes.some((node) => String(node?.type || "").toLowerCase().includes("start"))
-        : false;
+      const currentNodes = Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : [];
+      const onlyStartEvent =
+        currentNodes.length === 1 && String(currentNodes[0]?.type || "").toLowerCase().includes("start");
       const currentNodeIds = new Set(
-        (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : [])
+        currentNodes
           .map((node) => String(node?.id || ""))
           .filter(Boolean),
       );
@@ -5556,12 +5424,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return type.includes("start") || type.includes("end");
       };
       const isGatewayNode = (node) => String(node?.type || "").toLowerCase().includes("gateway");
-      const existingLaneWorkNodes = (Array.isArray(currentEngine?.nodes) ? currentEngine.nodes : []).filter(
-        (node) => String(node?.laneId || "") === String(laneId || "") && !isStartOrEndNode(node),
-      );
       const shouldFullRenderForInitialStartLabel = Boolean(
-        hasStartEventInUpdatedEngine &&
-          existingLaneWorkNodes.length === 0 &&
+        onlyStartEvent &&
           newNodesFromAppend.length === 1 &&
           !isStartOrEndNode(newNodesFromAppend[0]) &&
           !isGatewayNode(newNodesFromAppend[0]),
@@ -5647,7 +5511,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
               setHasUnsavedChanges(true);
               setLaneDescription("");
-              clearLanePreviewOverlays();
               setInfo("Kroky boli pridané (fallback render).");
               setLaneOpen(false);
               bumpModelVersion();
@@ -5662,7 +5525,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        clearLanePreviewOverlays();
         setLaneOpen(false);
         if (isDemoMode) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
@@ -5709,7 +5571,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setXmlFull(fullXml, "appendLane:fallback_full_rerender");
         setHasUnsavedChanges(true);
         setLaneDescription("");
-        clearLanePreviewOverlays();
         setInfo("Kroky boli pridané (fallback render).");
         setLaneOpen(false);
         if (isDemoMode) {
@@ -5764,6 +5625,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const handleSaveModel = async () => {
+    if (saveInFlightRef.current) return null;
     if (isDemoMode) {
       setInfo(t("wizard.demo_save_disabled"));
       return;
@@ -5787,6 +5649,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setError(null);
     setInfo(null);
+    saveInFlightRef.current = true;
     setSaveLoading(true);
     try {
       if (typeof window !== "undefined" && window.__BPMNGEN_DEBUG_LAYOUT_STABILITY) {
@@ -5849,21 +5712,36 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
         saveResult = { ok: true, modelId: newModelId, name: payload.name, source: "org" };
       } else {
+        const modelId = modelSource?.modelId || globalThis.crypto?.randomUUID?.();
+        if (modelId) {
+          payload.id = modelId;
+          if (!modelSource?.modelId) {
+            setModelSource({ kind: "sandbox", modelId });
+          }
+        }
         const saved = await saveWizardModel(payload);
-        saveResult = { ok: true, modelId: saved?.id || null, name: payload.name, source: "sandbox" };
+        if (!saved?.id) {
+          throw new Error(t("wizard.save_error"));
+        }
+        if (saved.id !== modelId) {
+          setModelSource({ kind: "sandbox", modelId: saved.id });
+        }
+        saveResult = { ok: true, modelId: saved.id, name: payload.name, source: "sandbox" };
       }
-      setLastSavedAt(Date.now());
-      setInfo("Model bol ulozeny.");
+      setEngineJson(syncedEngine);
+      setXmlFull(diagramXml, "save_snapshot_sync");
+      setInfo(t("wizard.model_saved"));
       setHasUnsavedChanges(false);
       return saveResult;
     } catch (e) {
       const message =
         e?.status === 409
           ? e?.message || "Proces bol medzicasom zmeneny inym pouzivatelom. Obnov najnovsiu verziu a skus ulozit znova."
-          : e?.message || "Nepodarilo sa ulozit model.";
+          : e?.message || t("wizard.save_error");
       setError(message);
       return null;
     } finally {
+      saveInFlightRef.current = false;
       setSaveLoading(false);
     }
   };
@@ -5914,7 +5792,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, []);
 
   const handleXmlImported = useCallback(
-    (modeler) => {
+    (modeler, importedXml) => {
+      const pendingReview = pendingSkeletonReviewRef.current;
+      if (pendingReview?.xml === importedXml) {
+        pendingReview.imported = true;
+      }
       restoreRelayoutContext(modeler);
       bumpModelVersion();
     },
@@ -5991,7 +5873,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       onXmlImported: handleXmlImported,
       overlayMessage: relayouting ? t("wizard.relayouting") : "",
       guideHighlight: guideHighlight?.map || null,
-      orgId: modelSource?.kind === "org" ? activeOrgId : "",
+      orgId: modelSource?.kind === "org" ? modelSource.orgId : "",
       processNodeId: modelSource?.kind === "org" ? modelSource?.treeNodeId || "" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
@@ -6014,7 +5896,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       guideHighlight,
       handleXmlImported,
       handleViewerLaneSelect,
-      activeOrgId,
       xml,
       modelSource,
       orgReadOnly,
@@ -6030,9 +5911,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!loadedEngine || !diagram) {
       throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
     }
-    if (engineJson && xml && !undoInProgressRef.current) {
-      pushHistorySnapshot(engineJson, xml);
-    }
+    historyRef.current = [];
+    setHistoryCount(0);
     setEngineJson(loadedEngine);
     setXmlFull(diagram, "applyLoadedModel");
     setSelectedLane(null);
@@ -6048,6 +5928,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       setModelsOpen(false);
     }
     setDrawerOpen(false);
+  };
+
+  const applyOrgModelWithProcessContext = async (model, modelId, orgId) => {
+    let treeNodeId = String(model?.tree_node_id || "").trim();
+    if (!treeNodeId) {
+      // Direct links can open before the organization tree has been loaded.
+      const tree = await getOrgModel(orgId).catch(() => orgTree);
+      treeNodeId = findProcessPathByModelId(tree, modelId)?.at(-1)?.id || "";
+    }
+    applyLoadedModel(model, { source: { kind: "org", orgId, modelId, treeNodeId } });
   };
 
   const showMissingDiagram = useCallback((message) => {
@@ -6078,15 +5968,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(true);
     try {
       const resp = await loadWizardModel(id);
-      applyLoadedModel(resp, { source: { kind: "sandbox" } });
+      applyLoadedModel(resp, { source: { kind: "sandbox", modelId: id } });
       setInfo(t("wizard.model_loaded"));
     } catch (e) {
       const isNotFound =
         e?.status === 404 || (typeof e?.message === "string" && e.message.includes("HTTP 404"));
-      if (isNotFound && activeOrgId) {
+      const orgId = activeOrgId || currentUser?.org_id;
+      if (isNotFound && orgId) {
         try {
-          const orgResp = await loadOrgModel(id, activeOrgId);
-          applyLoadedModel(orgResp, { source: { kind: "org", orgId: activeOrgId, modelId: id } });
+          const orgResp = await loadOrgModel(id, orgId);
+          await applyOrgModelWithProcessContext(orgResp, id, orgId);
           setOrgVersionPreview(null);
           setPreviewVersionTag("");
           setInfo(t("wizard.model_loaded"));
@@ -6498,12 +6389,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setLoadLoading(true);
     try {
       const resp = await loadOrgModel(modelId, activeOrgId);
-      const treeNodeId =
-        String(resp?.tree_node_id || "").trim() ||
-        String(findProcessPathByModelId(orgTree, modelId, [])?.slice(-1)?.[0]?.id || "").trim();
-      applyLoadedModel(resp, {
-        source: { kind: "org", orgId: activeOrgId, modelId, ...(treeNodeId ? { treeNodeId } : {}) },
-      });
+      await applyOrgModelWithProcessContext(resp, modelId, activeOrgId);
       setOrgVersionPreview(null);
       setPreviewVersionTag("");
       lastRouteModelIdRef.current = modelId;
@@ -7474,6 +7360,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         pendingOpenResolveRef.current = resolve;
         pendingOpenCancelRef.current = () => resolve(false);
         pendingOpenActionRef.current = null;
+        setError(null);
+        setInfo(null);
         setSavePromptOpen(true);
       });
     };
@@ -7529,35 +7417,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     pendingOpenActionRef.current = action;
+    setError(null);
+    setInfo(null);
     setSavePromptOpen(true);
   };
 
   const handleSaveAndOpen = async () => {
-    if (isDemoMode) {
-      setSavePromptOpen(false);
-      handleOpenWithoutSave();
-      return;
+    if (!isDemoMode) {
+      const result = await handleSaveModel();
+      if (!result?.ok) return;
     }
-    setSavePromptOpen(false);
-    await handleSaveModel();
-    setInfo(t("wizard.model_saved"));
-    setHasUnsavedChanges(false);
-    const resolve = pendingOpenResolveRef.current;
-    pendingOpenResolveRef.current = null;
-    pendingOpenCancelRef.current = null;
-    if (resolve) {
-      resolve(true);
-    }
-    const action = pendingOpenActionRef.current;
-    pendingOpenActionRef.current = null;
-    if (action) {
-      window.setTimeout(() => {
-        action();
-      }, 1000);
-    }
+    continuePendingOpen();
   };
 
-  const handleOpenWithoutSave = () => {
+  const continuePendingOpen = () => {
+    if (saveInFlightRef.current) return;
     const resolve = pendingOpenResolveRef.current;
     pendingOpenResolveRef.current = null;
     pendingOpenCancelRef.current = null;
@@ -7573,6 +7447,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const handleCancelOpen = () => {
+    if (saveInFlightRef.current) return;
     const cancel = pendingOpenCancelRef.current;
     pendingOpenResolveRef.current = null;
     pendingOpenCancelRef.current = null;
@@ -7659,6 +7534,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setModelsActionLoading(true);
         try {
           await deleteWizardModel(id);
+          setModelSource((source) =>
+            source.kind === "sandbox" && source.modelId === id ? { kind: "sandbox" } : source,
+          );
           await fetchModels();
           setInfo(t("wizard.model_delete_success"));
         } catch (e) {
@@ -7732,7 +7610,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     try {
       const resp = await loadWizardModel(id);
       const fallbackTag = resp?.process_meta?.version ? String(resp.process_meta.version) : "";
-      applyLoadedModel(resp, { closeModels: true, source: { kind: "sandbox" }, versionTag: versionTag || fallbackTag });
+      applyLoadedModel(resp, {
+        closeModels: true,
+        source: { kind: "sandbox", modelId: id },
+        versionTag: versionTag || fallbackTag,
+      });
       setInfo(t("wizard.model_loaded"));
     } catch (e) {
       const message = e?.message || t("wizard.model_load_error");
@@ -7866,17 +7748,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setInfo(null);
     setExportLoading(true);
     try {
-      const { engine: syncedEngine, diagramXml } = await getSyncedCanvasSnapshot();
-      const name = syncedEngine?.name || syncedEngine?.processName || syncedEngine?.processId || "process";
-      await saveWizardModel({
-        name,
-        engine_json: syncedEngine,
-        diagram_xml: diagramXml,
-        generator_input: processCard.generatorInput,
-        process_meta: processCard.processMeta,
-      });
-      setLastExportedAt(Date.now());
-
+      const diagramXml = await getCanvasDiagramXml();
+      const name = engineJson?.name || engineJson?.processName || engineJson?.processId || deriveDefaultName();
       const safeName = (name || "process").replace(/[^\w.-]+/g, "_").replace(/_+/g, "_");
       const filename = `${safeName || "process"}.bpmn`;
       const blob = new Blob([diagramXml], { type: "application/bpmn+xml" });
@@ -7888,7 +7761,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setInfo(t("wizard.model_loaded"));
+      setInfo(t("wizard.export_success"));
     } catch (e) {
       const message = e?.message || t("wizard.export_error");
       setError(message);
@@ -7949,11 +7822,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       if (engineJson && xml && !undoInProgressRef.current) {
         pushHistorySnapshot(engineJson, xml);
       }
-      const response = await importBpmn(file);
+      const response = await importBpmn(file, { includeXml: true });
       const importedEngine = response?.engine_json || response;
+      const newXml = response?.diagram_xml || (await renderEngineXml(importedEngine));
       setEngineJson(importedEngine);
-      const newXml = await renderEngineXml(importedEngine);
       setXmlFull(newXml, "importBpmn");
+      if (modelSource.kind === "sandbox") {
+        setModelSource({ kind: "sandbox" });
+      }
       setSelectedLane(null);
       setLaneDescription("");
       setInfo(t("wizard.import_success"));
@@ -10079,19 +9955,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                   <p className="wizard-dialog-kicker">{t("wizard.sandbox_kicker")}</p>
                   <h3 className="wizard-dialog-title">{t("wizard.save_model_prompt_title")}</h3>
                 </div>
-                <button className="btn btn--small" type="button" onClick={handleCancelOpen}>
+                <button className="btn btn--small" type="button" onClick={handleCancelOpen} disabled={saveLoading}>
                   {t("wizard.close")}
                 </button>
               </div>
               <div className="wizard-save-prompt__text wizard-dialog-section">
                 {t("wizard.save_model_prompt_message")}
               </div>
+              {error ? <div className="wizard-error" role="alert">{error}</div> : null}
+              {!error && info ? <div className="wizard-info" role="status">{info}</div> : null}
               <div className="wizard-save-prompt__actions">
-                <button className="btn" type="button" onClick={handleOpenWithoutSave}>
+                <button className="btn" type="button" onClick={continuePendingOpen} disabled={saveLoading}>
                   {t("wizard.save_model_prompt_skip")}
                 </button>
-                <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen}>
-                  {t("wizard.save_model_prompt_save")}
+                <button className="btn btn-primary" type="button" onClick={handleSaveAndOpen} disabled={saveLoading}>
+                  {saveLoading ? t("wizard.rail_saving") : t("wizard.save_model_prompt_save")}
                 </button>
               </div>
             </div>

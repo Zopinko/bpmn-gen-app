@@ -1,4 +1,5 @@
 from services.bpmn_svc import generate_bpmn_from_json
+from services.bpmn_import import bpmn_xml_to_engine
 import xml.etree.ElementTree as ET
 
 
@@ -73,3 +74,23 @@ def test_start_event_label_bounds_stay_attached_after_first_task():
     assert abs(label_center_x - event_center_x) <= 0.5
     assert label_y == event_y + event_h + 2
     assert label_y > flow_y + 12
+
+
+def test_lane_id_round_trip_does_not_collide_with_node_or_di_ids():
+    engine = {
+        "processId": "Process_1", "name": "Test",
+        "lanes": [{"id": "lane_original", "name": "Task_1"}],
+        "nodes": [
+            {"id": "Task_1", "type": "task", "name": "First task", "laneId": "lane_original"},
+            {"id": "DI_Task_1", "type": "endEvent", "name": "End", "laneId": "lane_original"},
+        ],
+        "flows": [{"id": "Flow_1", "source": "Task_1", "target": "DI_Task_1"}],
+    }
+
+    xml = generate_bpmn_from_json(engine)
+    root = ET.fromstring(xml)
+    ids = [element.get("id") for element in root.iter() if element.get("id")]
+    assert len(ids) == len(set(ids))
+    imported = bpmn_xml_to_engine(xml)
+    assert imported["lanes"] == engine["lanes"]
+    assert {node["laneId"] for node in imported["nodes"]} == {"lane_original"}

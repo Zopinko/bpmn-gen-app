@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import heapq
 import re
 from collections import defaultdict
+from copy import deepcopy
 from typing import Any, Dict, List, Callable
 from uuid import uuid4
 from services.architect.normalize import postprocess_engine_json, normalize_engine_payload
@@ -90,6 +91,7 @@ def _expand_conditional_step(
     make_flow_id: Callable[[str, str], str],
     include_lane_in_flow: bool = False,
     locale: str | None = None,
+    fallback_end_id: str | None = None,
 ) -> tuple[str | None, list[Dict[str, Any]], list[Dict[str, Any]]]:
     """Return (new_prev, nodes, flows) for a conditional decision step."""
     cond = then_part = else_part = None
@@ -238,6 +240,13 @@ def _expand_conditional_step(
 
     for source_id, target_id in zip(else_target_ids, else_target_ids[1:]):
         flow = {"id": make_flow_id(source_id, target_id), "source": source_id, "target": target_id}
+        if include_lane_in_flow:
+            flow["laneId"] = lane_id
+        flows.append(flow)
+
+    if fallback_end_id and not (else_steps and else_lower in end_keywords):
+        source_id = else_target_ids[-1]
+        flow = {"id": make_flow_id(source_id, fallback_end_id), "source": source_id, "target": fallback_end_id}
         if include_lane_in_flow:
             flow["laneId"] = lane_id
         flows.append(flow)
@@ -715,8 +724,10 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             )
         prev_id = created_id
 
+    end_flow_index = None
     if end_flow_id:
-        flows = [flow for flow in flows if flow.get("id") != end_flow_id]
+        end_flow_index = next(index for index, flow in enumerate(flows) if flow.get("id") == end_flow_id)
+        flows.pop(end_flow_index)
         flow_ids.discard(end_flow_id)
 
     for step in steps:
@@ -754,6 +765,7 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             make_flow_id=_new_flow_id,
             include_lane_in_flow=False,
             locale=locale,
+            fallback_end_id=end_node_id,
         )
         if new_nodes:
             if align_global_x:
@@ -774,13 +786,9 @@ def append_tasks_to_lane_from_description(data: LaneAppendRequest) -> Dict[str, 
             for flow in flows
         )
         if not has_link:
-            flows.append(
-                {
-                    "id": _new_flow_id(prev_id, end_node_id),
-                    "source": prev_id,
-                    "target": end_node_id,
-                }
-            )
+            continuation = {"id": _new_flow_id(prev_id, end_node_id), "source": prev_id, "target": end_node_id}
+            # Keep the primary route first among existing links into this end event.
+            flows.insert(end_flow_index if end_flow_index is not None else len(flows), continuation)
 
     engine["nodes"] = nodes
     engine["flows"] = flows
@@ -1517,6 +1525,16 @@ def _add_event_definition(parent_el: ET.Element, node: Dict[str, Any]):
 # -------------------------------
 # DI (BPMNDiagram) – shapes & edges
 # -------------------------------
+def _claim_xml_id(preferred: str, used_ids: set[str]) -> str:
+    candidate = preferred
+    suffix = 1
+    while candidate in used_ids:
+        candidate = f"{preferred}_{suffix}"
+        suffix += 1
+    used_ids.add(candidate)
+    return candidate
+
+
 def _add_di(
     defs: ET.Element,
     collab_id: str,
@@ -1525,14 +1543,15 @@ def _add_di(
     layout,
     flows,
     lane_xml_ids,
+    used_xml_ids,
 ):
     diagram = ET.SubElement(
-        defs, T("bpmndi", "BPMNDiagram"), {"id": "BPMNDiagram_1", "name": data["name"]}
+        defs, T("bpmndi", "BPMNDiagram"), {"id": _claim_xml_id("BPMNDiagram_1", used_xml_ids), "name": data["name"]}
     )
     plane = ET.SubElement(
         diagram,
         T("bpmndi", "BPMNPlane"),
-        {"id": "BPMNPlane_1", "bpmnElement": collab_id},
+        {"id": _claim_xml_id("BPMNPlane_1", used_xml_ids), "bpmnElement": collab_id},
     )
 
     def _coord(value: float) -> str:
@@ -1563,7 +1582,7 @@ def _add_di(
         plane,
         T("bpmndi", "BPMNShape"),
         {
-            "id": f"DI_{participant_id}",
+            "id": _claim_xml_id(f"DI_{participant_id}", used_xml_ids),
             "bpmnElement": participant_id,
             "isHorizontal": "true",
         },
@@ -1592,7 +1611,7 @@ def _add_di(
         shp = ET.SubElement(
             plane,
             T("bpmndi", "BPMNShape"),
-            {"id": f"DI_{xml_lane_id}", "bpmnElement": xml_lane_id},
+            {"id": _claim_xml_id(f"DI_{xml_lane_id}", used_xml_ids), "bpmnElement": xml_lane_id},
         )
         ET.SubElement(
             shp,
@@ -1616,7 +1635,7 @@ def _add_di(
         shp = ET.SubElement(
             plane,
             T("bpmndi", "BPMNShape"),
-            {"id": f"DI_{xml_lane_id}", "bpmnElement": xml_lane_id},
+            {"id": _claim_xml_id(f"DI_{xml_lane_id}", used_xml_ids), "bpmnElement": xml_lane_id},
         )
         ET.SubElement(
             shp,
@@ -1635,7 +1654,7 @@ def _add_di(
         nid = n["id"]
         x, y, w, h = pos[nid]
         shp = ET.SubElement(
-            plane, T("bpmndi", "BPMNShape"), {"id": f"DI_{nid}", "bpmnElement": nid}
+            plane, T("bpmndi", "BPMNShape"), {"id": _claim_xml_id(f"DI_{nid}", used_xml_ids), "bpmnElement": nid}
         )
         ET.SubElement(
             shp,
@@ -2025,7 +2044,7 @@ def _add_di(
         fid = f["id"]
         points = _orthogonal_waypoints(f)
         e = ET.SubElement(
-            plane, T("bpmndi", "BPMNEdge"), {"id": f"Edge_{fid}", "bpmnElement": fid}
+            plane, T("bpmndi", "BPMNEdge"), {"id": _claim_xml_id(f"Edge_{fid}", used_xml_ids), "bpmnElement": fid}
         )
         for px, py in points:
             ET.SubElement(e, T("di", "waypoint"), {"x": str(px), "y": str(py)})
@@ -2060,7 +2079,6 @@ TARGET_NS = "http://bpmn.gen/definitions"
 # Core: JSON -> BPMN XML
 # -------------------------------
 def json_to_bpmn(data: Dict[str, Any]) -> str:
-    defs_id = data.get("definitionsId", "Definitions_1")
     proc_id = data.get("processId", "Process_1")
     proc_name = data.get("name") or data.get("processName") or "Generated Process"
 
@@ -2091,43 +2109,18 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
     node_ids = {n.get("id") for n in nodes if n.get("id")}
     flows = [f for f in flows if f.get("source") in node_ids and f.get("target") in node_ids]
 
-    # Remove placeholder start->end flows once other steps exist.
+    model_ids = [proc_id] + [node["id"] for node in nodes if node.get("id")] + [flow["id"] for flow in flows if flow.get("id")]
+    used_xml_ids = set(model_ids)
+    if len(used_xml_ids) != len(model_ids):
+        raise ValueError("Process, node and flow IDs must be unique.")
+    for idx, flow in enumerate(flows):
+        if not flow.get("id"):
+            flow["id"] = _claim_xml_id(f"F_{flow['source']}_{flow['target']}_{idx}", used_xml_ids)
+    defs_id = _claim_xml_id(data.get("definitionsId", "Definitions_1"), used_xml_ids)
+    collab_id = _claim_xml_id("Collab_1", used_xml_ids)
+    participant_id = _claim_xml_id("Participant_1", used_xml_ids)
+
     node_type_map = {n["id"]: _normalize_node_type(n) for n in nodes if n.get("id")}
-    outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    incoming_by_tgt: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for f in flows:
-        src = f.get("source")
-        tgt = f.get("target")
-        if src:
-            outgoing_by_src[src].append(f)
-        if tgt:
-            incoming_by_tgt[tgt].append(f)
-
-    cleaned_flows: List[Dict[str, Any]] = []
-    for f in flows:
-        src = f.get("source")
-        tgt = f.get("target")
-        if (
-            src
-            and tgt
-            and node_type_map.get(src) == "startEvent"
-            and node_type_map.get(tgt) == "endEvent"
-        ):
-            other_out = any(
-                node_type_map.get(of.get("target")) != "endEvent"
-                for of in outgoing_by_src.get(src, [])
-                if of is not f
-            )
-            other_in = any(
-                node_type_map.get(of.get("source")) != "startEvent"
-                for of in incoming_by_tgt.get(tgt, [])
-                if of is not f
-            )
-            if other_out or other_in:
-                continue
-        cleaned_flows.append(f)
-    flows = cleaned_flows
-
     node_order = {n.get("id"): idx for idx, n in enumerate(nodes) if n.get("id")}
 
     locale = _normalize_locale(data.get("locale"))
@@ -2150,66 +2143,6 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
         if len(ordered) >= 1 and not (ordered[0].get("name") or ordered[0].get("label")):
             ordered[0]["name"] = positive_label
         if len(ordered) >= 2 and not (ordered[1].get("name") or ordered[1].get("label")):
-            ordered[1]["name"] = negative_label
-
-    # Ensure EndEvent follows the last created step and sits in its lane.
-    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
-    end_nodes = [n for n in nodes if _normalize_node_type(n) == "endEvent" and n.get("id")]
-    if end_nodes:
-        end_node = end_nodes[-1]
-        end_id = end_node.get("id")
-        last_step = None
-        gateway_types = {
-            "exclusiveGateway",
-            "parallelGateway",
-            "inclusiveGateway",
-            "eventBasedGateway",
-        }
-        for n in reversed(nodes):
-            ntype = _normalize_node_type(n)
-            if ntype in {"endEvent", "startEvent"} or ntype in gateway_types:
-                continue
-            if n.get("id"):
-                last_step = n
-                break
-        if last_step and end_id:
-            if last_step.get("laneId"):
-                end_node["laneId"] = last_step["laneId"]
-            flows_to_end = [f for f in flows if f.get("target") == end_id]
-            flows = [f for f in flows if f.get("target") != end_id]
-            flow_ids = {f.get("id") for f in flows if f.get("id")}
-            existing = next(
-                (f for f in flows_to_end if f.get("source") == last_step.get("id")),
-                None,
-            )
-            if existing:
-                flows.append(existing)
-            else:
-                base_id = f"flow_{last_step.get('id')}_to_{end_id}"
-                fid = base_id if base_id not in flow_ids else f"flow_{uuid4().hex[:8]}"
-                flows.append({"id": fid, "source": last_step.get("id"), "target": end_id})
-
-    # Default labels for exclusive gateway branches (Yes/No or Áno/Nie) if missing.
-    node_type_map = {n.get("id"): _normalize_node_type(n) for n in nodes if n.get("id")}
-    outgoing_by_src: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for f in flows:
-        src = f.get("source")
-        if src:
-            outgoing_by_src[src].append(f)
-    for src_id, flist in outgoing_by_src.items():
-        if node_type_map.get(src_id) != "exclusiveGateway":
-            continue
-        if len(flist) != 2:
-            continue
-        if any((f.get("name") or f.get("label")) for f in flist):
-            continue
-        # order by target appearance to keep labels stable
-        ordered = sorted(
-            flist, key=lambda f: node_order.get(f.get("target"), 10**9)
-        )
-        if ordered:
-            ordered[0]["name"] = positive_label
-        if len(ordered) > 1:
             ordered[1]["name"] = negative_label
 
     normalized_data = dict(data)
@@ -2242,8 +2175,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
     lane_elems = {}
     lane_xml_ids = {}
     if lanes:
-        lane_set = ET.SubElement(process, T("bpmn", "laneSet"), {"id": "LaneSet_1"})
-        used_lane_ids = set()
+        lane_set = ET.SubElement(process, T("bpmn", "laneSet"), {"id": _claim_xml_id("LaneSet_1", used_xml_ids)})
 
         def slugify(value: str) -> str:
             value = (value or "").strip()
@@ -2256,18 +2188,16 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
                 raise ValueError("Každá lane musí mať 'id' a 'name'.")
             base_name = ln.get("name") or ln.get("id") or f"Lane_{idx}"
             lane_bpmn_id = slugify(base_name)
-            xml_lane_id = lane_bpmn_id
-            attempt = 1
-            while xml_lane_id in used_lane_ids:
-                xml_lane_id = f"{lane_bpmn_id}_{attempt}"
-                attempt += 1
-            used_lane_ids.add(xml_lane_id)
+            if lane_bpmn_id[0].isdigit():
+                lane_bpmn_id = f"Lane_{lane_bpmn_id}"
+            xml_lane_id = _claim_xml_id(lane_bpmn_id, used_xml_ids)
             lane_xml_ids[ln["id"]] = xml_lane_id
             lane_elems[ln["id"]] = ET.SubElement(
                 lane_set,
                 T("bpmn", "lane"),
                 {"id": xml_lane_id, "name": ln["name"], "data-engine-id": ln["id"]},
             )
+    default_sources = {}
     node_ids = set()
     for n in nodes:
         for key in ["id", "type", "laneId", "name"]:
@@ -2293,7 +2223,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             )
 
         elif ntype in ("task", "userTask", "serviceTask"):
-            ET.SubElement(
+            default_sources[nid] = ET.SubElement(
                 process,
                 T("bpmn", ntype),
                 {"id": nid, "name": n["name"], "data-engine-id": nid},
@@ -2305,11 +2235,13 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             "inclusiveGateway",
             "eventBasedGateway",
         ):
-            ET.SubElement(
+            gateway = ET.SubElement(
                 process,
                 T("bpmn", ntype),
                 {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
+            if ntype in {"exclusiveGateway", "inclusiveGateway"}:
+                default_sources[nid] = gateway
 
         elif ntype in ("intermediateCatchEvent", "intermediateThrowEvent"):
             el = ET.SubElement(
@@ -2333,9 +2265,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
                 {"id": nid, "name": n["name"], "data-engine-id": nid},
             )
 
-    for idx, f in enumerate(flows):
-        if "id" not in f or not f.get("id"):
-            f["id"] = f"F_{f.get('source','?')}_{f.get('target','?')}_{idx}"
+    for f in flows:
         for key in ["id", "source", "target"]:
             if key not in f:
                 raise ValueError(f"Flow {f} chýba kľúč: {key}")
@@ -2352,6 +2282,12 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
         if flow_name:
             attrs["name"] = flow_name
         flow_el = ET.SubElement(process, T("bpmn", "sequenceFlow"), attrs)
+        if f.get("default"):
+            source = default_sources.get(f["source"])
+            if source is not None:
+                if source.get("default") is not None:
+                    raise ValueError(f"Node {f['source']} has more than one default sequence flow.")
+                source.set("default", f["id"])
 
         cond = f.get("condition")
         if cond:
@@ -2370,8 +2306,6 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
             )
         ET.SubElement(ln_elem, T("bpmn", "flowNodeRef")).text = n["id"]
 
-    collab_id = "Collab_1"
-    participant_id = "Participant_1"
     collab = ET.SubElement(defs, T("bpmn", "collaboration"), {"id": collab_id})
     ET.SubElement(
         collab,
@@ -2388,6 +2322,7 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
         layout,
         flows,
         lane_xml_ids,
+        used_xml_ids,
     )
 
     defs.set("layoutVersion", LAYOUT_VERSION)
@@ -2398,13 +2333,4 @@ def json_to_bpmn(data: Dict[str, Any]) -> str:
 # Public hook (kompatibilný)
 # -------------------------------
 def generate_bpmn_from_json(data: dict) -> str:
-    # zober locale z requestu, ak je; inak SK
-    locale = (data.get("locale") or "sk").lower()
-    # Ensure flow ids exist before normalization (some steps assume flow["id"]).
-    flows = data.get("flows") if isinstance(data.get("flows"), list) else None
-    if flows is not None:
-        for idx, f in enumerate(flows):
-            if isinstance(f, dict) and ("id" not in f or not f.get("id")):
-                f["id"] = f"F_{f.get('source','?')}_{f.get('target','?')}_{idx}"
-    data = postprocess_engine_json(data, locale=locale)
-    return json_to_bpmn(data)
+    return json_to_bpmn(deepcopy(data))

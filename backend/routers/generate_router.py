@@ -1,9 +1,11 @@
 import json
 import logging
+from xml.etree import ElementTree as ET
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from services.bpmn_svc import (
+    T,
     append_tasks_to_lane_from_description,
     build_linear_engine_from_wizard,
     generate_bpmn_from_json,
@@ -83,9 +85,23 @@ async def _read_limited_upload(file: UploadFile, limit: int = MAX_BPMN_UPLOAD_BY
     return content
 
 
-@router.post("/wizard/linear", response_model=LinearWizardResponse)
+def _render_bpmn_xml(engine: dict) -> str:
+    try:
+        xml = generate_bpmn_from_json(engine)
+        validate_xml(xml)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return xml
+
+
+@router.post(
+    "/wizard/linear",
+    response_model=LinearWizardResponse,
+    response_model_exclude_unset=True,
+)
 def generate_linear_wizard_diagram(
     payload: LinearWizardRequest,
+    include_xml: bool = False,
 ) -> LinearWizardResponse:
     """
     Build a simple linear BPMN diagram from a wizard payload without any AI calls.
@@ -95,6 +111,12 @@ def generate_linear_wizard_diagram(
     engine_json = built["engine_json"]
     issues = built.get("issues") or []
     validate_payload(engine_json)
+    if include_xml:
+        return LinearWizardResponse(
+            engine_json=engine_json,
+            issues=issues,
+            diagram_xml=_render_bpmn_xml(engine_json),
+        )
     return LinearWizardResponse(engine_json=engine_json, issues=issues)
 
 
@@ -137,7 +159,7 @@ def wizard_export_bpmn(payload: dict = Body(...)):
 
 
 @router.post("/wizard/import-bpmn")
-async def wizard_import_bpmn(file: UploadFile = File(...)):
+async def wizard_import_bpmn(file: UploadFile = File(...), include_xml: bool = False):
     """
     Načíta BPMN XML (.bpmn) a skonvertuje ho na engine_json použiteľné vo wizarde.
     """
@@ -156,7 +178,29 @@ async def wizard_import_bpmn(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"engine_json": engine}
+    result = {"engine_json": engine}
+    if include_xml:
+        result["diagram_xml"] = None
+        root = ET.fromstring(xml_text)
+        diagram = root.find(T("bpmndi", "BPMNDiagram"))
+        plane = diagram.find(T("bpmndi", "BPMNPlane")) if diagram is not None else None
+        if plane is not None:
+            positioned_nodes = {
+                shape.get("bpmnElement")
+                for shape in plane.findall(T("bpmndi", "BPMNShape"))
+                if shape.find(T("dc", "Bounds")) is not None
+            }
+            routed_flows = {
+                edge.get("bpmnElement")
+                for edge in plane.findall(T("bpmndi", "BPMNEdge"))
+                if len(edge.findall(T("di", "waypoint"))) >= 2
+            }
+            node_ids = {node["id"] for node in engine["nodes"]}
+            flow_ids = {flow["id"] for flow in engine["flows"]}
+            if positioned_nodes and node_ids <= positioned_nodes and flow_ids <= routed_flows:
+                result["diagram_xml"] = xml_text
+
+    return result
 
 
 @router.post("/wizard/models", response_model=WizardModelBase)
@@ -337,12 +381,7 @@ async def generate(payload: dict = Body(...)):
 
     # 4) Validácia + BPMN generovanie
     validate_payload(engine)
-    try:
-        xml = generate_bpmn_from_json(engine)
-        validate_xml(xml)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    xml = _render_bpmn_xml(engine)
     return _as_bpmn_download(xml, filename=f"{engine.get('processId','process')}.bpmn")
 
 
@@ -371,12 +410,7 @@ async def reflow_layout(payload: dict = Body(...)):
             print(f"[GW-WARN] {w}")
 
     validate_payload(engine)
-    try:
-        xml = generate_bpmn_from_json(engine)
-        validate_xml(xml)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    xml = _render_bpmn_xml(engine)
     return {"engine_json": engine, "diagram_xml": xml}
 
 

@@ -24,7 +24,7 @@ from services.org_competencies_storage import (
     delete_competencies_by_employee,
     build_matrix,
 )
-from services.org_model_storage import create_process
+from services.org_model_storage import create_process, delete_node, get_process_model_ref
 from services.org_models_storage import save_org_model
 
 
@@ -39,6 +39,17 @@ def _restore_env(prev):
         os.environ.pop("BPMN_MODELS_DIR", None)
     else:
         os.environ["BPMN_MODELS_DIR"] = prev
+
+
+def _make_process(org_id, *step_ids):
+    process = create_process(org_id, "root", "Workforce process")
+    save_org_model(org_id, process["processRef"]["modelId"], {
+        "engine_json": {"nodes": [
+            {"id": step_id, "type": "task", "name": step_id}
+            for step_id in step_ids
+        ] + [{"id": "start", "type": "startEvent", "name": "Start"}]},
+    })
+    return process["id"]
 
 
 def _set_api_env(tmp_path):
@@ -213,17 +224,18 @@ def test_build_matrix_risk_levels(tmp_path):
     try:
         e1 = create_employee("org1", "E001", "Jana K.")
         e2 = create_employee("org1", "E002", "Peter M.")
+        process_id = _make_process("org1", "task_1", "task_2", "task_3", "task_4")
 
         # task_1: primary + backup → risk=none
-        create_competency("org1", e1["id"], "node_1", "task_1", "primary")
-        create_competency("org1", e2["id"], "node_1", "task_1", "backup")
+        create_competency("org1", e1["id"], process_id, "task_1", "primary")
+        create_competency("org1", e2["id"], process_id, "task_1", "backup")
 
         # task_2: only primary, no backup → risk=critical
-        create_competency("org1", e1["id"], "node_1", "task_2", "primary")
+        create_competency("org1", e1["id"], process_id, "task_2", "primary")
 
         # task_3: two backups, no primary → risk=low
-        create_competency("org1", e1["id"], "node_1", "task_3", "backup")
-        create_competency("org1", e2["id"], "node_1", "task_3", "backup")
+        create_competency("org1", e1["id"], process_id, "task_3", "backup")
+        create_competency("org1", e2["id"], process_id, "task_3", "backup")
 
         matrix = build_matrix("org1")
         risk_map = {r["step_id"]: r["risk"] for r in matrix["risk"]}
@@ -231,7 +243,8 @@ def test_build_matrix_risk_levels(tmp_path):
         assert risk_map["task_2"] == "critical"
         assert risk_map["task_3"] == "low"
 
-        assert "task_4" not in risk_map
+        assert risk_map["task_4"] == "unassigned"
+        assert "start" not in risk_map
     finally:
         _restore_env(prev)
 
@@ -240,15 +253,52 @@ def test_build_matrix_process_filter(tmp_path):
     prev = _set_env(tmp_path)
     try:
         emp = create_employee("org1", "E001", "Jana K.")
-        create_competency("org1", emp["id"], "node_1", "task_1", "primary")
-        create_competency("org1", emp["id"], "node_2", "task_x", "backup")
+        process_id = _make_process("org1", "task_1")
+        other_process_id = _make_process("org1", "task_x")
+        create_competency("org1", emp["id"], process_id, "task_1", "primary")
+        create_competency("org1", emp["id"], other_process_id, "task_x", "backup")
 
-        matrix = build_matrix("org1", process_node_id="node_1")
+        matrix = build_matrix("org1", process_node_id=process_id)
         step_ids = [s["step_id"] for s in matrix["steps"]]
         assert "task_1" in step_ids
         assert "task_x" not in step_ids
     finally:
         _restore_env(prev)
+
+
+def test_build_matrix_after_deleting_assignments_and_process(tmp_path, monkeypatch):
+    monkeypatch.setenv("BPMN_MODELS_DIR", str(tmp_path / "models"))
+    process_id = _make_process("org1", "task_1")
+    employee = create_employee("org1", "E001", "Jana K.")
+    assignment = create_competency("org1", employee["id"], process_id, "task_1", "primary")
+    create_competency("org1", employee["id"], process_id, "deleted_task", "backup")
+    delete_competency("org1", assignment["id"])
+
+    matrix = build_matrix("org1")
+    assert [step["step_id"] for step in matrix["steps"]] == ["task_1"]
+    assert matrix["risk"][0]["risk"] == "unassigned"
+    assert matrix["cells"] == []
+
+    delete_node("org1", process_id)
+    assert build_matrix("org1")["steps"] == []
+
+
+@pytest.mark.parametrize("delete_process", [False, True])
+def test_update_competency_rejects_removed_step(tmp_path, monkeypatch, delete_process):
+    monkeypatch.setenv("BPMN_MODELS_DIR", str(tmp_path / "models"))
+    process_id = _make_process("org1", "task_1")
+    employee = create_employee("org1", "E001", "Jana K.")
+    assignment = create_competency("org1", employee["id"], process_id, "task_1", "primary")
+
+    if delete_process:
+        delete_node("org1", process_id)
+    else:
+        model_id = get_process_model_ref("org1", process_id)
+        save_org_model("org1", model_id, {"engine_json": {"nodes": []}})
+
+    with pytest.raises(LookupError):
+        update_competency("org1", assignment["id"], "backup")
+    assert list_competencies("org1")[0]["level"] == "primary"
 
 
 def test_build_matrix_enriches_process_and_step_names(tmp_path):
@@ -300,6 +350,7 @@ def test_workforce_api_full_flow(tmp_path):
         org_resp = owner_client.post("/api/orgs", json={"name": "Workforce Org"})
         assert org_resp.status_code == 201
         org_id = org_resp.json()["id"]
+        process_id = _make_process(org_id, "task_1")
 
         employee = owner_client.post(
             f"/api/workforce/employees?org_id={org_id}",
@@ -323,7 +374,7 @@ def test_workforce_api_full_flow(tmp_path):
             f"/api/workforce/competencies?org_id={org_id}",
             json={
                 "emp_id": emp_id,
-                "process_node_id": "node_1",
+                "process_node_id": process_id,
                 "step_id": "task_1",
                 "level": "primary",
             },
@@ -353,6 +404,67 @@ def test_workforce_api_full_flow(tmp_path):
         _restore_api_env(previous)
 
 
+def test_workforce_api_matrix_smoke_returns_levels_and_risk(tmp_path):
+    previous = _set_api_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+
+        client = _authed_api_client("owner@example.com")
+        org_resp = client.post("/api/orgs", json={"name": "Workforce Org"})
+        assert org_resp.status_code == 201
+        org_id = org_resp.json()["id"]
+        process_id = _make_process(org_id, "task_check_application", "task_approval")
+
+        employees = {}
+        for emp_no, name in [
+            ("E001", "John Smith"),
+            ("E002", "Jane Doe"),
+            ("E003", "Tom Green"),
+        ]:
+            response = client.post(
+                f"/api/workforce/employees?org_id={org_id}",
+                json={"emp_no": emp_no, "name": name, "position": "Operator"},
+            )
+            assert response.status_code == 201
+            employees[name] = response.json()["id"]
+
+        competencies = [
+            (employees["John Smith"], "task_check_application", "primary"),
+            (employees["Jane Doe"], "task_check_application", "backup"),
+            (employees["Jane Doe"], "task_approval", "training"),
+            (employees["Tom Green"], "task_approval", "training"),
+        ]
+        for emp_id, step_id, level in competencies:
+            response = client.post(
+                f"/api/workforce/competencies?org_id={org_id}",
+                json={
+                    "emp_id": emp_id,
+                    "process_node_id": process_id,
+                    "step_id": step_id,
+                    "level": level,
+                },
+            )
+            assert response.status_code == 201
+
+        matrix = client.get(f"/api/workforce/matrix?org_id={org_id}")
+        assert matrix.status_code == 200
+        payload = matrix.json()
+
+        levels_by_step = {}
+        for cell in payload["cells"]:
+            levels_by_step.setdefault(cell["step_id"], set()).add(cell["level"])
+
+        assert levels_by_step["task_check_application"] == {"primary", "backup"}
+        assert levels_by_step["task_approval"] == {"training"}
+
+        risk_map = {item["step_id"]: item["risk"] for item in payload["risk"]}
+        assert risk_map["task_check_application"] == "none"
+        assert risk_map["task_approval"] == "low"
+    finally:
+        _restore_api_env(previous)
+
+
 def test_workforce_api_rejects_unknown_employee_competency(tmp_path):
     previous = _set_api_env(tmp_path)
     try:
@@ -372,5 +484,26 @@ def test_workforce_api_rejects_unknown_employee_competency(tmp_path):
         )
 
         assert response.status_code == 404
+    finally:
+        _restore_api_env(previous)
+
+
+def test_workforce_api_rejects_step_outside_process(tmp_path):
+    previous = _set_api_env(tmp_path)
+    try:
+        run_auth_migrations()
+        register_user("owner@example.com", "password123")
+        client = _authed_api_client("owner@example.com")
+        org_id = client.post("/api/orgs", json={"name": "Workforce Org"}).json()["id"]
+        process_id = _make_process(org_id, "task_1")
+        _make_process(org_id, "other_task")
+        employee = create_employee(org_id, "E001", "Jana K.")
+
+        for node_id, step_id in [(process_id, "other_task"), (process_id, "start"), ("missing", "task_1")]:
+            response = client.post(f"/api/workforce/competencies?org_id={org_id}", json={
+                "emp_id": employee["id"], "process_node_id": node_id, "step_id": step_id, "level": "primary",
+            })
+            assert response.status_code == 404
+        assert list_competencies(org_id) == []
     finally:
         _restore_api_env(previous)

@@ -1,12 +1,18 @@
 ﻿from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
+from email.errors import MessageError
+from email.headerregistry import Address
 import logging
 import secrets
+from sqlite3 import Connection, Row
 from uuid import uuid4
 
 from auth.db import get_connection
-from auth.email_service import send_password_reset_email
+from auth.email_outbox import queue_auth_email, queue_org_access_notice, queue_org_invite_email
+from auth.email_service import is_recipient_allowed, send_password_reset_email, smtp_email_enabled
+from auth.email_verification import queue_email_verification
 from auth.security import (
     digest_token,
     expires_in,
@@ -45,7 +51,11 @@ def normalize_email(email: str) -> str:
 
 
 def _validate_email(email: str) -> bool:
-    return "@" in email and "." in email.split("@")[-1]
+    try:
+        address = Address(addr_spec=email)
+    except (ValueError, MessageError):
+        return False
+    return bool(address.username) and "." in address.domain
 
 
 def _validate_password(password: str) -> bool:
@@ -77,6 +87,7 @@ def register_user(email: str, password: str, language: str | None = None) -> Aut
             """,
             (user_id, normalized_email, password_hash, now, now, normalized_language),
         )
+        queue_email_verification(conn, user_id)
         conn.commit()
     return AuthUser(
         id=user_id,
@@ -137,6 +148,7 @@ def change_password(user_id: str, current_password: str, new_password: str) -> N
             """,
             (hash_password(new_password), now_iso, user_id),
         )
+        queue_auth_email(conn, user_id, "password_changed")
         conn.commit()
 
 
@@ -148,7 +160,7 @@ def request_password_reset(email: str) -> None:
 
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, email FROM users WHERE email = ? LIMIT 1",
+            "SELECT id, email, language FROM users WHERE email = ? LIMIT 1",
             (normalized_email,),
         ).fetchone()
         if not row:
@@ -169,7 +181,10 @@ def request_password_reset(email: str) -> None:
 
     base_url = cfg.password_reset_url_base.rstrip("/")
     reset_link = f"{base_url}?token={reset_token}"
-    send_password_reset_email(row["email"], reset_link)
+    try:
+        send_password_reset_email(row["email"], reset_link, normalize_language(row["language"]))
+    except (OSError, RuntimeError, ValueError) as exc:
+        logging.getLogger(__name__).warning("Password reset email delivery failed: %s", type(exc).__name__)
 
 
 def confirm_password_reset(token: str, new_password: str) -> None:
@@ -231,6 +246,7 @@ def confirm_password_reset(token: str, new_password: str) -> None:
             """,
             (now_iso, row["id"]),
         )
+        queue_auth_email(conn, row["id"], "password_changed")
         conn.commit()
 
 
@@ -537,33 +553,33 @@ def delete_user_by_admin(user_id: str) -> dict:
     }
 
 
-def add_org_member(user_id: str, org_id: str, role: str) -> None:
+def add_org_member(user_id: str, org_id: str, role: str) -> bool:
     normalized_role = normalize_org_role(role)
     if normalized_role not in {"owner", "member", "viewer"}:
         raise ValueError("Neplatna rola clena organizacie.")
     now = to_iso_z(utcnow())
-    with get_connection() as conn:
-        conn.execute(
+    with closing(get_connection()) as conn, conn:
+        inserted = conn.execute(
             """
             INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(organization_id, user_id) DO NOTHING
             """,
             (str(uuid4()), org_id, user_id, normalized_role, now),
         )
-        conn.commit()
+        if inserted.rowcount:
+            queue_org_access_notice(conn, user_id, org_id, "added")
+        return bool(inserted.rowcount)
 
 
-def count_org_owners(org_id: str) -> int:
-    with get_connection() as conn:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS owner_count
-            FROM organization_members
-            WHERE organization_id = ? AND LOWER(role) IN ('owner', 'admin')
-            """,
-            (org_id,),
-        ).fetchone()
-    return int(row["owner_count"] or 0) if row else 0
+def _count_org_owners(conn: Connection, org_id: str) -> int:
+    return conn.execute(
+        """
+        SELECT COUNT(*) FROM organization_members
+        WHERE organization_id = ? AND LOWER(role) IN ('owner', 'admin')
+        """,
+        (org_id,),
+    ).fetchone()[0]
 
 
 def list_org_members(org_id: str) -> list[dict]:
@@ -588,10 +604,11 @@ def update_org_member_role_by_email(org_id: str, email: str, role: str) -> dict:
         raise ValueError("Email je povinny.")
     if normalized_role not in {"owner", "member", "viewer"}:
         raise ValueError("Neplatna rola clena organizacie.")
-    with get_connection() as conn:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
-            SELECT m.id AS membership_id, m.role AS role, u.email AS email
+            SELECT m.id AS membership_id, m.user_id, m.role, u.email
             FROM organization_members m
             JOIN users u ON u.id = m.user_id
             WHERE m.organization_id = ? AND u.email = ?
@@ -604,13 +621,14 @@ def update_org_member_role_by_email(org_id: str, email: str, role: str) -> dict:
         current_role = normalize_org_role(row["role"])
         if current_role == normalized_role:
             return {"email": row["email"], "role": current_role, "updated": False}
-        if current_role == "owner" and normalized_role != "owner" and count_org_owners(org_id) <= 1:
+        if current_role == "owner" and _count_org_owners(conn, org_id) <= 1:
             raise ValueError("V organizacii musi vzdy ostat aspon jeden owner.")
         conn.execute(
             "UPDATE organization_members SET role = ? WHERE id = ?",
             (normalized_role, row["membership_id"]),
         )
-        conn.commit()
+        if normalized_role == "owner":
+            queue_org_access_notice(conn, row["user_id"], org_id, "promoted")
     return {"email": row["email"], "role": normalized_role, "updated": True}
 
 
@@ -618,10 +636,11 @@ def remove_org_member_by_email(org_id: str, email: str) -> dict:
     normalized_email = normalize_email(email)
     if not normalized_email:
         raise ValueError("Email je povinny.")
-    with get_connection() as conn:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
-            SELECT m.id AS membership_id, m.role AS role, u.email AS email
+            SELECT m.id AS membership_id, m.user_id, m.role, u.email
             FROM organization_members m
             JOIN users u ON u.id = m.user_id
             WHERE m.organization_id = ? AND u.email = ?
@@ -632,18 +651,19 @@ def remove_org_member_by_email(org_id: str, email: str) -> dict:
         if not row:
             raise LookupError("Pouzivatel nie je clenom organizacie.")
         role = normalize_org_role(row["role"])
-        if role == "owner" and count_org_owners(org_id) <= 1:
+        if role == "owner" and _count_org_owners(conn, org_id) <= 1:
             raise ValueError("Posledneho ownera organizacie nie je mozne odstranit.")
         conn.execute(
             "DELETE FROM organization_members WHERE id = ?",
             (row["membership_id"],),
         )
-        conn.commit()
+        queue_org_access_notice(conn, row["user_id"], org_id, "removed")
     return {"email": row["email"], "removed": True}
 
 
 def leave_org(org_id: str, user_id: str) -> dict:
-    with get_connection() as conn:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
             SELECT m.id AS membership_id, m.role AS role, u.email AS email
@@ -657,13 +677,12 @@ def leave_org(org_id: str, user_id: str) -> dict:
         if not row:
             raise LookupError("Pouzivatel nie je clenom organizacie.")
         role = normalize_org_role(row["role"])
-        if role == "owner" and count_org_owners(org_id) <= 1:
+        if role == "owner" and _count_org_owners(conn, org_id) <= 1:
             raise ValueError("Posledny owner nemoze odist z organizacie.")
         conn.execute(
             "DELETE FROM organization_members WHERE id = ?",
             (row["membership_id"],),
         )
-        conn.commit()
     return {"email": row["email"], "removed": True}
 
 
@@ -754,46 +773,40 @@ def _serialize_org_invite(row: dict | None) -> dict | None:
     }
 
 
+def _latest_org_invite_row(conn: Connection, org_id: str, recipient_email: str | None = None) -> Row | None:
+    return conn.execute(
+        """
+        SELECT id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
+        FROM organization_invites
+        WHERE organization_id = ? AND recipient_email IS ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+        """,
+        (org_id, recipient_email),
+    ).fetchone()
+
+
 def get_latest_org_invite(org_id: str) -> dict | None:
-    with get_connection() as conn:
-        row = conn.execute(
-            """
-            SELECT id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
-            FROM organization_invites
-            WHERE organization_id = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (org_id,),
-        ).fetchone()
-    return _serialize_org_invite(row)
+    with closing(get_connection()) as conn:
+        return _serialize_org_invite(_latest_org_invite_row(conn, org_id))
 
 
-def get_active_org_invite(org_id: str) -> dict | None:
-    latest = get_latest_org_invite(org_id)
-    if not latest:
-        return None
-    return latest if latest.get("status") == "active" else None
-
-
-def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
+def _insert_org_invite(conn: Connection, org_id: str, created_by_user_id: str, recipient_email: str | None = None) -> dict:
     cfg = get_auth_config()
     now = to_iso_z(utcnow())
     expires_at = expires_in(cfg.org_invite_ttl_seconds)
     invite_id = str(uuid4())
     public_token = make_org_invite_public_token(invite_id)
     stored_token = digest_token(public_token)
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO organization_invites(
-                id, organization_id, token, created_by_user_id, created_at, expires_at, revoked_at, used_at, used_by_user_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
-            """,
-            (invite_id, org_id, stored_token, created_by_user_id, now, expires_at),
+    conn.execute(
+        """
+        INSERT INTO organization_invites(
+            id, organization_id, token, created_by_user_id, created_at, expires_at, recipient_email
         )
-        conn.commit()
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (invite_id, org_id, stored_token, created_by_user_id, now, expires_at, recipient_email),
+    )
     return _serialize_org_invite(
         {
             "id": invite_id,
@@ -809,47 +822,86 @@ def create_org_invite(org_id: str, created_by_user_id: str) -> dict:
     )
 
 
-def revoke_active_org_invites(org_id: str) -> None:
-    now = to_iso_z(utcnow())
-    with get_connection() as conn:
+def get_or_create_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = _serialize_org_invite(_latest_org_invite_row(conn, org_id))
+        if existing and existing["status"] == "active":
+            return {**existing, "created": False}
+        return {**_insert_org_invite(conn, org_id, created_by_user_id), "created": True}
+
+
+def regenerate_org_invite(org_id: str, created_by_user_id: str) -> dict:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        now = to_iso_z(utcnow())
         conn.execute(
             """
             UPDATE organization_invites
             SET revoked_at = ?
             WHERE organization_id = ?
+              AND recipient_email IS NULL
               AND revoked_at IS NULL
               AND used_at IS NULL
               AND (expires_at IS NULL OR expires_at > ?)
             """,
             (now, org_id, now),
         )
-        conn.commit()
+        return _insert_org_invite(conn, org_id, created_by_user_id)
 
 
-def get_or_create_org_invite(org_id: str, created_by_user_id: str) -> dict:
-    existing = get_active_org_invite(org_id)
-    if existing:
-        return existing
-    return create_org_invite(org_id, created_by_user_id)
+class OrgInviteSendLimit(ValueError):
+    pass
 
 
-def regenerate_org_invite(org_id: str, created_by_user_id: str) -> dict:
-    revoke_active_org_invites(org_id)
-    return create_org_invite(org_id, created_by_user_id)
+def send_org_invite_email(org_id: str, owner_id: str, email: str, language: str) -> None:
+    email = normalize_email(email)
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        membership = conn.execute(
+            "SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?",
+            (org_id, owner_id),
+        ).fetchone()
+        if not membership or normalize_org_role(membership["role"]) != "owner":
+            raise PermissionError("Only organization owners can send invitations.")
+        if not _validate_email(email):
+            raise ValueError("Invalid email address.")
+        if not smtp_email_enabled() or not is_recipient_allowed(email):
+            raise RuntimeError("Email delivery is unavailable for this recipient.")
+
+        latest = _latest_org_invite_row(conn, org_id, email)
+        recent = conn.execute(
+            "SELECT COUNT(*) FROM organization_invites WHERE organization_id = ? AND recipient_email IS NOT NULL AND created_at > ?",
+            (org_id, expires_in(-3600)),
+        ).fetchone()[0]
+        if recent >= 20 or (latest and latest["created_at"] > expires_in(-60)):
+            raise OrgInviteSendLimit("Too many invitations. Try again later.")
+
+        conn.execute(
+            """
+            UPDATE organization_invites SET revoked_at = ?
+            WHERE organization_id = ? AND recipient_email = ? AND revoked_at IS NULL AND used_at IS NULL
+            """,
+            (to_iso_z(utcnow()), org_id, email),
+        )
+        invite = _insert_org_invite(conn, org_id, owner_id, email)
+        recipient = conn.execute("SELECT language FROM users WHERE email = ?", (email,)).fetchone()
+        queue_org_invite_email(conn, invite["id"], normalize_language(recipient["language"] if recipient else language))
 
 
 def accept_org_invite(token: str, user_id: str) -> dict:
     cleaned = (token or "").strip()
     if not cleaned:
         raise ValueError("Pozývací link je neplatný.")
-    now_dt = utcnow()
-    now_iso = to_iso_z(now_dt)
-    with get_connection() as conn:
+    with closing(get_connection()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        now_dt = utcnow()
+        used_at = to_iso_z(now_dt)
         invite_id = parse_org_invite_public_token(cleaned)
         if invite_id:
             invite = conn.execute(
                 """
-                SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
+                SELECT i.id, i.organization_id, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, i.recipient_email, o.name
                 FROM organization_invites i
                 JOIN organizations o ON o.id = i.organization_id
                 WHERE i.id = ?
@@ -860,33 +912,30 @@ def accept_org_invite(token: str, user_id: str) -> dict:
         else:
             invite = conn.execute(
                 """
-                SELECT i.id, i.organization_id, i.token, i.created_at, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, o.name
+                SELECT i.id, i.organization_id, i.expires_at, i.revoked_at, i.used_at, i.used_by_user_id, i.recipient_email, o.name
                 FROM organization_invites i
                 JOIN organizations o ON o.id = i.organization_id
-                WHERE i.token = ?
+                WHERE i.token = ? AND i.recipient_email IS NULL
                 LIMIT 1
                 """,
                 (cleaned,),
             ).fetchone()
         if not invite:
             raise ValueError("Pozývací link je neplatný.")
-        invite_row = {
-            "id": invite["id"],
-            "organization_id": invite["organization_id"],
-            "token": invite["token"],
-            "created_at": invite["created_at"],
-            "expires_at": invite["expires_at"],
-            "revoked_at": invite["revoked_at"],
-            "used_at": invite["used_at"],
-            "used_by_user_id": invite["used_by_user_id"],
-        }
-        invite_status = _invite_status_from_row(invite_row, now_dt)
+        org_id = invite["organization_id"]
+        invite_status = _invite_status_from_row(invite, now_dt)
         if invite_status == "expired":
             raise ValueError("Pozývací link už vypršal.")
         if invite_status == "revoked":
             raise ValueError("Pozývací link bol zrušený.")
-        if invite_status == "used":
+        if invite_status == "used" and invite["used_by_user_id"] != user_id:
             raise ValueError("Pozývací link už bol použitý.")
+        if invite["recipient_email"] is not None:
+            recipient = conn.execute("SELECT email, email_verified_at FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not recipient or normalize_email(recipient["email"]) != invite["recipient_email"]:
+                raise PermissionError("invite_email_mismatch")
+            if not recipient["email_verified_at"]:
+                raise PermissionError("invite_email_unverified")
 
         existing = conn.execute(
             """
@@ -895,43 +944,37 @@ def accept_org_invite(token: str, user_id: str) -> dict:
             WHERE organization_id = ? AND user_id = ?
             LIMIT 1
             """,
-            (invite["organization_id"], user_id),
+            (org_id, user_id),
         ).fetchone()
 
-        updated = conn.execute(
-            """
-            UPDATE organization_invites
-            SET used_at = ?, used_by_user_id = ?
-            WHERE id = ?
-              AND used_at IS NULL
-              AND revoked_at IS NULL
-              AND (expires_at IS NULL OR expires_at > ?)
-            """,
-            (now_iso, user_id, invite["id"], now_iso),
-        )
-        if updated.rowcount == 0:
-            raise ValueError("Pozývací link už bol použitý.")
-
-        if existing:
-            conn.commit()
-            return {
-                "org": {"id": invite["organization_id"], "name": invite["name"]},
-                "membership": {"role": normalize_org_role(existing["role"]), "already_member": True},
-                "invite": {"status": "used", "used_at": now_iso, "used_by_user_id": user_id},
-            }
-
-        conn.execute(
-            """
-            INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
-            VALUES (?, ?, ?, 'member', ?)
-            """,
-            (str(uuid4()), invite["organization_id"], user_id, now_iso),
-        )
-        conn.commit()
+        if invite_status == "used":
+            if not existing:
+                raise ValueError("Pozývací link už bol použitý.")
+            used_at = invite["used_at"]
+        else:
+            # Older databases can contain several active links from concurrent requests.
+            latest = _latest_org_invite_row(conn, org_id, invite["recipient_email"])
+            if latest["id"] != invite["id"]:
+                raise ValueError("Pozývací link bol zrušený.")
+            conn.execute(
+                "UPDATE organization_invites SET used_at = ?, used_by_user_id = ? WHERE id = ?",
+                (used_at, user_id, invite["id"]),
+            )
+            if not existing:
+                conn.execute(
+                    """
+                    INSERT INTO organization_members(id, organization_id, user_id, role, created_at)
+                    VALUES (?, ?, ?, 'member', ?)
+                    """,
+                    (str(uuid4()), org_id, user_id, used_at),
+                )
     return {
-        "org": {"id": invite["organization_id"], "name": invite["name"]},
-        "membership": {"role": "member", "already_member": False},
-        "invite": {"status": "used", "used_at": now_iso, "used_by_user_id": user_id},
+        "org": {"id": org_id, "name": invite["name"]},
+        "membership": {
+            "role": normalize_org_role(existing["role"]) if existing else "member",
+            "already_member": existing is not None,
+        },
+        "invite": {"status": "used", "used_at": used_at, "used_by_user_id": user_id},
     }
 
 def normalize_org_role(role: str | None) -> str:

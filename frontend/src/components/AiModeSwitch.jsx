@@ -1,9 +1,12 @@
+import { useTranslation } from "react-i18next";
+
 const MODES = [
-  { id: "shadow", label: "Konzervatívny" },
-  { id: "preview", label: "Kreatívny náhľad" },
+  { id: "shadow" },
+  { id: "preview" },
 ];
 
 export default function AiModeSwitch({ value, onChange, disabled = false }) {
+  const { t } = useTranslation("ai_mode");
   return (
     <div className={`ai-mode-switch ${disabled ? "ai-mode-switch--disabled" : ""}`}>
       {MODES.map((mode) => (
@@ -14,7 +17,7 @@ export default function AiModeSwitch({ value, onChange, disabled = false }) {
           onClick={() => onChange(mode.id)}
           disabled={disabled || value === mode.id}
         >
-          {mode.label}
+          {t(mode.id)}
         </button>
       ))}
     </div>

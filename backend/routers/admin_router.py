@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth.db import get_connection
-from auth.deps import is_super_admin_email, require_super_admin
+from auth.deps import is_super_admin_id, require_super_admin
 from auth.service import delete_user_by_admin, get_user_by_id
 
 
@@ -108,7 +108,7 @@ def delete_admin_user(user_id: str, current_user=Depends(require_super_admin)):
         raise HTTPException(status_code=404, detail="Pouzivatel neexistuje.")
     if target["id"] == current_user.id:
         raise HTTPException(status_code=400, detail="Aktualne prihlaseny super admin ucet nie je mozne zmazat.")
-    if is_super_admin_email(target["email"]):
+    if is_super_admin_id(target["id"]):
         raise HTTPException(status_code=400, detail="Super admin ucet nie je mozne zmazat cez admin panel.")
     try:
         return delete_user_by_admin(user_id)

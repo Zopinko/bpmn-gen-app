@@ -34,6 +34,14 @@ export function loginAuth(payload) {
   });
 }
 
+export function confirmEmailVerification(token) {
+  return request("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token }) });
+}
+
+export function resendEmailVerification(email) {
+  return request("/api/auth/resend-verification", { method: "POST", body: JSON.stringify({ email }) });
+}
+
 export function logoutAuth() {
   return request("/api/auth/logout", { method: "POST" });
 }

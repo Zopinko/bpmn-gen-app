@@ -43,3 +43,31 @@ export function submitFeedback(message, page = "") {
     body: JSON.stringify({ message, page }),
   });
 }
+
+export function getAdminMfaStatus() {
+  return request("/api/admin/mfa/status");
+}
+
+export function setupAdminMfa(password) {
+  return request("/api/admin/mfa/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+}
+
+export function confirmAdminMfa(code) {
+  return request("/api/admin/mfa/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function unlockAdminMfa(code) {
+  return request("/api/admin/mfa/unlock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+}

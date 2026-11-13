@@ -47,7 +47,19 @@ Minimal production env vars pre backend:
 Poznámka:
 
 - `ORG_INVITE_TOKEN_SECRET`, `CORS_ALLOW_ORIGINS`, `PASSWORD_RESET_URL_BASE` a `AUTH_DB_PATH` sú v produkcii fail-fast required. Ak chýbajú, backend sa má zastaviť namiesto tichého fallbacku.
-- `AUTH_EMAIL_ALLOWLIST` je voliteľný CSV zoznam emailov pre bezpečný rollout. Kým je nastavený, reset emaily odídu len na tieto adresy.
+- `AUTH_EMAIL_ALLOWLIST` je voliteľný CSV zoznam e-mailov pre testovacie nasadenie. Kým je nastavený, účetové správy aj pozvánky odídu len na uvedené adresy.
+- Overovacie odkazy používajú rovnakú frontendovú doménu a cestu `/verify-email` odvodenú z `PASSWORD_RESET_URL_BASE`. Statický frontend musí obslúžiť priamy vstup na túto cestu cez `index.html`.
+- Overovacie e-maily a potvrdenia zmeny hesla čakajú v databáze `AUTH_DB_PATH`. Backend ich spracuje na pozadí pri `AUTH_EMAIL_PROVIDER=smtp`. Pri dočasnej chybe doručenia odoslanie zopakuje.
+- Vlastník organizácie môže odoslať adresnú pozvánku z obrazovky Organizácia. Používa rovnaké SMTP pripojenie a frontu. Adresná pozvánka vyžaduje účet s overenou adresou príjemcu. Statický frontend musí obslúžiť aj priamy vstup na `/join-org` cez `index.html`.
+- Pri priamom pridaní člena, povýšení na vlastníka a odobratí prístupu dostane dotknutý účet e-mail v jazyku svojho profilu.
+- `AUTH_REQUIRE_VERIFIED_EMAIL` je predvolene vypnuté. Pred jeho zapnutím over doručovanie aj opätovné zaslanie a priprav prechod pre existujúce účty bez overenej adresy.
+
+### Dvojfaktor pre superadmina
+
+1. V existujúcej databáze over ID správcovského účtu a nastav ho ako `SUPER_ADMIN_USER_IDS`. Viac ID sa oddeľuje čiarkou. Predchádzajúca premenná `SUPER_ADMIN_EMAILS` už práva neprideľuje.
+2. Nastav `ADMIN_MFA_ENCRYPTION_KEY` ako tajnú premennú API. Vygeneruj samostatný Fernet kľúč a ulož zálohu do správcu tajomstiev. Kľúč je potrebný spolu so zálohou databázy, aby fungovali existujúce nastavenia autentifikátora.
+3. Pred sprístupnením admin panela over doručovanie overovacieho e-mailu. Správca si overí adresu, v paneli potvrdí heslo, naskenuje QR kód a uloží záložné kódy. Bežné prihlasovanie funguje aj bez odomknutia admin panela.
+4. Pred produkčným nasadením over v testovacom prostredí odomknutie autentifikátorom, použitie záložného kódu a zamietnutie admin požiadavky z inej relácie.
 
 Minimal production env vars pre frontend:
 
@@ -99,6 +111,9 @@ Post-deploy smoke checks:
 5. Org invite flow nepadá na chýbajúcom `ORG_INVITE_TOKEN_SECRET`
 6. Password reset email príde na test mailbox
 7. Ak je zapnutý `AUTH_EMAIL_ALLOWLIST`, email neodíde mimo allowlist
+8. Testovacia registrácia dostane overovací e-mail a odkaz potvrdí adresu
+9. Testovací účet dostane potvrdenie po zmene aj po dokončení resetu hesla
+10. Vlastník odošle adresnú pozvánku a prijme ju účet s overenou adresou príjemcu
 
 ### Websupport SMTP
 

@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
+from xml.etree import ElementTree as ET
 
 from main import app
+from services import model_storage
 from services.bpmn_import import bpmn_xml_to_engine
 
 
@@ -73,3 +75,70 @@ def test_import_endpoint_rejects_oversized_upload():
 
     assert resp.status_code == 413
     assert "too large" in resp.json()["detail"].lower()
+
+
+def test_imported_manual_positions_survive_saving_and_reopening(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_storage, "_base_dir", tmp_path)
+    source = client.post("/wizard/import-bpmn", files={"file": ("test.bpmn", BPMN_XML, "application/xml")})
+    assert source.status_code == 200
+    rendered = client.post("/generate", json=source.json()["engine_json"])
+    assert rendered.status_code == 200
+    diagram = ET.fromstring(rendered.text)
+    task_shape = diagram.find(".//{*}BPMNShape[@bpmnElement='Task_1']")
+    task_shape.find("{*}Bounds").set("x", "1234")
+    xml = ET.tostring(diagram, encoding="utf-8")
+
+    response = client.post(
+        "/wizard/import-bpmn?include_xml=true",
+        files={"file": ("positioned.bpmn", xml, "application/xml")},
+    )
+
+    assert response.status_code == 200
+    imported = response.json()
+    assert imported["diagram_xml"] == xml.decode("utf-8")
+    assert imported["engine_json"] == source.json()["engine_json"]
+
+    saved = client.post("/wizard/models", json={**imported, "name": "Positioned process"})
+    assert saved.status_code == 200
+    reopened = client.get(f"/wizard/models/{saved.json()['id']}")
+    assert reopened.status_code == 200
+    assert reopened.json()["diagram_xml"] == imported["diagram_xml"]
+    assert reopened.json()["engine_json"] == imported["engine_json"]
+
+    plane = diagram.find(".//{*}BPMNPlane")
+    plane.remove(plane.find("{*}BPMNEdge[@bpmnElement='Flow_2']"))
+    incomplete = client.post(
+        "/wizard/import-bpmn?include_xml=true",
+        files={"file": ("partial.bpmn", ET.tostring(diagram), "application/xml")},
+    )
+    assert incomplete.status_code == 200
+    assert incomplete.json()["diagram_xml"] is None
+
+
+def test_import_leaves_layout_to_generator_when_file_has_no_positions():
+    response = client.post(
+        "/wizard/import-bpmn?include_xml=true",
+        files={"file": ("unpositioned.bpmn", BPMN_XML, "application/xml")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["diagram_xml"] is None
+
+
+def test_import_render_and_export_endpoints_keep_fallback_route():
+    xml = BPMN_XML.replace('name="Decision" />', 'name="Decision" default="Fallback" />').replace(
+        "  </process>",
+        '    <endEvent id="FallbackEnd" />\n'
+        '    <sequenceFlow id="Fallback" sourceRef="Gateway_1" targetRef="FallbackEnd" />\n'
+        "  </process>",
+    )
+    imported = client.post("/wizard/import-bpmn", files={"file": ("decision.bpmn", xml, "application/xml")})
+    assert imported.status_code == 200
+    engine = imported.json()["engine_json"]
+
+    for endpoint in ("/generate", "/wizard/export-bpmn"):
+        response = client.post(endpoint, json=engine)
+        assert response.status_code == 200
+        root = ET.fromstring(response.text)
+        assert root.find(".//{*}exclusiveGateway").get("default") == "Fallback"
+        assert root.find(".//{*}sequenceFlow[@id='Fallback']").get("targetRef") == "FallbackEnd"

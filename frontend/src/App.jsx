@@ -2,26 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n.js";
-import { HeaderStepperProvider } from "./components/HeaderStepperContext";
 import { getMe, logoutAuth } from "./api/auth";
 import LinearWizardPage from "./pages/LinearWizardPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import AccountPage from "./pages/AccountPage";
 import OrganizationPage from "./pages/OrganizationPage";
 import JoinOrgPage from "./pages/JoinOrgPage";
 import AdminPanelPage from "./pages/AdminPanelPage";
+import AdminMfaGate from "./components/AdminMfaGate";
 import WorkforcePage from "./pages/WorkforcePage";
 import "./App.css";
 
 function App() {
   return (
     <BrowserRouter>
-      <HeaderStepperProvider>
-        <AppLayout />
-      </HeaderStepperProvider>
+      <AppLayout />
     </BrowserRouter>
   );
 }
@@ -35,8 +34,10 @@ function AppLayout() {
     isDemoRoute ||
     location.pathname === "/login" ||
     location.pathname === "/register" ||
+    location.pathname === "/verify-email" ||
     location.pathname === "/forgot-password" ||
     location.pathname === "/reset-password" ||
+    location.pathname === "/join-org" ||
     location.pathname.startsWith("/join-org/");
   const { t } = useTranslation();
 
@@ -167,7 +168,9 @@ function AppLayout() {
           <Routes>
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/demo" element={<LinearWizardPage isDemo />} />
-            <Route path="/admin" element={renderSuperAdminOnly(<AdminPanelPage />)} />
+            <Route path="/admin" element={renderSuperAdminOnly(
+              <AdminMfaGate><AdminPanelPage /></AdminMfaGate>,
+            )} />
             <Route
               path="/account"
               element={renderProtected(<AccountPage currentUser={authState.user} onLogout={handleLogout} />)}
@@ -181,9 +184,11 @@ function AppLayout() {
               element={renderPublicOnly(<LoginPage onLoginSuccess={refreshAuthState} />)}
             />
             <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
+            <Route path="/verify-email" element={<VerifyEmailPage currentUser={authState.user} onVerified={refreshAuthState} />} />
             <Route path="/forgot-password" element={renderPublicOnly(<ForgotPasswordPage />)} />
             <Route path="/reset-password" element={renderPublicOnly(<ResetPasswordPage />)} />
-            <Route path="/join-org/:token" element={<JoinOrgPage />} />
+            <Route path="/join-org" element={<JoinOrgPage currentUser={authState.user} onSwitchAccount={handleLogout} />} />
+            <Route path="/join-org/:token" element={<JoinOrgPage currentUser={authState.user} onSwitchAccount={handleLogout} />} />
             <Route path="/wizard/linear" element={<Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

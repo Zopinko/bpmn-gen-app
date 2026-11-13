@@ -1,3 +1,37 @@
+.admin-mfa {
+  max-width: 34rem;
+  margin-top: 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.admin-mfa label,
+.admin-mfa input {
+  display: block;
+}
+
+.admin-mfa input {
+  width: min(100%, 24rem);
+  margin: 0.5rem 0 1rem;
+  padding: 0.6rem;
+  border: 1px solid #64748b;
+  border-radius: 6px;
+  background: #05070c;
+  color: inherit;
+}
+
+.admin-mfa img {
+  display: block;
+  background: #fff;
+}
+
+.admin-mfa code {
+  overflow-wrap: anywhere;
+}
+
 .admin-monitor {
   height: 100%;
   overflow: auto;

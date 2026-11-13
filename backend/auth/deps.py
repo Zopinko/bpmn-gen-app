@@ -3,17 +3,15 @@ from __future__ import annotations
 import os
 from fastapi import Depends, HTTPException, Request
 
+from auth.admin_mfa import is_unlocked
 from auth.service import AuthUser, find_user_by_session, get_user_primary_org
+from auth.security import digest_token
 from core.auth_config import get_auth_config
 
 
-def _super_admin_allowlist() -> set[str]:
-    raw = os.environ.get("SUPER_ADMIN_EMAILS", "")
-    return {
-        item.strip().lower()
-        for item in raw.split(",")
-        if isinstance(item, str) and item.strip()
-    }
+def is_super_admin_id(user_id: str) -> bool:
+    raw = os.environ.get("SUPER_ADMIN_USER_IDS", "")
+    return bool(user_id and user_id in {item.strip() for item in raw.split(",")})
 
 
 def is_admin_panel_available() -> bool:
@@ -21,15 +19,8 @@ def is_admin_panel_available() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def is_super_admin_email(email: str | None) -> bool:
-    normalized = (email or "").strip().lower()
-    if not normalized:
-        return False
-    return normalized in _super_admin_allowlist()
-
-
 def is_super_admin_user(user: AuthUser) -> bool:
-    return is_super_admin_email(user.email)
+    return is_super_admin_id(user.id)
 
 
 def require_user(request: Request) -> AuthUser:
@@ -60,7 +51,25 @@ def require_primary_org_id(user: AuthUser) -> str:
     return org["id"]
 
 
-def require_super_admin(user: AuthUser = Depends(require_user)) -> AuthUser:
-    if not is_super_admin_user(user):
+def require_admin_identity(request: Request) -> AuthUser:
+    if not is_admin_panel_available():
         raise HTTPException(status_code=404, detail="Not found")
+    token = request.cookies.get(get_auth_config().cookie_name)
+    user = find_user_by_session(token) if token else None
+    if user is None or not is_super_admin_user(user):
+        raise HTTPException(status_code=404, detail="Not found")
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in get_auth_config().cors_allowed_origins:
+            raise HTTPException(status_code=403, detail="Origin not allowed.")
+    return user
+
+
+def admin_session_hash(request: Request) -> str:
+    return digest_token(request.cookies[get_auth_config().cookie_name])
+
+
+def require_super_admin(request: Request, user: AuthUser = Depends(require_admin_identity)) -> AuthUser:
+    if not user.email_verified_at or not is_unlocked(user.id, admin_session_hash(request)):
+        raise HTTPException(status_code=403, detail="Admin MFA required.")
     return user

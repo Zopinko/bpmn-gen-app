@@ -15,6 +15,7 @@ import {
   updateOrgMemberRole,
 } from "../api/wizard";
 import { getMe } from "../api/auth";
+import OrganizationInviteEmailForm from "../components/OrganizationInviteEmailForm";
 import { getOrgCapabilities, getOrgRoleLabel, normalizeOrgRole } from "../permissions/orgCapabilities";
 
 function OrganizationPage() {
@@ -894,54 +895,57 @@ function OrganizationPage() {
 
         {activeOrgCapabilities.canManageInvites ? (
           <div className="organization-invite-panel">
-            <p className="organization-hint">{t("org.invite_hint")}</p>
-            <div className="organization-invite-status">
-              <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>
-                {inviteStatusLabel(inviteStatus)}
-              </span>
-              <span className="organization-hint">{inviteStatusHint(inviteStatus)}</span>
+            <OrganizationInviteEmailForm key={activeOrgId} orgId={activeOrgId} />
+            <div className="organization-invite-panel">
+              <p className="organization-hint">{t("org.invite_hint")}</p>
+              <div className="organization-invite-status">
+                <span className={`organization-chip organization-chip--invite is-${inviteStatus}`}>
+                  {inviteStatusLabel(inviteStatus)}
+                </span>
+                <span className="organization-hint">{inviteStatusHint(inviteStatus)}</span>
+              </div>
+              {inviteMeta?.expires_at ? (
+                <p className="organization-hint organization-inline-note">
+                  {t("org.invite_expires", { date: formatDateTime(inviteMeta.expires_at) })}
+                </p>
+              ) : null}
+              <div className="organization-inline-actions">
+                <button
+                  type="button"
+                  className="btn btn--small btn-primary"
+                  onClick={() => handleGetInviteLink(false)}
+                  disabled={inviteLoading || !activeOrgId}
+                >
+                  {inviteLoading ? t("org.invite_get_loading") : t("org.invite_get")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => handleGetInviteLink(true)}
+                  disabled={inviteLoading || !activeOrgId}
+                >
+                  {t("org.invite_regenerate")}
+                </button>
+              </div>
+              <div className="organization-inline-actions">
+                <input
+                  type="text"
+                  className="wizard-models-search organization-invite-link-input"
+                  value={inviteLink}
+                  readOnly
+                  placeholder={t("org.invite_placeholder")}
+                />
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={handleCopyInvite}
+                  disabled={!inviteLink || inviteStatus !== "active"}
+                >
+                  {inviteCopied ? t("org.invite_copied") : t("org.invite_copy")}
+                </button>
+              </div>
+              {inviteError ? <p className="auth-message auth-message--error">{inviteError}</p> : null}
             </div>
-            {inviteMeta?.expires_at ? (
-              <p className="organization-hint organization-inline-note">
-                {t("org.invite_expires", { date: formatDateTime(inviteMeta.expires_at) })}
-              </p>
-            ) : null}
-            <div className="organization-inline-actions">
-              <button
-                type="button"
-                className="btn btn--small btn-primary"
-                onClick={() => handleGetInviteLink(false)}
-                disabled={inviteLoading || !activeOrgId}
-              >
-                {inviteLoading ? t("org.invite_get_loading") : t("org.invite_get")}
-              </button>
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => handleGetInviteLink(true)}
-                disabled={inviteLoading || !activeOrgId}
-              >
-                {t("org.invite_regenerate")}
-              </button>
-            </div>
-            <div className="organization-inline-actions">
-              <input
-                type="text"
-                className="wizard-models-search organization-invite-link-input"
-                value={inviteLink}
-                readOnly
-                placeholder={t("org.invite_placeholder")}
-              />
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={handleCopyInvite}
-                disabled={!inviteLink || inviteStatus !== "active"}
-              >
-                {inviteCopied ? t("org.invite_copied") : t("org.invite_copy")}
-              </button>
-            </div>
-            {inviteError ? <p className="auth-message auth-message--error">{inviteError}</p> : null}
           </div>
         ) : (
           <p className="organization-hint">{t("org.invite_owner_only")}</p>
