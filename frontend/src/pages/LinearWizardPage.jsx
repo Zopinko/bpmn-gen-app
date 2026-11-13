@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
+import StartDashboard from "../components/StartDashboard";
 import WorkspaceIcon from "../components/WorkspaceIcon";
 import WorkspaceInspector from "../components/WorkspaceInspector";
 import WorkspaceShortcuts from "../components/WorkspaceShortcuts";
@@ -8263,18 +8264,22 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <WorkspaceIcon name="upload" size={14} />
                 {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
               </button>
-              <button type="button" className="ws-btn" onClick={handleExportBpmn} disabled={exportLoading}>
-                <WorkspaceIcon name="download" size={14} />
-                {exportLoading ? t("wizard.rail_exporting") : t("wizard.rail_export")}
-              </button>
-              <button
-                type="button"
-                className="ws-btn ws-btn--primary"
-                onClick={handleSaveModel}
-                disabled={saveLoading || isReadOnlyMode}
-              >
-                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
-              </button>
+              {xml ? (
+                <>
+                  <button type="button" className="ws-btn" onClick={handleExportBpmn} disabled={exportLoading}>
+                    <WorkspaceIcon name="download" size={14} />
+                    {exportLoading ? t("wizard.rail_exporting") : t("wizard.rail_export")}
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-btn ws-btn--primary"
+                    onClick={handleSaveModel}
+                    disabled={saveLoading || isReadOnlyMode}
+                  >
+                    {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
+                  </button>
+                </>
+              ) : null}
             </>
           )}
         </div>
@@ -8314,9 +8319,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           </>
         ) : (
           <>
-            <Link to="/" className="ws-rail__btn" title={t("workspace.home")} aria-label={t("workspace.home")}>
+            <button
+              type="button"
+              className={`ws-rail__btn ${!xml ? "is-active" : ""}`}
+              title={t("workspace.home")}
+              aria-label={t("workspace.home")}
+              aria-current={!xml ? "page" : undefined}
+              onClick={handleMainMenu}
+            >
               <WorkspaceIcon name="home" />
-            </Link>
+            </button>
             <button type="button" className="ws-rail__btn" title={t("wizard.rail_saved_models")} aria-label={t("wizard.rail_saved_models")} onClick={openModels}>
               <WorkspaceIcon name="models" />
             </button>
@@ -9341,7 +9353,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     ) : null}
                 </div>
               </div>
-            ) : showHomeGuideBanner ? (
+            ) : showHomeGuideBanner && isDemoMode ? (
               <div className={`guide-bar guide-bar--welcome ${guideExpanded ? "is-expanded" : "is-compact"}`}>
                 <button
                   type="button"
@@ -9403,45 +9415,68 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                     {error}
                   </div>
                 ) : null}
-                <div className="wizard-welcome">
-                  <div className="wizard-welcome__orb" aria-hidden />
-                  <div className="wizard-welcome__card">
-                    <div className="wizard-welcome__eyebrow">{t("wizard.welcome_eyebrow")}</div>
-                    <div className="wizard-welcome__title">{t("wizard.welcome_title")}</div>
-                    <div className="wizard-welcome__subtitle">{t("wizard.welcome_subtitle")}</div>
-                    <div className="wizard-welcome__actions">
-                      {isDemoMode ? (
-                        <>
-                          <button className="btn btn-primary" type="button" onClick={() => setDemoSetupOpen(true)}>
-                            {t("wizard.welcome_open_demo")}
-                          </button>
-                          <a className="btn" href="/register">
-                            {t("app.nav.create_account")}
-                          </a>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
-                            {t("wizard.welcome_create_map")}
-                          </button>
-                          <button className="btn" type="button" onClick={openModels}>
-                            {t("wizard.welcome_continue")}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    <div className="wizard-welcome__hint">
-                      {isDemoMode
-                        ? t("wizard.welcome_hint_demo")
-                        : (
+                {isDemoMode ? (
+                  <div className="wizard-welcome">
+                    <div className="wizard-welcome__orb" aria-hidden />
+                    <div className="wizard-welcome__card">
+                      <div className="wizard-welcome__eyebrow">{t("wizard.welcome_eyebrow")}</div>
+                      <div className="wizard-welcome__title">{t("wizard.welcome_title")}</div>
+                      <div className="wizard-welcome__subtitle">{t("wizard.welcome_subtitle")}</div>
+                      <div className="wizard-welcome__actions">
+                        {isDemoMode ? (
                           <>
-                            <div>{t("wizard.welcome_hint_tip1")}</div>
-                            <div>{t("wizard.welcome_hint_tip2")}</div>
+                            <button className="btn btn-primary" type="button" onClick={() => setDemoSetupOpen(true)}>
+                              {t("wizard.welcome_open_demo")}
+                            </button>
+                            <a className="btn" href="/register">
+                              {t("app.nav.create_account")}
+                            </a>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-primary" type="button" onClick={handleStartNewModel}>
+                              {t("wizard.welcome_create_map")}
+                            </button>
+                            <button className="btn" type="button" onClick={openModels}>
+                              {t("wizard.welcome_continue")}
+                            </button>
                           </>
                         )}
+                      </div>
+                      <div className="wizard-welcome__hint">
+                        {isDemoMode
+                          ? t("wizard.welcome_hint_demo")
+                          : (
+                            <>
+                              <div>{t("wizard.welcome_hint_tip1")}</div>
+                              <div>{t("wizard.welcome_hint_tip2")}</div>
+                            </>
+                          )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <StartDashboard
+                    activeOrgId={activeOrgId}
+                    activeOrgName={activeOrgName}
+                    templates={processTemplates}
+                    notesCount={unreadProjectNotesCount}
+                    pendingCount={visibleActivityPendingCount}
+                    onNewBlank={handleStartNewModel}
+                    onTemplate={(template) => {
+                      handleStartNewModel();
+                      applyProcessTemplate(template);
+                    }}
+                    onImport={handleImportClick}
+                    onOpenModel={(id, versionTag) => loadModelFromList(id, versionTag)}
+                    onShowAllModels={openModels}
+                    onOpenNotes={() => setNotesOpen(true)}
+                    onOpenActivity={() => setActivityOpen(true)}
+                    onOpenOrgModel={() => openSingleCard("org")}
+                    onOpenOrganization={() => navigate("/organization")}
+                    onOpenWorkforce={() => navigate("/workforce")}
+                  />
+                )}
               </div>
           )}
         </div>
