@@ -15,7 +15,9 @@ import JoinOrgPage from "./pages/JoinOrgPage";
 import AdminPanelPage from "./pages/AdminPanelPage";
 import AdminMfaGate from "./components/AdminMfaGate";
 import WorkforcePage from "./pages/WorkforcePage";
+import AppFrame from "./components/AppFrame";
 import "./App.css";
+import "./theme.css";
 
 function App() {
   return (
@@ -31,7 +33,6 @@ function AppLayout() {
   const [authState, setAuthState] = useState({ user: null, loading: true });
   const isDemoRoute = location.pathname === "/demo";
   const showHeader =
-    isDemoRoute ||
     location.pathname === "/login" ||
     location.pathname === "/register" ||
     location.pathname === "/verify-email" ||
@@ -169,14 +170,34 @@ function AppLayout() {
             <Route path="/" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/demo" element={<LinearWizardPage isDemo />} />
             <Route path="/admin" element={renderSuperAdminOnly(
-              <AdminMfaGate><AdminPanelPage /></AdminMfaGate>,
+              <AppFrame currentUser={authState.user} title={t("app.nav.admin")}>
+                <AdminMfaGate><AdminPanelPage /></AdminMfaGate>
+              </AppFrame>,
             )} />
             <Route
               path="/account"
-              element={renderProtected(<AccountPage currentUser={authState.user} onLogout={handleLogout} />)}
+              element={renderProtected(
+                <AppFrame currentUser={authState.user} title={t("app.nav.profile")}>
+                  <AccountPage currentUser={authState.user} onLogout={handleLogout} />
+                </AppFrame>,
+              )}
             />
-            <Route path="/organization" element={renderProtected(<OrganizationPage />)} />
-            <Route path="/workforce" element={renderProtected(<WorkforcePage />)} />
+            <Route
+              path="/organization"
+              element={renderProtected(
+                <AppFrame currentUser={authState.user} title={t("app.nav.organization")}>
+                  <OrganizationPage />
+                </AppFrame>,
+              )}
+            />
+            <Route
+              path="/workforce"
+              element={renderProtected(
+                <AppFrame currentUser={authState.user} title={t("workspace.workforce")}>
+                  <WorkforcePage />
+                </AppFrame>,
+              )}
+            />
             <Route path="/model/:modelId" element={renderProtected(<LinearWizardPage currentUser={authState.user} />)} />
             <Route path="/karta-procesu" element={renderProtected(<Navigate to="/" replace />)} />
             <Route

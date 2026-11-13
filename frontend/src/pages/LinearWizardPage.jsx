@@ -4,6 +4,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
+import WorkspaceIcon from "../components/WorkspaceIcon";
+import WorkspaceInspector from "../components/WorkspaceInspector";
+import WorkspaceShortcuts from "../components/WorkspaceShortcuts";
+import WorkspaceStructure from "../components/WorkspaceStructure";
+import { findDiagramElement, getElementEngineId } from "../components/workspaceNodes";
 import {
   appendLaneFromDescription,
   generateLinearWizardDiagram,
@@ -1439,6 +1444,47 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideEnabled = true;
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
+  const [mapSelection, setMapSelection] = useState(null);
+  const [structureOpen, setStructureOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem("bpmngen.ws.structureOpen") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [focusMode, setFocusMode] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [guideExpanded, setGuideExpanded] = useState(false);
+  const toggleStructure = useCallback(() => {
+    setStructureOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("bpmngen.ws.structureOpen", next ? "1" : "0");
+      } catch {
+        // storage unavailable; keep in-memory state
+      }
+      return next;
+    });
+  }, []);
+  const attachMapSelectionListener = useCallback((modeler) => {
+    const eventBus = modeler?.get?.("eventBus");
+    if (!eventBus?.on) return;
+    eventBus.on("selection.changed", (event) => {
+      const selected = Array.isArray(event?.newSelection) ? event.newSelection : [];
+      let element = selected[0] || null;
+      if (element?.type === "label" && element.labelTarget) element = element.labelTarget;
+      const boType = String(element?.businessObject?.$type || "");
+      if (!element || element.waypoints || !boType || /Process|Collaboration|Participant/.test(boType)) {
+        setMapSelection(null);
+        return;
+      }
+      setMapSelection({
+        id: getElementEngineId(element),
+        name: String(element.businessObject?.name || ""),
+        type: boType.replace(/^bpmn:/, ""),
+      });
+    });
+  }, []);
   const [guideHighlight, setGuideHighlight] = useState(null);
   const [homeGuideMessageIndex, setHomeGuideMessageIndex] = useState(0);
   const [activeLaneId, setActiveLaneId] = useState(null);
@@ -1831,10 +1877,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       return;
     }
     openSingleCard(cardKey);
-  };
-
-  const toggleRailSection = (key) => {
-    setRailSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const normalizeNodeId = (node) => node?.id || node?.nodeId || node?.refId || null;
@@ -4936,7 +4978,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
 
   const unreadProjectNotesCount = useMemo(() => notesUnreadIdsRef.current.size, [projectNotes, projectNotesLastSeenAt]);
   const visibleActivityPendingCount = activeOrgCapabilities.canApproveDeleteRequests ? pendingDeleteRequests.length : 0;
-  const totalTeamUnreadCount = unreadProjectNotesCount + visibleActivityPendingCount;
 
   const nonRequestActivityItems = useMemo(
     () =>
@@ -5844,6 +5885,152 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     [guideEnabled, guideState, applyGuideHighlight],
   );
 
+  const revealInMap = useCallback((engineId) => {
+    const modeler = modelerRef.current;
+    const element = findDiagramElement(modeler, engineId);
+    if (!element) return null;
+    try {
+      modeler.get("selection").select(element);
+      modeler.get("canvas").scrollToElement?.(element, { top: 120, bottom: 120, left: 120, right: 120 });
+    } catch {
+      // diagram not ready; selection is best effort
+    }
+    return element;
+  }, []);
+
+  const handleStructureLaneSelect = useCallback(
+    (lane) => {
+      if (!lane?.id) return;
+      const element = revealInMap(lane.id);
+      handleViewerLaneSelect({
+        id: lane.id,
+        engineId: lane.id,
+        canvasId: element?.id || "",
+        name: lane.name || "",
+      });
+      setMapSelection({ id: String(lane.id), name: lane.name || "", type: "Lane" });
+    },
+    [revealInMap, handleViewerLaneSelect],
+  );
+
+  const handleStructureNodeSelect = useCallback(
+    (node) => {
+      if (!node?.id) return;
+      const element = revealInMap(node.id);
+      if (!element) {
+        setMapSelection({ id: String(node.id), name: node.name || "", type: node.type || "" });
+      }
+    },
+    [revealInMap],
+  );
+
+  const handleInspectorOpenLane = useCallback(
+    (laneId, laneName) => {
+      handleStructureLaneSelect({ id: laneId, name: laneName });
+    },
+    [handleStructureLaneSelect],
+  );
+
+  useEffect(() => {
+    if (!xml) {
+      setMapSelection(null);
+      setFocusMode(false);
+    }
+  }, [xml]);
+
+  useEffect(() => {
+    const isTyping = (target) => {
+      const tag = String(target?.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target?.isContentEditable);
+    };
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || isTyping(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key === "\\") {
+        event.preventDefault();
+        toggleStructure();
+        return;
+      }
+      if (event.key === "?" && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Escape") {
+        if (shortcutsOpen) {
+          setShortcutsOpen(false);
+          return;
+        }
+        setFocusMode(false);
+        return;
+      }
+      if ((event.key === "t" || event.key === "T") && xml) {
+        event.preventDefault();
+        toggleStructure();
+        return;
+      }
+      if ((event.key === "f" || event.key === "F") && xml) {
+        event.preventDefault();
+        setFocusMode((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shortcutsOpen, toggleStructure, xml]);
+
+  const layoutFitReadyRef = useRef(false);
+  useEffect(() => {
+    // the diagram container changed size: re-measure it and re-centre the diagram
+    if (!layoutFitReadyRef.current) {
+      layoutFitReadyRef.current = true;
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const canvas = modelerRef.current?.get("canvas");
+        if (!canvas) return;
+        canvas.resized();
+        canvas.zoom("fit-viewport", "auto");
+        if (canvas.zoom() > 1) canvas.zoom(1, "auto");
+      } catch {
+        // modeler not ready
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusMode, structureOpen]);
+
+  useEffect(() => {
+    // a left card slides over the map: move the diagram so the edited role stays visible
+    if (!laneOpen || !selectedLane) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const modeler = modelerRef.current;
+        const cards = document.querySelector(".ws-cards");
+        if (!modeler || !cards || getComputedStyle(cards).position !== "absolute") return;
+        const element =
+          findDiagramElement(modeler, selectedLane.engineId || selectedLane.id) ||
+          (selectedLane.canvasId ? modeler.get("elementRegistry").get(selectedLane.canvasId) : null);
+        if (!element) return;
+        const canvas = modeler.get("canvas");
+        const viewbox = canvas.viewbox();
+        const scale = viewbox.scale || 1;
+        const containerRect = canvas.getContainer().getBoundingClientRect();
+        const safeLeft = cards.getBoundingClientRect().right - containerRect.left + 24;
+        const elementLeft = (element.x - viewbox.x) * scale;
+        if (elementLeft >= safeLeft) return;
+        canvas.viewbox({
+          x: viewbox.x - (safeLeft - elementLeft) / scale,
+          y: viewbox.y,
+          width: viewbox.width,
+          height: viewbox.height,
+        });
+      } catch {
+        // diagram not ready
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [laneOpen, selectedLane]);
+
   const viewerProps = useMemo(
     () => ({
       title: t("wizard.process_card_preview_title"),
@@ -5877,9 +6064,11 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       processNodeId: modelSource?.kind === "org" ? modelSource?.treeNodeId || "" : "",
       onModelerReady: (modeler) => {
         modelerRef.current = modeler;
+        attachMapSelectionListener(modeler);
       },
     }),
     [
+      attachMapSelectionListener,
       error,
       handleDiagramChange,
       handleSaveModel,
@@ -7957,230 +8146,264 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     modelSource?.kind !== "org" && guideEnabled && !guideWorkspaceActive && !xml;
   const homeGuideMessage =
     homeGuideMessages[homeGuideMessageIndex % homeGuideMessages.length] || homeGuideMessages[0];
+  const inspectorVisible = Boolean(
+    xml && mapSelection && !(drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen),
+  );
 
   return (
-    <div className="process-card-layout" ref={layoutRef}>
-      <div className="process-card-rail">
-        <Link to="/" className="process-card-rail-brand" aria-label={t("app.brand_label")}>
-          <span className="process-card-rail-brand__text">BPMN.Gen</span>
+    <div className={`ws-shell ${focusMode ? "ws-shell--focus" : ""}`}>
+      {focusMode ? (
+        <div className="ws-focus-pill" role="status">
+          <span className="ws-focus-pill__dot" aria-hidden="true" />
+          <span className="ws-focus-pill__label">{t("workspace.focus_on")}</span>
+          <span className="ws-focus-pill__hint">
+            {t("workspace.focus_hint")} <kbd>F</kbd> {t("workspace.or")} <kbd>Esc</kbd>
+          </span>
+          <button type="button" className="ws-focus-pill__btn" onClick={() => setFocusMode(false)}>
+            {t("workspace.focus_exit_short")}
+          </button>
+        </div>
+      ) : null}
+      <WorkspaceShortcuts open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <header className="ws-topbar">
+        <Link to="/" className="ws-topbar__brand" aria-label={t("app.brand_label")}>
+          <span className="ws-topbar__logo" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="ws-topbar__brand-text">BPMN.Gen</span>
         </Link>
-        {isDemoMode ? (
-          <div className="process-card-rail-group is-open">
-            <button type="button" className="process-card-rail-header" onClick={() => setDemoSetupOpen(true)}>
-              <span>DEMO</span>
+        <nav className="ws-tabs" aria-label={t("workspace.tabs_label")}>
+          <button
+            type="button"
+            className={`ws-tab ${!drawerOpen && !storyOpen && !orgOpen ? "is-active" : ""}`}
+            aria-pressed={!drawerOpen && !storyOpen && !orgOpen}
+            onClick={() => openSingleCard(null)}
+          >
+            {t("workspace.tab_map")}
+          </button>
+          <button
+            type="button"
+            className={`ws-tab ${drawerOpen ? "is-active" : ""}`}
+            aria-pressed={drawerOpen}
+            onClick={() => toggleSingleCard("drawer")}
+          >
+            {t("wizard.rail_show_process_card")}
+          </button>
+          <button
+            type="button"
+            className={`ws-tab ${storyOpen ? "is-active" : ""}`}
+            aria-pressed={storyOpen}
+            onClick={() => toggleSingleCard("story")}
+          >
+            {t("wizard.rail_show_story")}
+          </button>
+          {!isDemoMode ? (
+            <button
+              type="button"
+              className={`ws-tab ${orgOpen ? "is-active" : ""}`}
+              aria-pressed={orgOpen}
+              onClick={() => toggleSingleCard("org")}
+            >
+              {t("wizard.rail_show_org_model")}
             </button>
-            <div className="process-card-rail-content">
-              <button type="button" className="process-card-toggle" onClick={() => setDemoSetupOpen(true)}>
+          ) : null}
+        </nav>
+        <div className="ws-topbar__process">
+          {isDemoMode ? (
+            <span className="ws-badge ws-badge--demo" title={t("wizard.banner_demo_text", { maxRoles: DEMO_LIMITS.maxRoles })}>
+              Demo
+            </span>
+          ) : null}
+          {xml ? (
+            <>
+              <span className={`ws-badge ws-badge--${modelSource?.kind === "org" ? "org" : "sandbox"}`}>
+                {modelSource?.kind === "org" ? t("wizard.process_card_badge_org") : t("wizard.process_card_badge_sandbox")}
+              </span>
+              <span className="ws-topbar__process-name" title={previewName}>{previewName}</span>
+              {previewVersionTag ? <span className="ws-topbar__meta">{previewVersionTag}</span> : null}
+            </>
+          ) : (
+            <span className="ws-topbar__meta">{t("workspace.no_model")}</span>
+          )}
+        </div>
+        <div className="ws-topbar__actions">
+          {xml ? (
+            <button
+              type="button"
+              className="ws-btn ws-btn--icon"
+              title={`${t("workspace.focus_enter")} (F)`}
+              aria-label={t("workspace.focus_enter")}
+              onClick={() => setFocusMode(true)}
+            >
+              <WorkspaceIcon name="focus" size={15} />
+            </button>
+          ) : null}
+          {isDemoMode ? (
+            <>
+              <button type="button" className="ws-btn" onClick={() => setDemoSetupOpen(true)}>
                 {t("app.nav.demo_info")}
               </button>
-              <button type="button" className="process-card-toggle process-card-toggle--new-model" onClick={resetDemoState}>
+              <button type="button" className="ws-btn" onClick={resetDemoState}>
                 {t("app.nav.demo_reset")}
               </button>
-              <a className="process-card-toggle" href="/register">
+              <a className="ws-btn ws-btn--primary" href="/register">
                 {t("app.nav.create_account")}
               </a>
-            </div>
-          </div>
-        ) : (
-          <>
-        <div className={`process-card-rail-group ${railSections.process ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("process")}>
-            <span>{t("wizard.rail_process_group")}</span>
-          </button>
-          {railSections.process ? (
-            <div className="process-card-rail-content">
-              <button
-                type="button"
-                className={`process-card-toggle ${drawerOpen ? "is-active" : ""}`}
-                style={
-                  drawerOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("drawer")}
-              >
-                {drawerOpen ? t("wizard.rail_hide_process_card") : t("wizard.rail_show_process_card")}
-              </button>
-
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--story ${storyOpen ? "is-active" : ""}`}
-                style={
-                  storyOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("story")}
-              >
-                {storyOpen ? t("wizard.rail_hide_story") : t("wizard.rail_show_story")}
-              </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--new-model"
-                onClick={handleNewModel}
-              >
+            </>
+          ) : (
+            <>
+              <button type="button" className="ws-btn" onClick={handleNewModel}>
+                <WorkspaceIcon name="plus" size={14} />
                 {t("wizard.rail_new_model")}
               </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`process-card-rail-group ${railSections.save ? "is-open" : ""}`}>
-          <button type="button" className="process-card-rail-header" onClick={() => toggleRailSection("save")}>
-            <span>{t("wizard.rail_models_group")}</span>
-          </button>
-          {railSections.save ? (
-            <div className="process-card-rail-content">
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--models"
-                onClick={openModels}
-              >
-                {t("wizard.rail_saved_models")}
+              <button type="button" className="ws-btn" onClick={handleImportClick} disabled={importLoading}>
+                <WorkspaceIcon name="upload" size={14} />
+                {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
               </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--save"
-                onClick={handleSaveModel}
-                disabled={saveLoading}
-              >
-                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
-              </button>
-              <button
-                type="button"
-                className="process-card-toggle process-card-toggle--io"
-                onClick={handleExportBpmn}
-                disabled={exportLoading}
-              >
+              <button type="button" className="ws-btn" onClick={handleExportBpmn} disabled={exportLoading}>
+                <WorkspaceIcon name="download" size={14} />
                 {exportLoading ? t("wizard.rail_exporting") : t("wizard.rail_export")}
               </button>
               <button
                 type="button"
-                className="process-card-toggle process-card-toggle--io"
-                onClick={handleImportClick}
-                disabled={importLoading}
+                className="ws-btn ws-btn--primary"
+                onClick={handleSaveModel}
+                disabled={saveLoading || isReadOnlyMode}
               >
-                {importLoading ? t("wizard.rail_importing") : t("wizard.rail_import")}
+                {saveLoading ? t("wizard.rail_saving") : t("wizard.rail_save_model")}
               </button>
-            </div>
-          ) : null}
+            </>
+          )}
         </div>
+      </header>
 
-        <div className={`process-card-rail-group process-card-rail-group--team ${railSections.project ? "is-open" : ""}`}>
-          <button
-            type="button"
-            className="process-card-rail-header process-card-rail-header--stacked"
-            onClick={() => toggleRailSection("project")}
-          >
-            <span>{t("wizard.rail_team_group")}</span>
-            {totalTeamUnreadCount > 0 ? (
-              <span
-                className="process-card-rail-header__badge"
-                aria-label={`${totalTeamUnreadCount} noviniek v time`}
-              >
-                {totalTeamUnreadCount}
-              </span>
-            ) : null}
-          </button>
-          {railSections.project ? (
-            <div className="process-card-rail-content process-card-rail-content--team">
-              <button
-                type="button"
-                className={`process-card-toggle ${orgOpen ? "is-active" : ""}`}
-                style={
-                  orgOpen
-                    ? {
-                        backgroundColor: "#1b3a6b",
-                        color: "#fff",
-                        borderColor: "#2f5ca0",
-                        boxShadow: "0 0 0 1px rgba(47,92,160,0.6)",
-                      }
-                    : undefined
-                }
-                onClick={() => toggleSingleCard("org")}
-              >
-                {orgOpen ? t("wizard.rail_hide_org_model") : t("wizard.rail_show_org_model")}
-              </button>
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-notes ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
-                onClick={() => setNotesOpen(true)}
-              >
-                {t("wizard.rail_notes")}
-                {unreadProjectNotesCount > 0 ? (
-                  <span className="process-card-toggle__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
-                    {unreadProjectNotesCount}
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                className={`process-card-toggle process-card-toggle--notes process-card-toggle--team-activity ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
-                onClick={() => setActivityOpen(true)}
-              >
-                {t("wizard.rail_activity")}
-                {visibleActivityPendingCount > 0 ? (
-                  <span className="process-card-toggle__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
-                    {visibleActivityPendingCount}
-                  </span>
-                ) : null}
-              </button>
-              <button type="button" className="process-card-toggle process-card-toggle--team" onClick={openOrgsModal}>
-                {t("wizard.rail_org_admin")}
-              </button>
-            </div>
-          ) : null}
-        </div>
+    <div
+      className={`process-card-layout ${xml && structureOpen ? "ws-layout--tree" : ""} ${inspectorVisible ? "ws-layout--inspector" : ""}`}
+      ref={layoutRef}
+    >
+      <nav className="ws-rail" aria-label={t("workspace.rail_label")}>
+        {xml ? (
+          <>
+            <button
+              type="button"
+              className={`ws-rail__btn ${structureOpen ? "is-active" : ""}`}
+              title={`${t("workspace.toggle_structure")} (T)`}
+              aria-label={t("workspace.toggle_structure")}
+              aria-pressed={structureOpen}
+              onClick={toggleStructure}
+            >
+              <WorkspaceIcon name="tree" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+          </>
+        ) : null}
+        {isDemoMode ? (
+          <>
+            <button type="button" className="ws-rail__btn" title={t("app.nav.demo_info")} aria-label={t("app.nav.demo_info")} onClick={() => setDemoSetupOpen(true)}>
+              <WorkspaceIcon name="info" />
+            </button>
+            <button type="button" className="ws-rail__btn" title={t("app.nav.demo_reset")} aria-label={t("app.nav.demo_reset")} onClick={resetDemoState}>
+              <WorkspaceIcon name="reset" />
+            </button>
+            <a className="ws-rail__btn" href="/register" title={t("app.nav.create_account")} aria-label={t("app.nav.create_account")}>
+              <WorkspaceIcon name="register" />
+            </a>
+          </>
+        ) : (
+          <>
+            <Link to="/" className="ws-rail__btn" title={t("workspace.home")} aria-label={t("workspace.home")}>
+              <WorkspaceIcon name="home" />
+            </Link>
+            <button type="button" className="ws-rail__btn" title={t("wizard.rail_saved_models")} aria-label={t("wizard.rail_saved_models")} onClick={openModels}>
+              <WorkspaceIcon name="models" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+            <button
+              type="button"
+              className={`ws-rail__btn ${notesOpen ? "is-active" : ""} ${notesBadgePulse ? "is-pulse" : ""}`}
+              title={t("wizard.rail_notes")}
+              aria-label={t("wizard.rail_notes")}
+              onClick={() => setNotesOpen(true)}
+            >
+              <WorkspaceIcon name="notes" />
+              {unreadProjectNotesCount > 0 ? (
+                <span className="ws-rail__badge" aria-label={`${unreadProjectNotesCount} novych poznamok`}>
+                  {unreadProjectNotesCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className={`ws-rail__btn ${activityOpen ? "is-active" : ""} ${activityBadgePulse ? "is-pulse" : ""}`}
+              title={t("wizard.rail_activity")}
+              aria-label={t("wizard.rail_activity")}
+              onClick={() => setActivityOpen(true)}
+            >
+              <WorkspaceIcon name="activity" />
+              {visibleActivityPendingCount > 0 ? (
+                <span className="ws-rail__badge" aria-label={`${visibleActivityPendingCount} cakajucich poziadaviek`}>
+                  {visibleActivityPendingCount}
+                </span>
+              ) : null}
+            </button>
+            <button type="button" className="ws-rail__btn" title={t("wizard.rail_org_admin")} aria-label={t("wizard.rail_org_admin")} onClick={openOrgsModal}>
+              <WorkspaceIcon name="settings" />
+            </button>
+            <span className="ws-rail__sep" aria-hidden="true" />
+            <Link to="/organization" className="ws-rail__btn" title={t("app.nav.organization")} aria-label={t("app.nav.organization")}>
+              <WorkspaceIcon name="organization" />
+            </Link>
+            <Link to="/workforce" className="ws-rail__btn" title={t("workspace.workforce")} aria-label={t("workspace.workforce")}>
+              <WorkspaceIcon name="workforce" />
+            </Link>
+          </>
+        )}
+        <span className="ws-rail__spacer" />
         {currentUser ? (
-          <div className="process-card-rail-footer">
-            <div className="process-card-rail-footer__meta">
-              <span className="process-card-rail-footer__email">{currentUser.email}</span>
-              <span className="process-card-rail-footer__org">
-                {activeOrgId
-                  ? t("app.nav.active_org", { name: activeOrgName || activeOrgId })
-                  : t("app.nav.no_active_org")}
-              </span>
-            </div>
-            <Link to="/organization" className="process-card-rail-link">
-              {t("app.nav.organization")}
-            </Link>
-            <Link to="/workforce" className="process-card-rail-link">
-              Substitutability Matrix
-            </Link>
-            <Link to="/account" className="process-card-rail-link">
-              {t("app.nav.profile")}
-            </Link>
+          <>
             {currentUser?.admin_panel_available === true && currentUser?.is_super_admin === true ? (
-              <Link to="/admin" className="process-card-rail-link">
-                {t("app.nav.admin")}
+              <Link to="/admin" className="ws-rail__btn" title={t("app.nav.admin")} aria-label={t("app.nav.admin")}>
+                <WorkspaceIcon name="admin" />
               </Link>
             ) : null}
             <button
               type="button"
-              className="process-card-rail-link process-card-rail-link--feedback"
+              className="ws-rail__btn"
+              title={t("workspace.feedback")}
+              aria-label={t("workspace.feedback")}
               onClick={() => { setFeedbackOpen(true); setFeedbackStatus("idle"); setFeedbackMsg(""); }}
             >
-              Feedback
+              <WorkspaceIcon name="feedback" />
             </button>
-          </div>
-        ) : null}
+            <Link
+              to="/account"
+              className="ws-rail__avatar"
+              title={`${t("app.nav.profile")} · ${currentUser.email}`}
+              aria-label={t("app.nav.profile")}
+            >
+              {(currentUser.email || "?").slice(0, 2).toUpperCase()}
+            </Link>
           </>
-        )}
+        ) : null}
+      </nav>
 
-      </div>
+      {xml && structureOpen ? (
+        <WorkspaceStructure
+          engineJson={engineJson}
+          processName={previewName}
+          findings={guideFindings}
+          selectedId={mapSelection?.id || ""}
+          onSelectLane={handleStructureLaneSelect}
+          onSelectNode={handleStructureNodeSelect}
+        />
+      ) : null}
 
       {drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen ? (
         <div
+          className="ws-cards"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -8448,7 +8671,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 {error ? <div className="wizard-error">{error}</div> : null}
                 {info ? <div className="wizard-toast">{info}</div> : null}
                 {modelSource?.kind === "org" ? (
-                  <div className="wizard-toast" style={{ background: "rgba(15,23,42,0.6)" }}>
+                  <div className="wizard-toast" style={{ background: "rgba(27, 27, 30, 0.6)" }}>
                     {orgReadOnly ? t("wizard.process_card_mode_readonly") : t("wizard.process_card_mode_edit")}
                     {orgReadOnly ? (
                       <button
@@ -8477,12 +8700,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 justifyContent: "center",
                 gap: 8,
                 background: isResizingPanels
-                  ? "linear-gradient(90deg, rgba(47,92,160,0.5), rgba(47,92,160,0.35))"
-                  : "linear-gradient(90deg, rgba(47,92,160,0.28), rgba(47,92,160,0.18))",
+                  ? "linear-gradient(90deg, rgba(47, 51, 160, 0.5), rgba(47, 51, 160, 0.35))"
+                  : "linear-gradient(90deg, rgba(47, 51, 160, 0.28), rgba(47, 51, 160, 0.18))",
                 transition: "background 120ms ease",
                 borderTop: "1px solid rgba(255,255,255,0.08)",
                 borderBottom: "1px solid rgba(255,255,255,0.08)",
-                boxShadow: isResizingPanels ? "0 0 0 1px rgba(47,92,160,0.4) inset" : "none",
+                boxShadow: isResizingPanels ? "0 0 0 1px rgba(47, 51, 160, 0.4) inset" : "none",
               }}
               onMouseDown={(e) => {
                 verticalResizeStart.current = { y: e.clientY, h: processPanelHeight };
@@ -8971,7 +9194,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <div
               style={{
                 height: 1,
-                background: "linear-gradient(90deg, rgba(47,92,160,0.2), rgba(47,92,160,0.4), rgba(47,92,160,0.2))",
+                background: "linear-gradient(90deg, rgba(47, 51, 160, 0.2), rgba(47, 51, 160, 0.4), rgba(47, 51, 160, 0.2))",
               }}
             />
           ) : null}
@@ -8987,7 +9210,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               </div>
               <div className="demo-banner__actions">
                 <button className="btn btn--small" type="button" onClick={resetDemoState}>
-                  {t("wizard.demo_reset")}
+                  {t("app.nav.demo_reset")}
                 </button>
                 <a className="btn btn--small btn-primary" href="/register">
                   {t("wizard.banner_demo_continue")}
@@ -9001,9 +9224,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 marginBottom: 10,
                 padding: "10px 12px",
                 borderRadius: 10,
-                background: "rgba(15, 23, 42, 0.8)",
-                border: "1px solid rgba(94, 234, 212, 0.25)",
-                color: "#e2e8f0",
+                background: "rgba(27, 27, 30, 0.8)",
+                border: "1px solid rgba(104, 108, 224, 0.25)",
+                color: "#e8e8ea",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -9054,7 +9277,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           ) : null}
           <div className="wizard-viewer">
             {showGuideBanners ? (
-              <div className="guide-bar">
+              <div className={`guide-bar ${guideExpanded ? "is-expanded" : "is-compact"}`}>
+                <button
+                  type="button"
+                  className="guide-bar__expand"
+                  aria-expanded={guideExpanded}
+                  aria-label={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  title={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  onClick={() => setGuideExpanded((v) => !v)}
+                />
                 <div className="guide-bar__text">
                   {guideState?.title ? (
                     <div className="guide-bar__title">{guideState.title}</div>
@@ -9111,7 +9342,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 </div>
               </div>
             ) : showHomeGuideBanner ? (
-              <div className="guide-bar guide-bar--welcome">
+              <div className={`guide-bar guide-bar--welcome ${guideExpanded ? "is-expanded" : "is-compact"}`}>
+                <button
+                  type="button"
+                  className="guide-bar__expand"
+                  aria-expanded={guideExpanded}
+                  aria-label={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  title={guideExpanded ? t("workspace.guide_less") : t("workspace.guide_more")}
+                  onClick={() => setGuideExpanded((v) => !v)}
+                />
                 <div className="guide-bar__text">
                   <div className="guide-bar__title">{t("wizard.banner_guide_title")}</div>
                   <div>{homeGuideMessage}</div>
@@ -9154,10 +9393,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                       fontWeight: 800,
                       fontSize: 15,
                       letterSpacing: 0.2,
-                      background: "linear-gradient(135deg, rgba(59,130,246,0.35), rgba(30,58,138,0.55))",
-                      border: "1px solid rgba(96,165,250,0.6)",
-                      color: "#eff6ff",
-                      boxShadow: "0 10px 30px rgba(30, 58, 138, 0.25)",
+                      background: "linear-gradient(135deg, rgba(85, 89, 220, 0.35), rgba(30, 34, 138, 0.55))",
+                      border: "1px solid rgba(119, 122, 227, 0.6)",
+                      color: "#f7f7f7",
+                      boxShadow: "0 10px 30px rgba(30, 34, 138, 0.25)",
                       maxWidth: 520,
                     }}
                   >
@@ -10561,6 +10800,24 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         ) : null}
       </div>
 
+      {inspectorVisible ? (
+        <WorkspaceInspector
+          selection={mapSelection}
+          engineJson={engineJson}
+          readOnly={isReadOnlyMode}
+          onClose={() => {
+            setMapSelection(null);
+            try {
+              modelerRef.current?.get("selection").select(null);
+            } catch {
+              // ignore
+            }
+          }}
+          onOpenLane={handleInspectorOpenLane}
+          onSelectNode={handleStructureNodeSelect}
+        />
+      ) : null}
+
       <input
         ref={fileInputRef}
         type="file"
@@ -10625,6 +10882,51 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           </div>
         </div>
       ) : null}
+    </div>
+      <footer className="ws-statusbar">
+        {xml ? (
+          <>
+            {isReadOnlyMode ? (
+              <span className="ws-statusbar__item">
+                <span className="ws-dot ws-dot--muted" aria-hidden="true" />
+                {t("workspace.read_only")}
+              </span>
+            ) : isDemoMode ? null : (
+              <span className="ws-statusbar__item">
+                <span className={`ws-dot ${hasUnsavedChanges ? "ws-dot--warn" : "ws-dot--ok"}`} aria-hidden="true" />
+                {hasUnsavedChanges ? t("workspace.unsaved") : t("workspace.saved")}
+              </span>
+            )}
+            <span className="ws-statusbar__item">
+              {t("workspace.lanes")} {Array.isArray(engineJson?.lanes) ? engineJson.lanes.length : 0}
+            </span>
+            <span className="ws-statusbar__item">
+              {t("workspace.nodes")} {Array.isArray(engineJson?.nodes) ? engineJson.nodes.length : 0}
+            </span>
+            {previewVersionLabel ? <span className="ws-statusbar__item">{previewVersionLabel}</span> : null}
+          </>
+        ) : (
+          <span className="ws-statusbar__item">{t("workspace.no_model")}</span>
+        )}
+        <button
+          type="button"
+          className="ws-statusbar__btn ws-statusbar__item--end"
+          aria-haspopup="dialog"
+          aria-expanded={shortcutsOpen}
+          onClick={() => setShortcutsOpen((prev) => !prev)}
+        >
+          <WorkspaceIcon name="keyboard" size={13} />
+          {t("workspace.shortcuts")}
+          <kbd>?</kbd>
+        </button>
+        <span className="ws-statusbar__item">
+          {isDemoMode
+            ? "Demo"
+            : [activeOrgId ? activeOrgName || activeOrgId : t("app.nav.no_active_org"), currentUser?.email]
+                .filter(Boolean)
+                .join(" · ")}
+        </span>
+      </footer>
     </div>
   );
 }

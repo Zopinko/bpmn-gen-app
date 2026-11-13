@@ -1,11 +1,11 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color-scheme: dark;
+  color: #ededf0;
+  background-color: #0b0b0d;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -15,11 +15,11 @@
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: #b4b5ff;
   text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
+  color: #d0d1ff;
 }
 
 body {
@@ -31,40 +31,28 @@ body {
 }
 
 h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+  font-size: 2.2em;
+  line-height: 1.15;
 }
 
 button {
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid transparent;
-  padding: 0.6em 1.2em;
+  padding: 0.5em 1em;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  color: inherit;
+  background-color: #1a1a1e;
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: rgba(255, 255, 255, 0.18);
 }
-button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+  outline: 2px solid rgba(129, 131, 255, 0.7);
+  outline-offset: 2px;
 }
 
 /* BPMN resize overlay – remove solid block, keep only red frame */
