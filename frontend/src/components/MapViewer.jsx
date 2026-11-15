@@ -1,4 +1,7 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { cloneElement, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import GuideHandoffArrow from "./GuideHandoffArrow";
+import { findDiagramElement } from "./workspaceNodes";
 import { useTranslation } from "react-i18next";
 import BpmnModeler from "bpmn-js/lib/Modeler";
 import "bpmn-js/dist/assets/diagram-js.css";
@@ -52,6 +55,13 @@ export default function MapViewer({
   onXmlImported,
   overlayMessage,
   guideHighlight = null,
+  guideBubble = null,
+  guideBubbleInsetRight = 0,
+  guideDraftLabel = "",
+  guideWriting = false,
+  guideHandoffSourceId = null,
+  guideHandoffTargetId = null,
+  guideHandoffEnds = false,
   orgId = "",
   processNodeId = "",
   readOnly = false,
@@ -60,6 +70,8 @@ export default function MapViewer({
   const ENABLE_LANE_HANDLES = false;
   const ENABLE_GHOST_STYLING = false;
   const containerRef = useRef(null);
+  const guideInsetRef = useRef(guideBubbleInsetRight);
+  const guideInsetScheduleRef = useRef(null);
   const modelerRef = useRef(null);
   const [importError, setImportError] = useState("");
   const [confirmModal, setConfirmModal] = useState(null);
@@ -89,6 +101,11 @@ export default function MapViewer({
   const laneHandleMapRef = useRef(new Map());
   const laneDragStartMapRef = useRef(new Map());
   const guideHighlightRef = useRef({ elementId: null, pulseTimer: null });
+  const [guideBubbleHost, setGuideBubbleHost] = useState(null);
+  const [guideDraftHost, setGuideDraftHost] = useState(null);
+  const [guideHandoffPreview, setGuideHandoffPreview] = useState(null);
+  const [guideDiagramRevision, setGuideDiagramRevision] = useState(0);
+  const hasGuideBubble = Boolean(guideBubble);
   const nameCacheRef = useRef(new Map());
   const laneCacheRef = useRef(new Map());
   const lastClickedElementRef = useRef(null);
@@ -419,7 +436,53 @@ export default function MapViewer({
     }
 
     safeAddMarker(canvas, targetEl.id, "guide-highlight-target");
+    const repair = guideHighlight.type === "repair";
+    if (repair) safeAddMarker(canvas, targetEl.id, "guide-repair-target");
     guideHighlightRef.current.elementId = targetEl.id;
+
+    // the guide's bubble lives on the canvas, anchored to the element it talks about
+    let bubbleOverlayId = null;
+    let draftOverlayId = null;
+    const overlays = hasGuideBubble ? modeler.get("overlays", false) : null;
+    if (overlays) {
+      const targetType = String(targetEl.businessObject?.$type || "");
+      const isLaneTarget = targetType.includes("Lane") || targetType.includes("Participant");
+      let position = guideHighlight.type === "handoff"
+        ? { top: -12, left: targetEl.width + 130 }
+        : { bottom: -14, left: -16 };
+      if (isLaneTarget) {
+        // next to the last element of the role: where the next step would go
+        const laneTop = Number(targetEl.y || 0);
+        const laneBottom = laneTop + Number(targetEl.height || 0);
+        let right = Number(targetEl.x || 0) + 30;
+        elementRegistry.getAll().forEach((el) => {
+          if (!el || el.type === "label" || el.waypoints) return;
+          const type = String(el.businessObject?.$type || "");
+          if (!/Task|Gateway|Event|SubProcess/.test(type)) return;
+          const centerY = Number(el.y || 0) + Number(el.height || 0) / 2;
+          if (centerY < laneTop || centerY > laneBottom) return;
+          right = Math.max(right, Number(el.x || 0) + Number(el.width || 0));
+        });
+        const nextStepLeft = Math.round(right - Number(targetEl.x || 0)) + 40;
+        position = { top: 12, left: guideWriting ? nextStepLeft + 116 : nextStepLeft - 10 };
+        if (guideWriting) {
+          const host = document.createElement("div");
+          draftOverlayId = overlays.add(targetEl, "guide-step-preview", {
+            position: { top: Math.max(0, (targetEl.height - 80) / 2), left: nextStepLeft },
+            html: host,
+          });
+          setGuideDraftHost(host);
+        }
+      }
+      const host = document.createElement("div");
+      host.className = `guide-bubble-host guide-bubble-host--${isLaneTarget ? "lane" : "node"}`;
+      try {
+        bubbleOverlayId = overlays.add(targetEl, "guide-bubble", { position, html: host, scale: false });
+        setGuideBubbleHost(host);
+      } catch {
+        bubbleOverlayId = null;
+      }
+    }
 
     if (guideHighlight?.pulse) {
       safeAddMarker(canvas, targetEl.id, "guide-highlight-pulse");
@@ -430,18 +493,131 @@ export default function MapViewer({
       }, 1900);
     }
 
+    const eventBus = guideWriting || guideHighlight.type === "handoff" ? modeler.get("eventBus") : null;
+    const updateGuidePosition = () => setGuideDiagramRevision((revision) => revision + 1);
+    eventBus?.on("commandStack.changed", updateGuidePosition);
+
     return () => {
+      eventBus?.off("commandStack.changed", updateGuidePosition);
       const current = guideHighlightRef.current;
       if (current?.pulseTimer) {
         window.clearTimeout(current.pulseTimer);
       }
       if (current?.elementId) {
+        if (repair) safeRemoveMarker(canvas, current.elementId, "guide-repair-target");
         safeRemoveMarker(canvas, current.elementId, "guide-highlight-target");
         safeRemoveMarker(canvas, current.elementId, "guide-highlight-pulse");
       }
       guideHighlightRef.current = { elementId: null, pulseTimer: null };
+      if (bubbleOverlayId) {
+        try {
+          modeler.get("overlays", false)?.remove(bubbleOverlayId);
+        } catch {
+          // overlay already gone with the diagram
+        }
+        setGuideBubbleHost(null);
+      }
+      if (draftOverlayId) {
+        overlays?.remove(draftOverlayId);
+        setGuideDraftHost(null);
+      }
     };
-  }, [guideHighlight, xml]);
+  }, [guideHighlight, guideWriting, hasGuideBubble, xml, guideDiagramRevision]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const host = guideBubbleHost;
+    const eventBus = modelerRef.current?.get("eventBus", false);
+    if (!container || !host || !eventBus) return undefined;
+
+    let frame;
+    let autoPanned = false;
+    const placeBubble = () => {
+      const insetRight = guideInsetRef.current;
+      const bubble = host.firstElementChild;
+      // the overlay may already be gone when a queued frame runs
+      if (!bubble || !host.parentElement) return;
+      const box = container.getBoundingClientRect();
+      // a panel open over the right side of the map (properties) must not cover the bubble
+      const canvas = { left: box.left, top: box.top, bottom: box.bottom, right: box.right - insetRight, width: box.width - insetRight };
+      const anchor = host.parentElement.getBoundingClientRect();
+      const margin = 12;
+      host.style.setProperty("--guide-bubble-max-width", `${Math.max(0, canvas.width - 2 * margin)}px`);
+      const { width, height } = bubble.getBoundingClientRect();
+      if (!autoPanned && width) {
+        // A freshly placed bubble that does not fit would be pushed over the diagram.
+        // Move the map once instead, so the bubble stays beside the element it is about.
+        autoPanned = true;
+        const overflowX = anchor.left + width + margin - canvas.right;
+        const overflowY = anchor.top + height + margin - canvas.bottom;
+        const roomX = Math.max(0, anchor.left - canvas.left - margin);
+        const roomY = Math.max(0, anchor.top - canvas.top - margin);
+        const panX = overflowX > 0 ? Math.min(overflowX, roomX) : 0;
+        const panY = overflowY > 0 ? Math.min(overflowY, roomY) : 0;
+        if (panX || panY) {
+          try {
+            modelerRef.current?.get("canvas")?.scroll({ dx: -Math.round(panX), dy: -Math.round(panY) });
+            return;
+          } catch {
+            // fall back to shifting the bubble
+          }
+        }
+      }
+      const left = Math.max(canvas.left + margin, Math.min(anchor.left, canvas.right - width - margin));
+      const top = Math.max(canvas.top + margin, Math.min(anchor.top, canvas.bottom - height - margin));
+      const dx = Math.round(left - anchor.left);
+      const dy = Math.round(top - anchor.top);
+      host.style.translate = `${dx}px ${dy}px`;
+      host.classList.toggle("guide-bubble-host--shifted", Boolean(dx || dy));
+    };
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(placeBubble);
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(container);
+    observer.observe(host);
+    const contentObserver = new MutationObserver(schedule);
+    contentObserver.observe(host, { childList: true });
+    eventBus.on("canvas.viewbox.changed", schedule);
+    guideInsetScheduleRef.current = schedule;
+    schedule();
+    return () => {
+      guideInsetScheduleRef.current = null;
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      contentObserver.disconnect();
+      eventBus.off("canvas.viewbox.changed", schedule);
+    };
+  }, [guideBubbleHost]);
+
+  useEffect(() => {
+    guideInsetRef.current = guideBubbleInsetRight;
+    guideInsetScheduleRef.current?.();
+  }, [guideBubbleInsetRight]);
+
+  useEffect(() => {
+    const modeler = modelerRef.current;
+    const source = findDiagramElement(modeler, guideHandoffSourceId);
+    const destination = findDiagramElement(modeler, guideHandoffTargetId);
+    if (!source || (!destination && !guideHandoffEnds)) {
+      setGuideHandoffPreview(null);
+      return undefined;
+    }
+    const isLane = destination?.businessObject?.$type === "bpmn:Lane";
+    const target = destination && !isLane ? destination : {
+      x: source.x + source.width + (isLane ? 50 : 60),
+      y: isLane ? destination.y + destination.height * 0.38 - 18 : source.y + source.height / 2 - 18,
+      width: 36,
+      height: 36,
+    };
+    const overlays = modeler.get("overlays");
+    const host = document.createElement("div");
+    host.style.pointerEvents = "none";
+    const id = overlays.add(source, "guide-handoff-preview", { position: { top: 0, left: 0 }, html: host });
+    setGuideHandoffPreview({ host, source, target });
+    return () => overlays.remove(id);
+  }, [guideHandoffSourceId, guideHandoffTargetId, guideHandoffEnds, guideDiagramRevision, xml]);
 
   const zoomBy = (delta) => {
     const modeler = modelerRef.current;
@@ -473,7 +649,7 @@ export default function MapViewer({
     fitWithPadding();
   };
 
-  const handleUndoClick = () => {
+  const handleUndoClick = useCallback(() => {
     if (readOnly) return;
     const modeler = modelerRef.current;
     const commandStack = modeler?.get?.("commandStack", false);
@@ -485,7 +661,7 @@ export default function MapViewer({
     if (typeof onUndo === "function") {
       onUndo();
     }
-  };
+  }, [onUndo, readOnly]);
 
   useEffect(() => {
     const modeler = new BpmnModeler({
@@ -581,6 +757,11 @@ export default function MapViewer({
       const isAlt =
         isGateway && (tgtBranch === "alt" || tgtMidY > srcMidY + EPS_Y);
       if (isAlt) {
+        // a side branch leaves the gateway through its bottom corner
+        const cornerX = sx + sw / 2;
+        if (tgtL.x > cornerX) {
+          return [{ x: cornerX, y: sy + sh }, { x: cornerX, y: tgtMidY }, tgtL];
+        }
         const branchX = srcR.x + ALT_BRANCH_X;
         return [srcR, { x: branchX, y: srcMidY }, { x: branchX, y: tgtMidY }, tgtL];
       }
@@ -592,6 +773,20 @@ export default function MapViewer({
 
       const forward = tgtL.x > srcR.x + 10;
       const closeY = Math.abs(srcMidY - tgtMidY) < EPS_Y;
+
+      if (!sameLane) {
+        // hand-off to another role: straight down/up when the steps are aligned,
+        // otherwise down (up) first and then right
+        const goingDown = tgtMidY > srcMidY;
+        const srcCx = sx + sw / 2;
+        const srcEdge = { x: srcCx, y: goingDown ? sy + sh : sy };
+        if (Math.abs(srcCx - (tx + tw / 2)) < 2) {
+          return [srcEdge, { x: srcCx, y: goingDown ? ty : ty + th }];
+        }
+        if (tgtL.x > srcCx) {
+          return [srcEdge, { x: srcCx, y: tgtMidY }, tgtL];
+        }
+      }
 
       if (sameLane && forward && closeY) {
         return [srcR, tgtL];
@@ -1626,6 +1821,15 @@ export default function MapViewer({
           active.tagName === "SELECT" ||
           active.isContentEditable);
 
+      if (!typing && !readOnly && !confirmModal && !inputModal && !event.altKey && !event.shiftKey &&
+          (event.ctrlKey || event.metaKey) && key.toLowerCase() === "z" &&
+          (canUndo || modelerRef.current.get("commandStack", false)?.canUndo())) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        handleUndoClick();
+        return;
+      }
+
       const isPlainDeleteKey =
         (key === "Delete" || key === "Del" || key === "Backspace") &&
         !event.altKey &&
@@ -1682,7 +1886,7 @@ export default function MapViewer({
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [readOnly]);
+  }, [canUndo, confirmModal, handleUndoClick, inputModal, readOnly]);
 
   useEffect(
     () => () => {
@@ -1726,6 +1930,7 @@ export default function MapViewer({
         setImportError("");
         fitWithPadding();
         hasImportedRef.current = true;
+        setGuideDiagramRevision((revision) => revision + 1);
 
         const overlays = modeler.get("overlays");
         const elementRegistry = modeler.get("elementRegistry");
@@ -2162,6 +2367,17 @@ export default function MapViewer({
               ) : null}
             </div>
           </div><div ref={containerRef} className={`map-viewer__canvas ${guideCanvasClass}`} />
+        {guideBubble && guideBubbleHost ? createPortal(guideBubble, guideBubbleHost) : null}
+        {guideDraftLabel && guideDraftHost
+          ? createPortal(<div className="guide-step-preview" aria-hidden="true">{guideDraftLabel}</div>, guideDraftHost)
+          : null}
+        {guideHandoffPreview ? createPortal(
+          <GuideHandoffArrow source={guideHandoffPreview.source} target={guideHandoffPreview.target} />,
+          guideHandoffPreview.host,
+        ) : null}
+        {guideBubble && !guideBubbleHost ? (
+          <div className="guide-bubble-float">{cloneElement(guideBubble, { floating: true })}</div>
+        ) : null}
         {workforceMode && selectedWorkforceStep ? (
           <WorkforceOverlay
             key={JSON.stringify([orgId, processNodeId, selectedWorkforceStep.id])}

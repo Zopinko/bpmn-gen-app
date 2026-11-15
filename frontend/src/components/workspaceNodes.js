@@ -1,7 +1,7 @@
 export const getNodeKind = (type) => {
   const t = String(type || "").toLowerCase();
   if (t.includes("lane") || t.includes("participant")) return "lane";
-  if (t.includes("gateway")) return "gateway";
+  if (t.includes("gateway")) return t.includes("parallel") ? "parallel" : "gateway";
   if (t.includes("startevent")) return "start";
   if (t.includes("endevent")) return "end";
   if (t.includes("event")) return "event";

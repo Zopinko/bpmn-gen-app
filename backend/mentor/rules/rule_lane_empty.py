@@ -12,7 +12,8 @@ def check(_: Dict[str, Any], index: Any) -> List[object]:
     findings: List[object] = []
     nodes_by_lane: Dict[str, int] = {}
     for node_id, lane_id in index.node_lane_id.items():
-        if not lane_id:
+        token = index.node_type_token[node_id]
+        if not token.endswith("task") and token != "activity":
             continue
         nodes_by_lane[lane_id] = nodes_by_lane.get(lane_id, 0) + 1
 

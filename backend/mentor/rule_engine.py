@@ -14,13 +14,13 @@ def _tokenize(value: str) -> str:
 def _normalize_node_type(raw_type: Any) -> str:
     if raw_type is None:
         return ""
-    return _tokenize(str(raw_type))
+    return _tokenize(str(raw_type).split(":")[-1])
 
 
 def _normalize_flow_type(raw_type: Any) -> str:
     if raw_type is None:
         return "sequenceflow"
-    return _tokenize(str(raw_type))
+    return _tokenize(str(raw_type).split(":")[-1])
 
 
 def _pick_first(mapping: Dict[str, Any], keys: Iterable[str]) -> Optional[Any]:

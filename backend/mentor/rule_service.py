@@ -8,6 +8,7 @@ from .models import (
     MentorFinding,
     MentorReviewRequest,
 )
+from .finding_text import localize_findings
 from .rule_engine import run_rules
 
 
@@ -32,12 +33,18 @@ class MentorRuleService:
         flows = engine_json.get("flows") or []
         lanes = engine_json.get("lanes") or []
         findings = run_rules(engine_json)
+        localize_findings(findings, engine_json, payload.locale or engine_json.get("locale"))
+        completion_blockers = {"process_missing_end", "node_no_path_to_end", "lane_is_empty", "lane_is_disconnected"}
         meta: Dict[str, object] = {
             "rule_count": len(findings),
             "engine": "mentor_rules_v1",
             "node_count": len(nodes),
             "flow_count": len(flows),
             "lane_count": len(lanes),
+            "completion_ready": bool(nodes and flows) and not any(
+                finding.severity == "HARD" or finding.id.partition(":")[0] in completion_blockers
+                for finding in findings
+            ),
         }
         return findings, meta
 

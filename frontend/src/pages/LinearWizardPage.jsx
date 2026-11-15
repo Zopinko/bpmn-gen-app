@@ -4,6 +4,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import MapViewer from "../components/MapViewer";
+import GuideBubble from "../components/GuideBubble";
+import GuideProgress from "../components/GuideProgress";
+import GuideRepairForm from "../components/GuideRepairForm";
 import StartDashboard from "../components/StartDashboard";
 import WorkspaceIcon from "../components/WorkspaceIcon";
 import WorkspaceInspector from "../components/WorkspaceInspector";
@@ -50,6 +53,8 @@ import { generateProcessStory } from "../processStory/generateProcessStory";
 import { getOrgCapabilities } from "../permissions/orgCapabilities";
 import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
 import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
+import { suggestHandoffLaneId } from "./linearWizard/guideHandoff";
+import { findDanglingBranchTask, findIncompleteDecision, findRepairTargets } from "./linearWizard/guideRepairs";
 
 const buildHelpRules = (t) => [
   {
@@ -531,6 +536,17 @@ const extractAnglePlaceholderTokens = (value) => {
 
 const hasAnglePlaceholderToken = (value) => extractAnglePlaceholderTokens(value).length > 0;
 
+const getLaneSubmitGuardMessage = (description, items = analyzeLaneLines(description)) => {
+  const warning = items.find((item) => item.warning);
+  if (warning) {
+    return `Riadok ${warning.lineNumber}: ${warning.warning}`;
+  }
+  if (hasAnglePlaceholderToken(description)) {
+    return "V texte máš placeholder ako <podmienka>. Nahraď ho reálnym pomenovaním skôr, než pridáš kroky do mapy.";
+  }
+  return "";
+};
+
 const buildFlowAdjacency = (index) => {
   const incoming = new Map();
   const outgoing = new Map();
@@ -541,6 +557,7 @@ const buildFlowAdjacency = (index) => {
     if (!outgoing.has(id)) outgoing.set(id, 0);
   });
   index.flows.forEach((flow) => {
+    if (flow.type && !/sequence[_:]?flow$/i.test(flow.type)) return;
     const sourceId = flow?.source ? String(flow.source) : null;
     const targetId = flow?.target ? String(flow.target) : null;
     if (sourceId) outgoing.set(sourceId, (outgoing.get(sourceId) || 0) + 1);
@@ -576,7 +593,7 @@ const pickGuideCard = ({
   activeLaneId,
   lastEditedLaneId,
   uiContext,
-  modelSnapshot,
+  completionReady = false,
 }) => {
   if (!engineJson) return null;
   const t = i18n.t.bind(i18n);
@@ -585,12 +602,7 @@ const pickGuideCard = ({
   const ctxLane = ctxLaneId
     ? index.lanes.find((l) => l?.id === ctxLaneId) || null
     : null;
-  const getLaneTaskCount = (laneId) => {
-    if (modelSnapshot?.tasksPerLane instanceof Map) {
-      return modelSnapshot.tasksPerLane.get(String(laneId || "")) || 0;
-    }
-    return getLaneTasks(engineJson, laneId).length;
-  };
+  const getLaneTaskCount = (laneId) => getLaneTasks(engineJson, laneId).length;
   const { incoming, outgoing } = buildFlowAdjacency(index);
   const taskNodes = index.nodes.filter((n) => isTaskLike(n));
   const hasTasks = taskNodes.length > 0;
@@ -617,11 +629,7 @@ const pickGuideCard = ({
     const id = node?.id ? String(node.id) : "";
     return id && (incoming.get(id) || 0) === 0;
   });
-  const hasDanglingTask = Boolean(missingIncomingTask || missingOutgoingTask);
-  const hasDisconnectedLanes =
-    typeof modelSnapshot?.lanesDisconnected === "boolean"
-      ? modelSnapshot.lanesDisconnected
-      : findings.some((f) => normalizeGuideRuleId(f) === "lane_is_disconnected");
+  const hasDisconnectedLanes = findings.some((f) => normalizeGuideRuleId(f) === "lane_is_disconnected");
   const placeholderNamedNodes = index.nodes.filter((node) => {
     const type = String(node?.type || "").toLowerCase();
     if (!(type.includes("task") || type.includes("gateway") || type.includes("start") || type.includes("end"))) {
@@ -636,12 +644,6 @@ const pickGuideCard = ({
     }
     return isPlaceholderNodeName(node?.name || "");
   });
-  const isFullyConsistent =
-    !hardFindings.length &&
-    hasEndEvent &&
-    !hasDanglingTask &&
-    !hasAnyEmptyLane &&
-    !hasDisconnectedLanes;
   const phase = determineGuidePhase({
     hardFindings,
     hasTasks,
@@ -652,7 +654,7 @@ const pickGuideCard = ({
     hasDisconnectedLanes,
     placeholderNamedNodes,
     renamableNodes,
-    isFullyConsistent,
+    isFullyConsistent: completionReady,
   });
 
   if (phase === "repair") {
@@ -661,25 +663,17 @@ const pickGuideCard = ({
       : null;
     const chosen = hardInCtx || hardFindings[0];
     const laneIdForHard = getLaneIdForFinding(chosen, index);
-    const ruleId = normalizeGuideRuleId(chosen);
-    const rawMessage = String(chosen?.message || "");
-    const rawProposal = String(chosen?.proposal || "");
-    const combined = `${rawMessage} ${rawProposal}`.toLowerCase();
-    const isGatewaySingleOutgoing =
-      ruleId === "gateway_diverging_needs_two_outgoing" ||
-      (combined.includes("diverging gateway") && combined.includes("outgoing"));
+    const node = index.nodesById.get(String(chosen.target?.id || ""));
     return {
       key: `hard:${chosen.id}`,
       phase,
       scope: laneIdForHard ? "lane" : "global",
       laneId: laneIdForHard || null,
       title: t("wizard.guide_fix_title"),
-      message: isGatewaySingleOutgoing
-        ? t("wizard.guide_fix_gateway_message")
-        : t("wizard.guide_fix_message", {
-            details: `${chosen.message}${chosen.proposal ? ` ${chosen.proposal}` : ""}`,
-          }),
-      primary: laneIdForHard
+      message: [chosen.message, chosen.proposal].filter(Boolean).join(" "),
+      primary: node
+        ? { label: t("wizard.guide_show_place"), action: "FOCUS_NODE", payload: { nodeId: node.id, laneId: laneIdForHard } }
+        : laneIdForHard
         ? { label: t("wizard.guide_open_lane"), action: "OPEN_LANE", payload: { laneId: laneIdForHard } }
         : null,
     };
@@ -867,6 +861,29 @@ const pickGuideCard = ({
           : null,
       };
     }
+    const missingEnd = findings.find((finding) => normalizeGuideRuleId(finding) === "process_missing_end");
+    if (missingEnd) {
+      return {
+        key: missingEnd.id,
+        phase,
+        scope: "global",
+        title: t("wizard.guide_close_process_title"),
+        message: missingEnd.message,
+      };
+    }
+  }
+  const strandedNode = findings.find((finding) => normalizeGuideRuleId(finding) === "node_no_path_to_end");
+  if (strandedNode && !completionReady && phase === "progress") {
+    const laneId = getLaneIdForFinding(strandedNode, index);
+    return {
+      key: strandedNode.id,
+      phase: "connections",
+      scope: laneId ? "lane" : "global",
+      laneId,
+      title: t("wizard.guide_missing_next_title"),
+      message: strandedNode.message,
+      primary: { label: t("wizard.guide_show_place"), action: "FOCUS_NODE", payload: { nodeId: strandedNode.target.id, laneId } },
+    };
   }
 
   if (phase === "refinement") {
@@ -941,7 +958,7 @@ const pickGuideCard = ({
       scope: "global",
       title: t("wizard.guide_demo_done_title"),
       message: t("wizard.guide_demo_done_message"),
-      primary: { label: t("wizard.create_account"), action: "OPEN_DEMO_SIGNUP" },
+      primary: { label: t("app.nav.create_account"), action: "OPEN_DEMO_SIGNUP" },
     };
   }
   if (phase === "ready" && !isPersistedOrOrg) {
@@ -1380,8 +1397,51 @@ const countLaneObjects = (engine, laneId) =>
     (node) => String(node?.laneId || "") === String(laneId || ""),
   ).length;
 
+const isGuideEnd = (node) => /^(end|endevent)$/i.test(String(node?.type || "").split(":").pop());
+
+function getGuideHandoffSource(engine, laneId) {
+  const flows = engine?.flows || [];
+  const nodes = engine?.nodes || [];
+  return getLaneTasks(engine, laneId).findLast((node) => {
+    const outgoing = flows.filter((flow) => flow.source === node.id);
+    return outgoing.length === 0 ||
+      (outgoing.length === 1 && isGuideEnd(nodes.find((target) =>
+        target.id === outgoing[0].target && target.laneId === laneId,
+      )));
+  });
+}
+
+// A role written ahead (in the side panel) has a first step nothing leads to yet:
+// the hand-off connects to it. Otherwise the work arrives at a new step the person
+// writes next; linking back to a step that already runs would make a loop.
+function getGuideHandoffTarget(engine, laneId) {
+  const hasInput = new Set((engine?.flows || []).map((flow) => flow.target));
+  return (engine?.nodes || []).find((node) =>
+    node.laneId === laneId && !isGuideEnd(node) && !/start/i.test(node.type) && !hasInput.has(node.id),
+  ) || null;
+}
+
+function connectGuideHandoff(engine, sourceId, target, ending = false) {
+  const replacedTargets = new Set();
+  const flows = (engine.flows || []).filter((flow) => {
+    if (flow.source !== sourceId || flow.target === target.id) return true;
+    if (!engine.nodes.some((node) => node.id === flow.target && isGuideEnd(node))) return true;
+    replacedTargets.add(flow.target);
+    return false;
+  });
+  const nodes = engine.nodes.filter((node) =>
+    !replacedTargets.has(node.id) || flows.some((flow) => flow.source === node.id || flow.target === node.id),
+  );
+  if (ending && !nodes.some((node) => node.id === target.id)) nodes.push(target);
+  if (!flows.some((flow) => flow.source === sourceId && flow.target === target.id)) {
+    flows.push({ id: `flow_${crypto.randomUUID()}`, source: sourceId, target: target.id, type: "SequenceFlow" });
+  }
+  return { ...engine, nodes, flows };
+}
+
 export default function LinearWizardPage({ currentUser = null, isDemo = false }) {
-  const { t } = useTranslation();
+  const { t, i18n: language } = useTranslation();
+  const guideLocale = language.resolvedLanguage;
   const helpRules = useMemo(() => buildHelpRules(t), [t]);
   const homeGuideMessages = useMemo(() => buildHomeGuideMessages(t), [t]);
   const processTemplates = useMemo(() => buildProcessTemplates(t), [t]);
@@ -1445,6 +1505,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideEnabled = true;
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
+  const [guideReviewedVersion, setGuideReviewedVersion] = useState(null);
   const [mapSelection, setMapSelection] = useState(null);
   const [structureOpen, setStructureOpen] = useState(() => {
     try {
@@ -1454,6 +1515,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
   });
   const [focusMode, setFocusMode] = useState(false);
+  const [guideBubbleCollapsedKey, setGuideBubbleCollapsedKey] = useState("");
+  const [guideComposer, setGuideComposer] = useState(null);
+  const [guideHandoff, setGuideHandoff] = useState(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [guideExpanded, setGuideExpanded] = useState(false);
   const toggleStructure = useCallback(() => {
@@ -1906,13 +1970,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         return {
           id: laneId,
           name: String(laneBo?.name || laneId || ""),
-          _el: laneEl,
+          poolId: laneEl.parent?.businessObject?.$type === "bpmn:Participant" ? getElementEngineId(laneEl.parent) : undefined,
         };
       })
       .filter((lane) => lane.id);
-    const tasksPerLane = new Map(lanes.map((lane) => [String(lane.id), 0]));
     const nodes = [];
     const flows = [];
+    const { nodesById: sourceNodes, flowsById: sourceFlows } = buildGuideIndex(engineJson);
+    const getPoolId = (element) => {
+      for (let parent = element?.parent; parent; parent = parent.parent) {
+        if (parent.businessObject?.$type === "bpmn:Participant") return getElementEngineId(parent);
+      }
+      return undefined;
+    };
     const findLaneByNode = (nodeEl) => {
       const lane = findLaneForNode(elementRegistry, nodeEl);
       const laneBo = lane?.businessObject;
@@ -1922,96 +1992,41 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     all.forEach((el) => {
       if (!el || el.type === "label") return;
       const type = String(el?.businessObject?.$type || el?.type || "");
-      if (type.includes("SequenceFlow")) {
-        const sourceId = String(el?.businessObject?.sourceRef?.id || el?.source?.id || "");
-        const targetId = String(el?.businessObject?.targetRef?.id || el?.target?.id || "");
+      if (type.endsWith("Flow") && el.source && el.target) {
+        const id = getElementEngineId(el);
         flows.push({
-          id: String(el?.businessObject?.id || el?.id || ""),
-          source: sourceId,
-          target: targetId,
+          ...sourceFlows.get(id),
+          id,
+          source: getElementEngineId(el.source),
+          target: getElementEngineId(el.target),
+          type,
           name: String(el?.businessObject?.name || ""),
         });
         return;
       }
-      if (!el?.businessObject?.$instanceOf?.("bpmn:FlowNode")) return;
-      const nodeId = String(el?.businessObject?.id || el?.id || "");
+      if (!el?.businessObject?.$instanceOf?.("bpmn:FlowNode") && type !== "bpmn:TextAnnotation") return;
+      const nodeId = getElementEngineId(el);
       if (!nodeId) return;
       const laneId = findLaneByNode(el) || null;
       const node = {
+        ...sourceNodes.get(nodeId),
         id: nodeId,
         type,
         name: String(el?.businessObject?.name || ""),
+        text: el.businessObject?.text,
         laneId,
+        subProcessId: el.parent?.businessObject?.$instanceOf?.("bpmn:SubProcess") ? getElementEngineId(el.parent) : null,
+        attachedToRef: el.host ? getElementEngineId(el.host) : null,
+        poolId: getPoolId(el) || lanes.find((lane) => lane.id === laneId)?.poolId,
       };
       nodes.push(node);
-      if (isTaskLike(node) && laneId) {
-        tasksPerLane.set(laneId, (tasksPerLane.get(laneId) || 0) + 1);
-      }
     });
-
-    const incomingCount = new Map();
-    const outgoingCount = new Map();
-    nodes.forEach((node) => {
-      incomingCount.set(String(node.id), 0);
-      outgoingCount.set(String(node.id), 0);
-    });
-    flows.forEach((flow) => {
-      const sourceId = String(flow?.source || "");
-      const targetId = String(flow?.target || "");
-      if (sourceId) outgoingCount.set(sourceId, (outgoingCount.get(sourceId) || 0) + 1);
-      if (targetId) incomingCount.set(targetId, (incomingCount.get(targetId) || 0) + 1);
-    });
-
-    const taskNodes = nodes.filter((node) => isTaskLike(node));
-    const tasksMissingOutgoing = taskNodes
-      .filter((node) => (outgoingCount.get(String(node.id)) || 0) === 0)
-      .map((node) => String(node.id));
-    const tasksMissingIncoming = taskNodes
-      .filter((node) => (incomingCount.get(String(node.id)) || 0) === 0)
-      .map((node) => String(node.id));
-    const hasEndEvent = nodes.some((node) => String(node?.type || "").toLowerCase().includes("end"));
-    const laneByNodeId = new Map(nodes.map((node) => [String(node.id), String(node?.laneId || "")]));
-    const laneAdj = new Map(lanes.map((lane) => [String(lane.id), new Set()]));
-    flows.forEach((flow) => {
-      const sourceLane = laneByNodeId.get(String(flow?.source || "")) || "";
-      const targetLane = laneByNodeId.get(String(flow?.target || "")) || "";
-      if (!sourceLane || !targetLane || sourceLane === targetLane) return;
-      if (!laneAdj.has(sourceLane)) laneAdj.set(sourceLane, new Set());
-      if (!laneAdj.has(targetLane)) laneAdj.set(targetLane, new Set());
-      laneAdj.get(sourceLane).add(targetLane);
-      laneAdj.get(targetLane).add(sourceLane);
-    });
-    const lanesWithTasks = lanes.map((lane) => String(lane.id)).filter((laneId) => (tasksPerLane.get(laneId) || 0) > 0);
-    let lanesDisconnected = false;
-    if (lanesWithTasks.length > 1) {
-      const seen = new Set();
-      const stack = [lanesWithTasks[0]];
-      while (stack.length) {
-        const cur = stack.pop();
-        if (!cur || seen.has(cur)) continue;
-        seen.add(cur);
-        const neighbors = laneAdj.get(cur);
-        if (!neighbors) continue;
-        neighbors.forEach((next) => {
-          if (!seen.has(next)) stack.push(next);
-        });
-      }
-      lanesDisconnected = lanesWithTasks.some((laneId) => !seen.has(laneId));
-    }
 
     return {
-      totalTasks: taskNodes.length,
-      tasksPerLane,
-      hasEndEvent,
-      tasksMissingIncoming,
-      tasksMissingOutgoing,
-      lanesDisconnected,
-      engine: {
-        ...(engineJson || {}),
-        lanes: lanes.map(({ _el: _ignoredEl, ...lane }) => lane),
-        nodes,
-        flows,
-      },
+      ...(engineJson || {}),
+      lanes,
+      nodes,
+      flows,
     };
   }, [engineJson]);
 
@@ -2030,7 +2045,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           modelSourceKind: "sandbox",
           isDemoMode,
         },
-        modelSnapshot: null,
       });
       if (card) return card;
       const firstLane = Array.isArray(nextEngine?.lanes) ? nextEngine.lanes[0] : null;
@@ -2148,7 +2162,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         findings,
         activeLaneId: laneId || activeLaneId,
         lastEditedLaneId,
-        modelSnapshot: options.modelSnapshot || null,
+        completionReady: options.completionReady,
         uiContext: {
           mentorOpen,
           storyOpen,
@@ -2182,8 +2196,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       const runModelVersion = modelVersionRef.current;
       guideLastReasonRef.current = reason;
-      const modelSnapshot = collectGuideModelSnapshot();
-      const guideEngine = modelSnapshot?.engine || engineJson;
+      const guideEngine = collectGuideModelSnapshot() || engineJson;
       const generator = processCard?.generatorInput || {};
       const processNameFilled = Boolean((generator.processName || "").trim());
       const rolesValue = String(generator.roles || "").trim();
@@ -2270,6 +2283,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const laneText = (laneDescription || "").trim();
       const signature = [
         reason,
+        runModelVersion,
+        guideLocale,
         laneId || "",
         guideEngine?.processId || guideEngine?.name || guideEngine?.processName || "",
         nodesCount,
@@ -2287,8 +2302,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       guideLastSignatureRef.current = { sig: signature, ts: now };
       const requestId = ++guideRequestIdRef.current;
       let findings = [];
+      let completionReady = false;
       try {
         const payload = {
+          locale: guideLocale,
           text: (laneDescription || "").trim() || null,
           engine_json: guideEngine,
           kb_version: null,
@@ -2297,17 +2314,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         };
         const response = await mentorReview(payload);
         findings = response?.findings || [];
+        completionReady = response?.meta?.completion_ready === true;
       } catch {
         findings = [];
       }
       if (requestId !== guideRequestIdRef.current) return;
       if (modelVersionRef.current !== runModelVersion) return;
       setGuideFindings(findings);
+      setGuideReviewedVersion(completionReady ? runModelVersion : null);
       const forceGuide = reason === "skeleton_generated";
       const currentCard = applyGuideFromFindings(findings, laneId, {
         force: forceGuide,
         guideEngine,
-        modelSnapshot,
+        completionReady,
       });
       const oversizeCard = detectLayoutOversizeCard();
       const canOverrideWithOversize =
@@ -2325,6 +2344,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     },
     [
       guideEnabled,
+      guideLocale,
       processCard,
       engineJson,
       drawerOpen,
@@ -2425,7 +2445,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     const hardRule = hardFinding ? normalizeGuideRuleId(hardFinding) : "";
     const hardTargetId = hardFinding?.target?.id ? String(hardFinding.target.id) : null;
     const hardLaneId = hardFinding ? getLaneIdForFinding(hardFinding, buildGuideIndex(engineJson)) : null;
-    const isGatewayBranchHint = hardRule === "gateway_diverging_needs_two_outgoing";
+    const isGatewayBranchHint = ["gateway_diverging_min_two_outgoing", "gateway_diverging_needs_two_outgoing"].includes(hardRule);
     const missingEndNodeId = key.startsWith("missing_end:") ? key.slice("missing_end:".length) : "";
 
     const isConnectGuide =
@@ -3758,6 +3778,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   };
 
   const resetWizardState = () => {
+    setGuideComposer(null);
+    setGuideHandoff(null);
+    setGuideBubbleCollapsedKey("");
     setProcessCard(createEmptyProcessCardState());
     setEngineJson(null);
     setXmlFull("", "resetWizardState");
@@ -3986,6 +4009,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setHistoryCount(historyRef.current.length);
     if (!snapshot) return;
     undoInProgressRef.current = true;
+    setGuideHandoff(null);
+    if (guideHandoff?.pendingLaneId) setGuideComposer(null);
     setEngineJson(snapshot.engine);
     setXmlFull(snapshot.xml, "undo_snapshot");
     setHasUnsavedChanges(true);
@@ -5352,7 +5377,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setError(null);
   };
 
-  const handleAppendToLane = async () => {
+  const handleAppendToLane = async (lane = selectedLane, description = laneDescription, fromGuide = false) => {
     if (isLoading || relayouting) return;
     if (isReadOnlyMode) {
       setInfo(
@@ -5362,15 +5387,16 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       );
       return;
     }
-    if (!selectedLane || !laneDescription.trim()) {
+    if (!lane || !description.trim()) {
       setError(t("wizard.lane_select_and_add"));
       return;
     }
-    if (laneSubmitGuardMessage) {
-      setError(laneSubmitGuardMessage);
+    const guardMessage = fromGuide ? getLaneSubmitGuardMessage(description) : laneSubmitGuardMessage;
+    if (guardMessage) {
+      setError(guardMessage);
       return;
     }
-    const laneLines = splitLines(laneDescription);
+    const laneLines = splitLines(description);
     if (isDemoMode && laneLines.length > DEMO_LIMITS.maxStepsPerLane) {
       setError(t("wizard.demo_lane_steps_limit", { count: DEMO_LIMITS.maxStepsPerLane }));
       return;
@@ -5399,13 +5425,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const laneByName = new Map(
         (currentEngine?.lanes || []).map((l) => [String(l?.name || ""), String(l?.id || "")]),
       );
-      let laneId = getSelectedLaneKey(selectedLane);
+      let laneId = getSelectedLaneKey(lane);
       if (laneId && !laneIds.has(String(laneId))) {
         const mapped = laneByName.get(String(laneId));
         if (mapped) laneId = mapped;
       }
-      if (selectedLane.name && (!laneId || !laneIds.has(String(laneId)))) {
-        const mapped = laneByName.get(String(selectedLane.name));
+      if (lane.name && (!laneId || !laneIds.has(String(laneId)))) {
+        const mapped = laneByName.get(String(lane.name));
         if (mapped) laneId = mapped;
       }
       const safeEngine = normalizeEngineForBackend(currentEngine);
@@ -5421,12 +5447,36 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       }
       const payload = {
         lane_id: laneId,
-        lane_name: selectedLane.name,
-        description: laneDescription,
+        lane_name: lane.name,
+        description,
         engine_json: safeEngine,
       };
       const response = await appendLaneFromDescription(payload);
-      const updatedEngine = response?.engine_json || engineJson;
+      let updatedEngine = response?.engine_json || engineJson;
+      const pendingHandoff = laneId && guideHandoff?.pendingLaneId === laneId &&
+        guideHandoff.processId === currentEngine?.processId ? guideHandoff : null;
+      if (pendingHandoff) {
+        const source = getGuideHandoffSource(currentEngine, pendingHandoff.laneId);
+        // the work arrives at the first step written now, not after the role's older steps
+        const existingIds = new Set((currentEngine?.nodes || []).map((node) => node.id));
+        const firstNew = (updatedEngine?.nodes || []).find((node) =>
+          !existingIds.has(node.id) && node.laneId === laneId && !isGuideEnd(node) && !/start/i.test(node.type),
+        );
+        const target = firstNew || getGuideHandoffTarget(updatedEngine, laneId);
+        if (source?.id !== pendingHandoff.sourceId || !target) {
+          if (source?.id !== pendingHandoff.sourceId) setGuideHandoff(null);
+          setError(t("workspace.guide_handoff_error"));
+          return;
+        }
+        if (firstNew) {
+          updatedEngine = {
+            ...updatedEngine,
+            flows: (updatedEngine.flows || []).filter((flow) =>
+              !(flow.target === firstNew.id && existingIds.has(flow.source))),
+          };
+        }
+        updatedEngine = connectGuideHandoff(updatedEngine, source.id, target);
+      }
       if (isDemoMode) {
         const laneObjects = countLaneObjects(updatedEngine, laneId);
         if (laneObjects > DEMO_LIMITS.maxObjectsPerLane) {
@@ -5552,11 +5602,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               setEngineJson(updatedEngine);
               setXmlFull(fullXml, "appendLane:demo_sanity_fallback_full_rerender");
               setHasUnsavedChanges(true);
-              setLaneDescription("");
+              if (pendingHandoff) setGuideHandoff(null);
+              if (!fromGuide) {
+                setLaneDescription("");
+                setLaneOpen(false);
+              }
               setInfo("Kroky boli pridané (fallback render).");
-              setLaneOpen(false);
               bumpModelVersion();
-              return;
+              return true;
             } catch (fallbackError) {
               console.error("[append-lane] demo sanity fallback full rerender failed", fallbackError);
               setError("Nepodarilo sa pridať kroky po kontrole mapy.");
@@ -5566,9 +5619,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
         setEngineJson(updatedEngine);
         setHasUnsavedChanges(true);
-        setLaneDescription("");
-        setLaneOpen(false);
-        if (isDemoMode) {
+        if (pendingHandoff) setGuideHandoff(null);
+        if (!fromGuide) {
+          setLaneDescription("");
+          setLaneOpen(false);
+        }
+        if (isDemoMode && !fromGuide) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
           if (lanes.length > 1) {
             const nextLane = lanes.find(
@@ -5595,7 +5651,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         }
         bumpModelVersion();
         setIsLoading(false);
-        return;
+        return true;
       }
 
       console.error("[append-lane] incremental append failed (non-exception)", {
@@ -5612,10 +5668,13 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         setEngineJson(updatedEngine);
         setXmlFull(fullXml, "appendLane:fallback_full_rerender");
         setHasUnsavedChanges(true);
-        setLaneDescription("");
+        if (pendingHandoff) setGuideHandoff(null);
+        if (!fromGuide) {
+          setLaneDescription("");
+          setLaneOpen(false);
+        }
         setInfo("Kroky boli pridané (fallback render).");
-        setLaneOpen(false);
-        if (isDemoMode) {
+        if (isDemoMode && !fromGuide) {
           const lanes = Array.isArray(updatedEngine?.lanes) ? updatedEngine.lanes : [];
           if (lanes.length > 1) {
             const nextLane = lanes.find(
@@ -5641,7 +5700,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           }
         }
         bumpModelVersion();
-        return;
+        return true;
       } catch (fallbackError) {
         console.error("[append-lane] fallback full rerender failed", fallbackError);
         const errorMessage = mapIncrementalReasonToMessage(incrementalResult?.reason);
@@ -6101,6 +6160,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     if (!loadedEngine || !diagram) {
       throw new Error("Model neobsahuje engine_json alebo diagram_xml.");
     }
+    setGuideComposer(null);
+    setGuideHandoff(null);
+    setGuideBubbleCollapsedKey("");
     historyRef.current = [];
     setHistoryCount(0);
     setEngineJson(loadedEngine);
@@ -6134,6 +6196,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     setError(message);
     setInfo(null);
     setEngineJson(null);
+    setGuideHandoff(null);
     setXmlFull("", "showMissingDiagram");
     setSelectedLane(null);
     setLaneDescription("");
@@ -8015,6 +8078,9 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const response = await importBpmn(file, { includeXml: true });
       const importedEngine = response?.engine_json || response;
       const newXml = response?.diagram_xml || (await renderEngineXml(importedEngine));
+      setGuideComposer(null);
+      setGuideBubbleCollapsedKey("");
+      setGuideHandoff(null);
       setEngineJson(importedEngine);
       setXmlFull(newXml, "importBpmn");
       if (modelSource.kind === "sandbox") {
@@ -8050,16 +8116,10 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     () => laneHelperItems.some((item) => Boolean(item.warning)) || hasAnglePlaceholderToken(laneDescription),
     [laneDescription, laneHelperItems],
   );
-  const laneSubmitGuardMessage = useMemo(() => {
-    const firstBlockingWarning = laneHelperItems.find((item) => Boolean(item.warning));
-    if (firstBlockingWarning?.warning) {
-      return `Riadok ${firstBlockingWarning.lineNumber}: ${firstBlockingWarning.warning}`;
-    }
-    if (hasAnglePlaceholderToken(laneDescription)) {
-      return "V texte máš placeholder ako <podmienka>. Nahraď ho reálnym pomenovaním skôr, než pridáš kroky do mapy.";
-    }
-    return "";
-  }, [laneDescription, laneHelperItems]);
+  const laneSubmitGuardMessage = useMemo(
+    () => getLaneSubmitGuardMessage(laneDescription, laneHelperItems),
+    [laneDescription, laneHelperItems],
+  );
   const laneWarningCount = useMemo(
     () => laneHelperItems.filter((item) => Boolean(item.warning)).length + (hasAnglePlaceholderToken(laneDescription) ? 1 : 0),
     [laneDescription, laneHelperItems],
@@ -8141,12 +8201,308 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   }, [orgVersionsItems]);
   const guideWorkspaceActive =
     Boolean(engineJson) || drawerOpen || laneOpen || helpOpen || storyOpen || mentorOpen;
-  const showGuideBanners =
-    modelSource?.kind !== "org" && guideEnabled && guideWorkspaceActive && guideState?.message;
+  const guideKey = String(guideState?.key || "");
+  const isCompleteGuide = /^(process_complete|process_ready_for_save|demo_process_complete)/.test(guideKey);
+  const showGuideBanners = modelSource?.kind !== "org" && guideEnabled && guideWorkspaceActive &&
+    guideState?.message && (!isCompleteGuide || guideReviewedVersion === modelVersion);
   const showHomeGuideBanner =
     modelSource?.kind !== "org" && guideEnabled && !guideWorkspaceActive && !xml;
   const homeGuideMessage =
     homeGuideMessages[homeGuideMessageIndex % homeGuideMessages.length] || homeGuideMessages[0];
+  // the guide speaks on the canvas: a bubble at the element + a progress strip above the map
+  const guideLanes = Array.isArray(engineJson?.lanes) ? engineJson.lanes : [];
+  const firstEmptyGuideLane = guideLanes.find((lane) => getLaneTasks(engineJson, lane.id).length === 0);
+  const isWritingAdvice =
+    guideState?.phase === "skeleton" ||
+    guideState?.phase === "lane_fill" ||
+    guideKey.startsWith("lane_progress:") ||
+    guideKey === "demo_skeleton_ready" ||
+    guideKey.startsWith("demo_next_lane:");
+  const suggestedGuideLaneId = guideState?.primary?.payload?.laneId || firstEmptyGuideLane?.id;
+  const currentGuideComposer = guideComposer?.processId === engineJson?.processId ? guideComposer : null;
+  const handoffSelection = guideHandoff?.processId === engineJson?.processId && !guideHandoff?.pendingLaneId
+    ? guideHandoff : null;
+  const handoffSource = handoffSelection && getGuideHandoffSource(engineJson, handoffSelection.laneId);
+  const handoff = handoffSource?.id && handoffSource.id === handoffSelection.sourceId ? handoffSelection : null;
+  const handoffOptions = handoff ? guideLanes.filter((lane) => lane.id !== handoff.laneId) : [];
+  const handoffLane = handoffOptions.find((lane) => lane.id === handoff?.choice);
+  const handoffEnds = handoff?.choice === null;
+  const handoffTarget = handoffLane
+    ? getGuideHandoffTarget(engineJson, handoffLane.id)
+    : handoffEnds ? engineJson.nodes.find((node) =>
+      node.laneId === handoff.laneId && isGuideEnd(node) &&
+      (engineJson.flows || []).some((flow) => flow.source === handoffSource.id && flow.target === node.id),
+    ) : null;
+  // once the backend confirms the process is complete, an idle composer gives way
+  // to the completion bubble; a half-typed step keeps the composer open
+  const processCompleteNow = isCompleteGuide && guideReviewedVersion === modelVersion;
+  const keepComposer = Boolean(currentGuideComposer) &&
+    !(processCompleteNow && !String(currentGuideComposer.text || "").trim());
+  const guideLaneId = keepComposer
+    ? currentGuideComposer.laneId
+    : isWritingAdvice ? suggestedGuideLaneId : null;
+  const canvasGuideEditable = xml && guideEnabled && modelSource?.kind !== "org" && !isReadOnlyMode &&
+    !(drawerOpen || laneOpen || helpOpen || storyOpen || mentorOpen || orgOpen);
+  const showHandoff = Boolean(handoff && canvasGuideEditable);
+  const writingLane = canvasGuideEditable && !showHandoff
+    ? guideLanes.find((lane) => lane.id === guideLaneId) : null;
+  const canOfferRepair = Boolean(engineJson && canvasGuideEditable && !showHandoff && !currentGuideComposer?.text?.trim() &&
+    !(guideHandoff?.processId === engineJson.processId && guideHandoff?.pendingLaneId));
+  const guideDecision = canOfferRepair ? findIncompleteDecision(engineJson) : null;
+  const branchRepairSource = canOfferRepair && !guideDecision ? findDanglingBranchTask(engineJson) : null;
+  const repairSource = guideDecision?.node || branchRepairSource;
+  const repairSourceId = repairSource?.id;
+  const repairHighlightType = guideDecision ? "node" : "repair";
+  const repairHighlight = useMemo(() => repairSourceId
+    ? { type: repairHighlightType, nodeId: repairSourceId }
+    : null, [repairHighlightType, repairSourceId]);
+  const guideLane = repairSource ? null : writingLane;
+  const guideOnCanvas = Boolean(xml && (showGuideBanners || guideLane || showHandoff || repairSource));
+  const guideDraft = guideLane ? currentGuideComposer?.text || "" : "";
+  const guideBusy = isLoading || relayouting;
+  const showCompletion = Boolean(isCompleteGuide && guideReviewedVersion === modelVersion &&
+    !guideLane && !showHandoff && !repairSource);
+  const guideBubbleKey = showHandoff ? `handoff:${handoff.sourceId}`
+    : repairSource ? `repair:${repairSource.id}`
+    : guideLane ? `write:${guideLane.id}` : guideKey;
+  const guideBubbleCollapsed = guideBubbleCollapsedKey === guideBubbleKey;
+  const guideWritingLaneId = guideLane?.id;
+  const guideWritingHighlight = useMemo(
+    () => guideWritingLaneId ? { type: "lane", laneId: guideWritingLaneId } : null,
+    [guideWritingLaneId],
+  );
+  const handoffSourceId = showHandoff ? handoff.sourceId : null;
+  const handoffHighlight = useMemo(
+    () => handoffSourceId ? { type: "handoff", nodeId: handoffSourceId } : null,
+    [handoffSourceId],
+  );
+  const updateGuideComposer = (laneId, text = "") => {
+    setGuideComposer({ processId: engineJson?.processId, laneId, text });
+  };
+  const finishGuideHandoff = (laneId) => {
+    updateGuideComposer(laneId);
+    setActiveLaneId(laneId || handoff.laneId);
+    setLastEditedLaneId(handoff.laneId);
+  };
+  const commitGuideGraph = async (currentEngine, updatedEngine, laneId) => {
+    if (isDemoMode && (
+      updatedEngine.nodes.length > DEMO_LIMITS.maxNodes ||
+      updatedEngine.flows.length > DEMO_LIMITS.maxFlows ||
+      countLaneObjects(updatedEngine, laneId) > DEMO_LIMITS.maxObjectsPerLane
+    )) {
+      setError(t("wizard.demo_smaller_process_only"));
+      return;
+    }
+    cancelPendingRelayouts();
+    setIsLoading(true);
+    setError(null);
+    try {
+      const beforeXml = await getCanvasDiagramXml();
+      const nextXml = await renderEngineXml(updatedEngine);
+      if (engineJsonRef.current !== currentEngine) throw new Error("Diagram changed while applying a guide action");
+      pushHistorySnapshot(currentEngine, beforeXml);
+      setEngineJson(updatedEngine);
+      setXmlFull(nextXml, "guide_graph_update");
+      setHasUnsavedChanges(true);
+      bumpModelVersion();
+      return true;
+    } catch {
+      setError(t("workspace.guide_handoff_error"));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  const makeGuideEnd = (laneId) => ({
+    id: `end_${crypto.randomUUID()}`,
+    type: "endEvent",
+    laneId,
+    name: String(processCard?.generatorInput?.output || "").trim(),
+  });
+  const confirmGuideHandoff = async () => {
+    if (guideBusy || (!handoffLane && !handoffEnds)) return;
+    if (handoffLane && !handoffTarget) {
+      setGuideHandoff({ ...handoff, pendingLaneId: handoffLane.id });
+      finishGuideHandoff(handoffLane.id);
+      return;
+    }
+    const currentEngine = engineJsonRef.current || engineJson;
+    const target = handoffTarget
+      ? currentEngine.nodes.find((node) => node.id === handoffTarget.id)
+      : makeGuideEnd(handoff.laneId);
+    if (!target || getGuideHandoffSource(currentEngine, handoff.laneId)?.id !== handoff.sourceId) {
+      setError(t("workspace.guide_handoff_error"));
+      setGuideHandoff(null);
+      return;
+    }
+    const nextEngine = connectGuideHandoff(currentEngine, handoff.sourceId, target, handoffEnds);
+    if (await commitGuideGraph(currentEngine, nextEngine, handoff.laneId)) {
+      setGuideHandoff(null);
+      finishGuideHandoff(null);
+    }
+  };
+  const repairTargets = branchRepairSource
+    ? findRepairTargets(engineJson, branchRepairSource.id).filter((node) => guideLanes.some((lane) => lane.id === node.laneId))
+    : [];
+  const applyGuideRepair = async ({ action, targetId, laneId, text, outcome }) => {
+    const currentEngine = engineJsonRef.current;
+    if (guideBusy || !currentEngine || !repairSource) return;
+    const decision = guideDecision ? findIncompleteDecision(currentEngine) : null;
+    const source = guideDecision ? decision?.node : findDanglingBranchTask(currentEngine);
+    if (source?.id !== repairSource.id) return;
+    const targets = action === "connect" ? findRepairTargets(currentEngine, source.id) : [];
+    const target = action === "connect" ? targets.find((node) => node.id === targetId)
+      : action === "end" ? makeGuideEnd(source.laneId)
+      : { id: `task_${crypto.randomUUID()}`, type: "task", laneId, name: text };
+    if (!target || !currentEngine.lanes.some((lane) => lane.id === target.laneId)) return;
+    const name = decision?.opposite ? t(`workspace.guide_branch_${decision.opposite}`) : outcome;
+    const nextEngine = {
+      ...currentEngine,
+      nodes: action === "connect" ? currentEngine.nodes : [...currentEngine.nodes, target],
+      flows: [...(currentEngine.flows || []), {
+        id: `flow_${crypto.randomUUID()}`, type: "SequenceFlow", source: source.id, target: target.id, name,
+      }],
+    };
+    await commitGuideGraph(currentEngine, nextEngine, target.laneId);
+  };
+  const guideComposerActions = guideLane ? [
+    {
+      label: t("workspace.guide_lane_done"),
+      disabled: guideBusy || Boolean(guideDraft.trim()) || !getLaneTasks(engineJson, guideLane.id).length,
+      onClick: () => {
+        const source = getGuideHandoffSource(engineJson, guideLane.id);
+        if (source) {
+          setGuideHandoff({
+            processId: engineJson?.processId,
+            laneId: guideLane.id,
+            sourceId: source.id,
+            choice: suggestHandoffLaneId(source.name || source.label, guideLanes.filter((lane) => lane.id !== guideLane.id)),
+          });
+          return;
+        }
+        const nextLane = guideLanes.find((lane) =>
+          lane.id !== guideLane.id && !getLaneTasks(engineJson, lane.id).length,
+        );
+        updateGuideComposer(nextLane?.id || null);
+        setActiveLaneId(nextLane?.id || guideLane.id);
+        setLastEditedLaneId(guideLane.id);
+        void runGuideReview("guide_lane_done", nextLane?.id || guideLane.id);
+      },
+    },
+    {
+      label: t("workspace.guide_write_more"),
+      disabled: guideBusy,
+      onClick: () => {
+        const panelDraft = getSelectedLaneKey() === guideLane.id ? laneDescription : "";
+        updateLaneDescription([panelDraft, guideDraft].filter((value) => value.trim()).join("\n"));
+        setGuideComposer(null);
+        handleStructureLaneSelect(guideLane);
+      },
+    },
+  ] : null;
+  const guideBubbleNode = guideOnCanvas ? (
+    <GuideBubble
+      title={guideState?.title || ""}
+      message={guideState?.message}
+      complete={showCompletion}
+      collapsed={guideBubbleCollapsed}
+      onToggle={() => setGuideBubbleCollapsedKey((prev) => (prev === guideBubbleKey ? "" : guideBubbleKey))}
+      composer={guideLane ? {
+        laneName: guideLane.name || guideLane.id,
+        value: guideDraft,
+        busy: guideBusy,
+        onChange: (text) => updateGuideComposer(guideLane.id, text),
+        onSubmit: async () => {
+          const description = guideDraft.trim();
+          if (!description || guideBusy) return;
+          updateGuideComposer(guideLane.id, guideDraft);
+          setActiveLaneId(guideLane.id);
+          setLastEditedLaneId(guideLane.id);
+          if (await handleAppendToLane(guideLane, description, true)) {
+            setGuideComposer((current) =>
+              current?.laneId === guideLane.id && current.processId === engineJson?.processId
+                ? { ...current, text: "" }
+                : current,
+            );
+          }
+        },
+      } : null}
+      actions={showHandoff || repairSource ? [] : guideComposerActions || [
+        guideState?.primary,
+        guideState?.secondary && guideState.secondary.action !== "NOT_NOW" ? guideState.secondary : null,
+        guideState?.tertiary,
+      ]
+        .filter(Boolean)
+        .map((action) => ({
+          label: action.label,
+          onClick: () => handleGuideAction(action.action, action.payload),
+        }))}
+    >
+      {showHandoff ? (
+        <form className="guide-bubble__composer" onSubmit={(event) => {
+          event.preventDefault();
+          void confirmGuideHandoff();
+        }}>
+          <fieldset className="guide-handoff-options" disabled={guideBusy}>
+            <legend className="guide-bubble__title">{t("workspace.guide_handoff_question")}</legend>
+            {[...handoffOptions.map((lane) => ({ value: lane.id, label: lane.name || lane.id })),
+              { value: null, label: t("workspace.guide_handoff_end") }].map((option) => (
+              <label key={option.value ?? "end-process"}>
+                <input
+                  type="radio"
+                  name="guide-handoff"
+                  checked={handoff.choice === option.value}
+                  onChange={() => setGuideHandoff({ ...handoff, choice: option.value })}
+                />
+                {option.label}
+              </label>
+            ))}
+          </fieldset>
+          <div className="guide-bubble__actions">
+            <button type="submit" className="guide-bubble__btn guide-bubble__btn--go" disabled={guideBusy || (!handoffLane && !handoffEnds)}>
+              {t("workspace.guide_handoff_confirm")}
+            </button>
+            <button type="button" className="guide-bubble__btn" disabled={guideBusy} onClick={() => setGuideHandoff(null)}>
+              {t("workspace.guide_handoff_back")}
+            </button>
+          </div>
+        </form>
+      ) : repairSource ? (
+        <GuideRepairForm key={guideBubbleKey} decision={guideDecision} source={repairSource}
+          lanes={guideLanes} targets={repairTargets} busy={guideBusy} onApply={applyGuideRepair} />
+      ) : showCompletion ? (
+        <div className="guide-bubble__advice" role="status">
+          <div className="guide-bubble__title">{guideState.title}</div>
+          <ul className="guide-bubble__checklist">
+            {["start", "paths", "parallel", "roles"].map((item) => (
+              <li key={item}>{t(`workspace.guide_complete_${item}`)}</li>
+            ))}
+          </ul>
+          <div className="guide-bubble__message">{t("workspace.guide_complete_followup")}</div>
+        </div>
+      ) : null}
+    </GuideBubble>
+  ) : null;
+  const guideProgressSteps = [];
+  if (guideOnCanvas) {
+    const phase = String(guideState?.phase || "");
+    const writingPhase = Boolean(guideLane || showHandoff) || phase === "skeleton" || phase === "lane_fill";
+    const currentLaneId = String(guideLane?.id || handoff?.laneId || guideState?.laneId || activeLaneId || firstEmptyGuideLane?.id || "");
+    guideLanes.forEach((lane) => {
+      const laneId = String(lane?.id || "");
+      const hasSteps = getLaneTasks(engineJson, laneId).length > 0;
+      guideProgressSteps.push({
+        id: `lane:${laneId}`,
+        laneId,
+        label: lane?.name || laneId,
+        state: writingPhase && laneId === currentLaneId ? "now" : hasSteps ? "done" : "wait",
+      });
+    });
+    guideProgressSteps.push({
+      id: "check",
+      label: t("workspace.guide_check"),
+      state: isCompleteGuide && guideReviewedVersion === modelVersion ? "done" : writingPhase ? "wait" : "now",
+    });
+  }
   const inspectorVisible = Boolean(
     xml && mapSelection && !(drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen),
   );
@@ -8972,7 +9328,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                         <button
                           className="btn btn-primary lane-primary-btn wizard-lane-v2__apply-btn"
                           type="button"
-                          onClick={handleAppendToLane}
+                          onClick={() => void handleAppendToLane()}
                           disabled={
                             isLoading ||
                             (isReadOnlyMode && !isDemoMode) ||
@@ -9288,7 +9644,12 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             </div>
           ) : null}
           <div className="wizard-viewer">
-            {showGuideBanners ? (
+            {guideOnCanvas ? (
+              <GuideProgress
+                steps={guideProgressSteps}
+                onSelect={(step) => handleStructureLaneSelect({ id: step.laneId, name: step.label })}
+              />
+            ) : showGuideBanners ? (
               <div className={`guide-bar ${guideExpanded ? "is-expanded" : "is-compact"}`}>
                 <button
                   type="button"
@@ -9382,6 +9743,14 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <MapViewer
                 key={`${modelSource?.kind || "sandbox"}-${modelSource?.kind === "org" && orgReadOnly ? "ro" : "rw"}`}
                 {...viewerProps}
+                guideBubble={guideBubbleNode}
+                guideBubbleInsetRight={inspectorVisible ? 300 : 0}
+                guideHighlight={handoffHighlight || repairHighlight || guideWritingHighlight || viewerProps.guideHighlight}
+                guideHandoffSourceId={guideBubbleCollapsed ? null : handoffSourceId}
+                guideHandoffTargetId={handoffTarget?.id || handoffLane?.id}
+                guideHandoffEnds={handoffEnds}
+                guideWriting={Boolean(guideLane)}
+                guideDraftLabel={guideBubbleCollapsed ? "" : guideDraft.trim()}
               />
             ) : (
               <div

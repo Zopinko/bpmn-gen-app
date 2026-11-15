@@ -11,7 +11,7 @@ SEVERITY = "SOFT"
 
 def _is_sequence_flow(flow: Dict[str, Any]) -> bool:
     ftype = (flow.get("type") or flow.get("flowType") or "sequenceFlow").strip().lower()
-    return ftype in {"sequenceflow", "sequence_flow"}
+    return ftype.split(":")[-1] in {"sequenceflow", "sequence_flow"}
 
 
 def _is_start_event(node: Dict[str, Any]) -> bool:
@@ -67,19 +67,10 @@ def check(_: Dict[str, Any], index: Any) -> List[object]:
 
     nodes_by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
     start_nodes = [node for node in nodes if _is_start_event(node)]
-    primary_component: Set[str] | None = None
-    for node in start_nodes:
-        nid = str(node.get("id") or "")
-        if not nid:
-            continue
-        for comp in components:
-            if nid in comp:
-                primary_component = comp
-                break
-        if primary_component:
-            break
-    if primary_component is None:
-        primary_component = max(components, key=len)
+    start_ids = {str(node.get("id") or "") for node in start_nodes}
+    connected = set().union(*(comp for comp in components if comp & start_ids))
+    if not connected:
+        connected = max(components, key=len)
 
     nodes_by_lane: Dict[str, List[str]] = defaultdict(list)
     for node_id in nodes_by_id:
@@ -91,7 +82,7 @@ def check(_: Dict[str, Any], index: Any) -> List[object]:
     for lane_id, lane_nodes in nodes_by_lane.items():
         if not lane_nodes:
             continue
-        if any(node_id in primary_component for node_id in lane_nodes):
+        if any(node_id in connected for node_id in lane_nodes):
             continue
         findings.append(
             make_finding(

@@ -65,7 +65,8 @@ def bpmn_xml_to_engine(xml_text: str) -> Dict[str, Any]:
         if not node_id:
             continue
         node_type = known_types.get(tag)
-        node_name = child.get("name") or node_id
+        # gateways may stay unnamed; showing their internal id helps nobody
+        node_name = child.get("name") or ("" if tag.endswith("Gateway") else node_id)
 
         meta: Dict[str, Any] | None = None
         if tag == "textAnnotation":

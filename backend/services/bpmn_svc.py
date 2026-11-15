@@ -374,13 +374,13 @@ def _expand_parallel_step(
             "id": split_id,
             "type": "parallelGateway",
             "laneId": lane_id,
-            "name": "Parallel",
+            "name": "",
         },
         {
             "id": join_id,
             "type": "parallelGateway",
             "laneId": lane_id,
-            "name": "Parallel merge",
+            "name": "",
         },
     ]
     flows: list[Dict[str, Any]] = []
@@ -965,7 +965,7 @@ def _indent(elem, level: int = 0):
 # Jednoduchý auto-layout
 # -------------------------------
 def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
-    GRID_X = 200  # kompaktnejší horizontálny odstup medzi uzlami
+    GRID_X = 180  # task gap 80 px, same as the incremental layout in the frontend
     GRID_Y = 160  # kompaktnejší vertikálny odstup
     BASE_LANE_X = 0  # offset lane od ľavého okraja poolu
     BASE_LANE_Y = 0  # lane začína hneď pri vrchu poolu
@@ -1086,7 +1086,43 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
             continue
         adjacency[src].append(tgt)
         incoming[tgt].append(src)
-        indegree[tgt] += 1
+
+    # Loops (a flow back to an earlier step) must not decide the columns: without
+    # this the loop never reaches indegree 0 and is pushed past the end of the process.
+    back_edges: set[tuple[str, str]] = set()
+    visit_state: Dict[str, int] = {}  # 1 = on the search stack, 2 = finished
+    roots = sorted(
+        (nid for nid in nodes_by_id if not incoming.get(nid)),
+        key=lambda nid: node_order.get(nid, 0),
+    )
+    for root in roots + sorted(nodes_by_id, key=lambda nid: node_order.get(nid, 0)):
+        if root in visit_state:
+            continue
+        visit_state[root] = 1
+        stack = [(root, iter(sorted(adjacency.get(root, []), key=lambda nid: node_order.get(nid, 0))))]
+        while stack:
+            node_id, successors = stack[-1]
+            nxt = next(successors, None)
+            if nxt is None:
+                visit_state[node_id] = 2
+                stack.pop()
+                continue
+            state = visit_state.get(nxt)
+            if state == 1:
+                back_edges.add((node_id, nxt))
+            elif state is None:
+                visit_state[nxt] = 1
+                stack.append((nxt, iter(sorted(adjacency.get(nxt, []), key=lambda nid: node_order.get(nid, 0)))))
+
+    level_adjacency: Dict[str, List[str]] = defaultdict(list)
+    level_incoming: Dict[str, List[str]] = defaultdict(list)
+    for src, targets in adjacency.items():
+        for tgt in targets:
+            if (src, tgt) in back_edges:
+                continue
+            level_adjacency[src].append(tgt)
+            level_incoming[tgt].append(src)
+            indegree[tgt] += 1
 
     levels = {node_id: 0 for node_id in nodes_by_id}
     processed: set[str] = set()
@@ -1100,19 +1136,32 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     for node_id in sorted(zero_indegree_nodes, key=lambda nid: node_order.get(nid, 0)):
         heapq.heappush(heap, (node_order.get(node_id, 0), node_id))
 
+    # A step in the same role goes one column further. A step that takes over
+    # work from another role goes straight under (or above) the step it comes
+    # from, so the hand-off arrow is a plain vertical line; its own role keeps
+    # an empty stretch for as long as the other roles were working. If that
+    # spot in the role is already taken, the step moves right to the next free one.
+    def _step_after(src_id: str, tgt_id: str) -> int:
+        same_lane = lane_for_node.get(src_id, SYSTEM_LANE_ID) == lane_for_node.get(tgt_id, SYSTEM_LANE_ID)
+        return 1 if same_lane else 0
+
+    used_columns: Dict[str, set[int]] = defaultdict(set)
     while heap:
         _, node_id = heapq.heappop(heap)
         if node_id in processed:
             continue
         processed.add(node_id)
-        base_level = levels[node_id]
-        step = 1
+        lane_id = lane_for_node.get(node_id, SYSTEM_LANE_ID)
+        preds = [pid for pid in level_incoming.get(node_id, []) if pid in processed]
+        if preds:
+            levels[node_id] = max(levels[pid] + _step_after(pid, node_id) for pid in preds)
+            if any(_step_after(pid, node_id) == 0 for pid in preds):
+                while levels[node_id] in used_columns[lane_id]:
+                    levels[node_id] += 1
+        used_columns[lane_id].add(levels[node_id])
         for tgt in sorted(
-            adjacency.get(node_id, []), key=lambda nid: node_order.get(nid, 0)
+            level_adjacency.get(node_id, []), key=lambda nid: node_order.get(nid, 0)
         ):
-            candidate = base_level + step
-            if candidate > levels[tgt]:
-                levels[tgt] = candidate
             indegree[tgt] -= 1
             if indegree[tgt] == 0:
                 heapq.heappush(heap, (node_order.get(tgt, 0), tgt))
@@ -1125,10 +1174,10 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         ):
             levels[nid] = max(levels[nid], max_level + offset)
 
-    for nid, preds in incoming.items():
+    for nid, preds in level_incoming.items():
         if not preds or nid not in levels:
             continue
-        min_level = max(levels.get(pid, 0) + 1 for pid in preds if pid in levels)
+        min_level = max(levels.get(pid, 0) + _step_after(pid, nid) for pid in preds if pid in levels)
         if min_level > levels[nid]:
             levels[nid] = min_level
 
@@ -1280,73 +1329,119 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
             lane_max_node_height[lane_id] = 52
         lane_has_nodes[lane_id] = True
 
-    # Make gateway branches split vertically (prefer main on center, alt below).
+    # Gateway branches: the main branch keeps the gateway's row, every other
+    # branch gets its own row below it (same as the incremental layout in the
+    # frontend). Steps after a branch stay on its row, a merge returns to the
+    # upper row, and two steps never share a spot.
+    BRANCH_ROW = 0.75  # 120 px with GRID_Y 160
     flows_by_source: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for f in flows:
         src = f.get("source")
         if src:
             flows_by_source[src].append(f)
 
-    for gw_id, outs in adjacency.items():
-        if node_type.get(gw_id) not in GATEWAY_TYPES:
-            continue
-        if len(outs) < 2:
-            continue
+    def _branch_targets(gw_id: str) -> List[str]:
         lane_id = lane_for_node.get(gw_id, SYSTEM_LANE_ID)
-        same_lane_targets = [
-            tid for tid in outs if lane_for_node.get(tid, SYSTEM_LANE_ID) == lane_id
+        targets = [
+            tid
+            for tid in level_adjacency.get(gw_id, [])
+            if lane_for_node.get(tid, SYSTEM_LANE_ID) == lane_id
         ]
-        if len(same_lane_targets) < 2:
-            continue
-        same_lane_targets = sorted(same_lane_targets, key=lambda nid: node_order.get(nid, 0))
+        return sorted(dict.fromkeys(targets), key=lambda nid: node_order.get(nid, 0))
 
-        if node_type.get(gw_id) == "exclusiveGateway" and len(same_lane_targets) == 2:
-            candidates = flows_by_source.get(gw_id, [])
-            main_target = None
-            for f in candidates:
-                label = str(f.get("name") or f.get("label") or "").strip().lower()
-                if label in {"áno", "ano", "yes"}:
-                    main_target = f.get("target")
-                    break
-            if not main_target:
-                main_target = same_lane_targets[0]
-            alt_target = same_lane_targets[1] if same_lane_targets[0] == main_target else same_lane_targets[0]
-            row_index[main_target] = 0.0
-            row_index[alt_target] = 0.7
-            lane_row_counts[lane_id] = max(lane_row_counts.get(lane_id, 1), 2)
-            lane_has_gateway_branch[lane_id] = True
-            continue
+    def _main_branch(gw_id: str, targets: List[str]) -> str:
+        for f in flows_by_source.get(gw_id, []):
+            label = str(f.get("name") or f.get("label") or "").strip().lower()
+            if label in {"áno", "ano", "yes"} and f.get("target") in targets:
+                return f.get("target")
+        return targets[0]
 
-        offsets = []
-        k = 1.0
-        while len(offsets) < len(same_lane_targets):
-            offsets.extend([float(-k), float(k)])
-            k += 1
-        for tid, offset in zip(same_lane_targets, offsets):
-            if row_index.get(tid, 0.0) == 0.0:
-                row_index[tid] = float(offset)
-        lane_row_counts[lane_id] = max(lane_row_counts.get(lane_id, 1), len(same_lane_targets))
-        lane_has_gateway_branch[lane_id] = True
+    pinned_rows: Dict[str, float] = {}
+    nodes_by_col: Dict[int, List[str]] = defaultdict(list)
+    for nid in nodes_by_id:
+        nodes_by_col[levels.get(nid, 0)].append(nid)
+    for col in sorted(nodes_by_col):
+        col_nodes = sorted(nodes_by_col[col], key=lambda nid: node_order.get(nid, 0))
+        for nid in col_nodes:
+            if nid in pinned_rows:
+                row_index[nid] = pinned_rows[nid]
+                continue
+            lane_id = lane_for_node.get(nid, SYSTEM_LANE_ID)
+            pred_rows = [
+                row_index.get(pid, 0.0)
+                for pid in level_incoming.get(nid, [])
+                if lane_for_node.get(pid, SYSTEM_LANE_ID) == lane_id
+            ]
+            if pred_rows:
+                row_index[nid] = min(pred_rows)
+        by_lane: Dict[str, List[str]] = defaultdict(list)
+        for nid in col_nodes:
+            by_lane[lane_for_node.get(nid, SYSTEM_LANE_ID)].append(nid)
+        for lane_nodes in by_lane.values():
+            if len(lane_nodes) < 2:
+                continue
+            lane_nodes.sort(
+                key=lambda nid: (row_index.get(nid, 0.0), nid not in pinned_rows, node_order.get(nid, 0))
+            )
+            last = None
+            for nid in lane_nodes:
+                row = row_index.get(nid, 0.0)
+                if last is not None and row < last + BRANCH_ROW:
+                    row = last + BRANCH_ROW
+                row_index[nid] = row
+                last = row
+        for nid in col_nodes:
+            if node_type.get(nid) not in GATEWAY_TYPES:
+                continue
+            targets = _branch_targets(nid)
+            if len(targets) < 2:
+                continue
+            main = _main_branch(nid, targets)
+            base = row_index.get(nid, 0.0)
+            pinned_rows[main] = base
+            for k, tid in enumerate([t for t in targets if t != main], 1):
+                pinned_rows[tid] = base + k * BRANCH_ROW
+            lane_has_gateway_branch[lane_for_node.get(nid, SYSTEM_LANE_ID)] = True
+
+    lane_row_span: Dict[str, tuple[float, float]] = {}
+    for nid in nodes_by_id:
+        lane_id = lane_for_node.get(nid, SYSTEM_LANE_ID)
+        row = row_index.get(nid, 0.0)
+        lo, hi = lane_row_span.get(lane_id, (row, row))
+        lane_row_span[lane_id] = (min(lo, row), max(hi, row))
+
+    # a loop is routed under the steps of the lower of the two roles it connects
+    lane_rank = {lane_id: idx for idx, lane_id in enumerate(ordered_lanes)}
+    loop_lanes = {
+        max(
+            (lane_for_node.get(src, SYSTEM_LANE_ID), lane_for_node.get(tgt, SYSTEM_LANE_ID)),
+            key=lambda lane_id: lane_rank.get(lane_id, 0),
+        )
+        for src, tgt in back_edges
+        if src != tgt
+    }
 
     lane_heights: Dict[str, float] = {}
     lane_y: Dict[str, float] = {}
+    lane_extra_below: Dict[str, float] = {}
+    lane_extra_above: Dict[str, float] = {}
     current_lane_y = float(BASE_LANE_Y)
     for lane_id in ordered_lanes:
-        used_rows = lane_row_counts.get(lane_id, 0)
-        if used_rows == 0:
-            used_rows = 1
+        lo, hi = lane_row_span.get(lane_id, (0.0, 0.0))
+        span = hi - lo
         tallest = lane_max_node_height.get(lane_id, 52)
-        if lane_has_nodes.get(lane_id, False) and used_rows == 1:
-            row_spacing = float(tallest + ROW_MARGIN)
-        else:
-            base_spacing = float(max(GRID_Y, tallest + ROW_MARGIN))
-            if lane_has_gateway_branch.get(lane_id, False):
-                base_spacing = max(base_spacing, float(GRID_Y * 1.25))
-            row_spacing = base_spacing
+        row_spacing = float(max(GRID_Y, tallest + ROW_MARGIN))
         lane_row_spacing[lane_id] = row_spacing
-        total_height = float(ROW_MARGIN * 2 + tallest)
-        if used_rows > 1:
-            total_height += (used_rows - 1) * row_spacing
+        extra_below = 0.0
+        extra_above = 0.0
+        if lane_has_gateway_branch.get(lane_id, False):
+            extra_below += 24.0  # room under the lower branch
+            extra_above += 30.0  # room for the decision's name above the diamond
+        if lane_id in loop_lanes:
+            extra_below += 44.0  # room for the arrow that loops back under the steps
+        lane_extra_below[lane_id] = extra_below
+        lane_extra_above[lane_id] = extra_above
+        total_height = float(ROW_MARGIN * 2 + tallest + span * row_spacing + extra_above + extra_below)
         if not lane_has_nodes.get(lane_id, False):
             total_height = max(total_height, ROW_MARGIN * 2 + 52)
         height = max(MIN_LANE_HEIGHT, total_height)
@@ -1367,7 +1462,6 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         # vertikálny základ – použijeme stred lane, aby boli uzly pekne v strede
         base_y = lane_y.get(lane_id, BASE_LANE_Y)
         lane_height = lane_heights.get(lane_id, MIN_LANE_HEIGHT)
-        lane_center_y = base_y + lane_height / 2
         x = float(lane_offset + col * GRID_X)
         # Štart event necháme blízko nasledujúceho uzla (inak je hrana zbytočne dlhá)
         if ntype == "startEvent":
@@ -1379,14 +1473,19 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         row_spacing = lane_row_spacing.get(
             lane_id, max(GRID_Y, lane_max_node_height.get(lane_id, 52) + ROW_MARGIN)
         )
-        if lane_has_gateway_branch.get(lane_id, False):
-            lane_center_y -= row_spacing * 0.25
-        # riadky sú rozmiestnené symetricky okolo stredu lane
-        y = float(lane_center_y + row_value * row_spacing - height / 2)
+        # the block of rows sits in the middle of the lane, above the room kept
+        # for the lower branch / loop arrow
+        lo, hi = lane_row_span.get(lane_id, (0.0, 0.0))
+        tallest = lane_max_node_height.get(lane_id, 52)
+        above = lane_extra_above.get(lane_id, 0.0)
+        usable = lane_height - above - lane_extra_below.get(lane_id, 0.0)
+        top_center = base_y + above + (usable - (hi - lo) * row_spacing) / 2
+        top_center = max(top_center, base_y + above + ROW_MARGIN + tallest / 2)
+        y = float(top_center + (row_value - lo) * row_spacing - height / 2)
         pos[nid] = (x, y, float(width), float(height))
         max_x = max(max_x, x + width)
 
-    for nid, preds in incoming.items():
+    for nid, preds in level_incoming.items():
         if len(preds) < 2:
             continue
         if nid not in pos:
@@ -1535,6 +1634,89 @@ def _claim_xml_id(preferred: str, used_ids: set[str]) -> str:
     return candidate
 
 
+def _side_of(bounds: tuple[float, float, float, float], point: tuple[float, float]) -> str | None:
+    """Which side of a shape a waypoint touches: L, R, T or B."""
+    x, y, w, h = bounds
+    px, py = point
+    if abs(px - x) < 0.5 and y - 0.5 <= py <= y + h + 0.5:
+        return "L"
+    if abs(px - (x + w)) < 0.5 and y - 0.5 <= py <= y + h + 0.5:
+        return "R"
+    if abs(py - y) < 0.5:
+        return "T"
+    if abs(py - (y + h)) < 0.5:
+        return "B"
+    return None
+
+
+def _spread_to_free_sides(flows, paths, pos, path_collides) -> None:
+    """Two arrows should not share a side of a shape while another side is free.
+
+    When two arrows leave (or enter) through the same side, the one that is not a
+    straight continuation moves to the free top/bottom side, provided the new
+    path does not cross any other shape. Changes ``paths`` in place.
+    """
+    use: Dict[tuple[str, str], List[tuple[str, str]]] = defaultdict(list)
+    flow_by_id = {f["id"]: f for f in flows}
+    for f in flows:
+        points = paths.get(f["id"]) or []
+        src, tgt = f["source"], f["target"]
+        if src == tgt or len(points) < 2 or src not in pos or tgt not in pos:
+            continue
+        if side := _side_of(pos[src], points[0]):
+            use[(src, side)].append((f["id"], "out"))
+        if side := _side_of(pos[tgt], points[-1]):
+            use[(tgt, side)].append((f["id"], "in"))
+
+    def _free(nid: str, side: str) -> bool:
+        return not use.get((nid, side))
+
+    def _straightness(fid: str) -> tuple[int, float]:
+        points = paths[fid]
+        return (0 if len(points) == 2 else 1, abs(points[0][1] - points[-1][1]))
+
+    for (nid, side), ends in list(use.items()):
+        if len(ends) < 2:
+            continue
+        x, y, w, h = pos[nid]
+        cx = x + w / 2
+        for fid, end in sorted(ends, key=lambda item: _straightness(item[0]))[1:]:
+            points = paths[fid]
+            flow = flow_by_id[fid]
+            ignore = {flow["source"], flow["target"]}
+            candidate = None
+            if end == "in" and side == "L":
+                # arrive through the top/bottom instead of squeezing in from the left
+                sx, sy = points[0]
+                if _side_of(pos[flow["source"]], points[0]) == "R" and cx > sx:
+                    if sy > y + h and _free(nid, "B"):
+                        candidate, new_side = [(sx, sy), (cx, sy), (cx, y + h)], "B"
+                    elif sy < y and _free(nid, "T"):
+                        candidate, new_side = [(sx, sy), (cx, sy), (cx, y)], "T"
+            elif end == "out" and side == "R":
+                # leave through the bottom/top towards a step lower/higher up
+                ex, ey = points[-1]
+                if _side_of(pos[flow["target"]], points[-1]) == "L" and ex > cx:
+                    if ey > y + h and _free(nid, "B"):
+                        candidate, new_side = [(cx, y + h), (cx, ey), (ex, ey)], "B"
+                    elif ey < y and _free(nid, "T"):
+                        candidate, new_side = [(cx, y), (cx, ey), (ex, ey)], "T"
+            elif end == "out" and side in ("B", "T"):
+                # two arrows down (up) from one step: the one going further right
+                # leaves through the free right side and drops into the step from above
+                ex, ey = points[-1]
+                tx, ty, tw, th = pos[flow["target"]]
+                tcx = tx + tw / 2
+                if tx > x + w and _free(nid, "R"):
+                    edge_y = ty if side == "B" else ty + th
+                    candidate, new_side = [(x + w, y + h / 2), (tcx, y + h / 2), (tcx, edge_y)], "R"
+            if candidate and not path_collides(candidate, ignore):
+                paths[fid] = candidate
+                use[(nid, side)] = [item for item in use[(nid, side)] if item[0] != fid]
+                use[(nid, new_side)].append((fid, end))
+
+
+
 def _add_di(
     defs: ET.Element,
     collab_id: str,
@@ -1571,6 +1753,16 @@ def _add_di(
         return {
             "x": _coord(label_x),
             "y": _coord(label_y),
+            "width": _coord(label_width),
+            "height": _coord(label_height),
+        }
+
+    def _gateway_label_bounds(x: float, y: float, w: float, text: str) -> Dict[str, str]:
+        label_width = max(80.0, len(text.strip()) * 6.0)
+        label_height = 28.0
+        return {
+            "x": _coord(round(x + w / 2.0 - label_width / 2.0)),
+            "y": _coord(round(y - label_height - 10.0)),
             "width": _coord(label_width),
             "height": _coord(label_height),
         }
@@ -1668,6 +1860,13 @@ def _add_di(
                 T("dc", "Bounds"),
                 _start_event_label_bounds(float(x), float(y), float(w), float(h), str(n.get("name") or "")),
             )
+        elif _normalize_node_type(n).endswith("Gateway") and str(n.get("name") or "").strip():
+            label = ET.SubElement(shp, T("bpmndi", "BPMNLabel"))
+            ET.SubElement(
+                label,
+                T("dc", "Bounds"),
+                _gateway_label_bounds(float(x), float(y), float(w), str(n.get("name") or "")),
+            )
 
     node_bounds: Dict[str, tuple[float, float, float, float]] = {
         nid: (x, y, x + w, y + h) for nid, (x, y, w, h) in pos.items()
@@ -1707,10 +1906,17 @@ def _add_di(
         if len(flist) < 2:
             continue
 
-        def _level_of(flow: Dict[str, Any]) -> int:
-            return int(levels.get(flow.get("target"), 0))
+        def _main_rank(flow: Dict[str, Any], _src: str = src_id) -> tuple[float, int]:
+            tgt = flow.get("target")
+            if _src in pos and tgt in pos:
+                src_mid = pos[_src][1] + pos[_src][3] / 2
+                tgt_mid = pos[tgt][1] + pos[tgt][3] / 2
+                row_shift = abs(tgt_mid - src_mid)
+            else:
+                row_shift = 0.0
+            return (-row_shift, int(levels.get(tgt, 0)))
 
-        main_flow = max(flist, key=_level_of)
+        main_flow = max(flist, key=_main_rank)
         fid = main_flow.get("id")
         if fid:
             main_branch_for_flow[fid] = "main"
@@ -1912,11 +2118,75 @@ def _add_di(
                 ]
             )
 
+        # Loop back to an earlier step (target lies left of the source): go around the
+        # steps in between instead of falling back to a diagonal line across the map.
+        if (
+            src_id in pos
+            and tgt_id in pos
+            and pos[tgt_id][0] + pos[tgt_id][2] <= pos[src_id][0]
+        ):
+            ignore = {src_id, tgt_id}
+            src_x, src_y, src_w, src_h = pos[src_id]
+            tgt_x, tgt_y, tgt_w, tgt_h = pos[tgt_id]
+            span_left = tgt_x - WAYPOINT_SPACING
+            span_right = src_x + src_w
+            between = [
+                bounds
+                for nid, bounds in node_bounds.items()
+                if nid not in ignore and bounds[2] >= span_left and bounds[0] <= span_right
+            ]
+            margin = float(WAYPOINT_SPACING / 2 + COLLISION_PADDING)
+            below_y = max([src_y + src_h, tgt_y + tgt_h] + [b[3] for b in between]) + margin
+            above_y = min([src_y, tgt_y] + [b[1] for b in between]) - margin
+            sbx, sby = bottom_mid(src_id)
+            stx, sty = top_mid(src_id)
+            tbx, tby = bottom_mid(tgt_id)
+            ttx, tty = top_mid(tgt_id)
+            lx, ly = left_mid(tgt_id)
+            entry_x = lx - WAYPOINT_SPACING
+            candidates = [
+                # under the steps, into the target from below
+                [(sbx, sby), (sbx, below_y), (tbx, below_y), (tbx, tby)],
+                # under the steps, into the target from the left
+                [(sbx, sby), (sbx, below_y), (entry_x, below_y), (entry_x, ly), (lx, ly)],
+                # over the steps, into the target from above
+                [(stx, sty), (stx, above_y), (ttx, above_y), (ttx, tty)],
+            ]
+            for candidate in candidates:
+                path = _dedup(candidate)
+                if not _path_collides(path, ignore):
+                    return path
+            return _dedup(candidates[0])
+
+        src_lane = lane_for_node.get(src_id)
+        tgt_lane = lane_for_node.get(tgt_id)
+        cross_lane = src_lane is not None and tgt_lane is not None and src_lane != tgt_lane
+
+        # Hand-off to another role: the step sits right under (or above) the one it
+        # comes from, so the arrow is one straight vertical line.
+        if cross_lane and src_id in pos and tgt_id in pos:
+            src_cx = pos[src_id][0] + pos[src_id][2] / 2
+            tgt_cx = pos[tgt_id][0] + pos[tgt_id][2] / 2
+            if abs(src_cx - tgt_cx) <= 1:
+                going_down = pos[tgt_id][1] > pos[src_id][1]
+                start_point = bottom_mid(src_id) if going_down else top_mid(src_id)
+                end_point = top_mid(tgt_id) if going_down else bottom_mid(tgt_id)
+                path = [start_point, (start_point[0], end_point[1])]
+                if not _path_collides(path, {src_id, tgt_id}):
+                    return _dedup(path)
+
         # ŠPECIÁLNY PRÍPAD: alternatívna vetva z gateway – chceme čisté “L” dole a späť
         if is_gateway_src and branch_kind == "alt":
             start_point = right_mid(src_id)
             end_point = left_mid(tgt_id)
             ignore = {src_id, tgt_id}
+            src_mid_y = start_point[1]
+            corner_x = bottom_mid(src_id)[0]
+            if abs(end_point[1] - src_mid_y) > 1 and end_point[0] > corner_x:
+                corner = bottom_mid(src_id) if end_point[1] > src_mid_y else top_mid(src_id)
+                path = _l_path(corner, end_point, horizontal_first=False)
+                if not _path_collides(path, ignore):
+                    return path
             path = _gateway_l_path(start_point, end_point)
             if not _path_collides(path, ignore):
                 return path
@@ -1933,6 +2203,14 @@ def _add_di(
             start_point = right_mid(src_id)
             end_point = left_mid(tgt_id)
             ignore = {src_id, tgt_id}
+            # a branch below (or above) the merge comes in through the merge's bottom
+            # (top) corner, the mirror image of how it left the split
+            if not cross_lane and abs(start_point[1] - end_point[1]) > 1:
+                corner = bottom_mid(tgt_id) if start_point[1] > end_point[1] else top_mid(tgt_id)
+                if corner[0] > start_point[0]:
+                    path = _l_path(start_point, corner, horizontal_first=True)
+                    if not _path_collides(path, ignore):
+                        return path
             path = _gateway_l_path(start_point, end_point)
             if not _path_collides(path, ignore):
                 return path
@@ -1940,16 +2218,20 @@ def _add_di(
             if not _path_collides(path, ignore):
                 return path
 
-        src_lane = lane_for_node.get(src_id)
-        tgt_lane = lane_for_node.get(tgt_id)
         if (
             not is_gateway_src
-            and src_lane is not None
-            and tgt_lane is not None
-            and src_lane != tgt_lane
+            and cross_lane
         ):
-            start_point, end_point = _choose_ports(src_id, tgt_id, branch_kind)
             ignore = {src_id, tgt_id}
+            # the spot under the step was taken: down (or up) first, then right
+            going_down = pos[tgt_id][1] > pos[src_id][1]
+            corner = bottom_mid(src_id) if going_down else top_mid(src_id)
+            entry = left_mid(tgt_id)
+            if entry[0] > corner[0]:
+                path = _l_path(corner, entry, horizontal_first=False)
+                if not _path_collides(path, ignore):
+                    return path
+            start_point, end_point = _choose_ports(src_id, tgt_id, branch_kind)
             sx, sy = start_point
             tx, ty = end_point
 
@@ -2040,9 +2322,12 @@ def _add_di(
 
         return _dedup([start_point, end_point])
 
+    paths: Dict[str, List[Point]] = {f["id"]: _orthogonal_waypoints(f) for f in flows}
+    _spread_to_free_sides(flows, paths, pos, _path_collides)
+
     for f in flows:
         fid = f["id"]
-        points = _orthogonal_waypoints(f)
+        points = paths[fid]
         e = ET.SubElement(
             plane, T("bpmndi", "BPMNEdge"), {"id": _claim_xml_id(f"Edge_{fid}", used_xml_ids), "bpmnElement": fid}
         )
@@ -2056,7 +2341,22 @@ def _add_di(
                 for p1, p2 in zip(points, points[1:])
                 if p1[1] == p2[1]
             ]
-            if horizontal_segments:
+            starts_vertical = len(points) > 1 and points[0][0] == points[1][0]
+            if starts_vertical and node_type_map.get(f["source"]) in gateway_types:
+                # next to the gateway corner the branch leaves from
+                going_down = points[1][1] > points[0][1]
+                label = ET.SubElement(e, T("bpmndi", "BPMNLabel"))
+                ET.SubElement(
+                    label,
+                    T("dc", "Bounds"),
+                    {
+                        "x": str(int(points[0][0]) + 8),
+                        "y": str(int(points[0][1]) + (6 if going_down else -24)),
+                        "width": "40",
+                        "height": "18",
+                    },
+                )
+            elif horizontal_segments:
                 mid_x, mid_y = horizontal_segments[len(horizontal_segments) // 2]
                 label = ET.SubElement(e, T("bpmndi", "BPMNLabel"))
                 ET.SubElement(
@@ -2064,7 +2364,7 @@ def _add_di(
                     T("dc", "Bounds"),
                     {
                         "x": str(int(mid_x) - 40),
-                        "y": str(int(mid_y) - 10),
+                        "y": str(int(mid_y) - 22),
                         "width": "80",
                         "height": "20",
                     },
