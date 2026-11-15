@@ -168,3 +168,52 @@ def test_merging_branch_enters_from_the_free_bottom_side():
         (_cx(pos, "c"), _cy(pos, "b")),
         (_cx(pos, "c"), pos["c"][1] + pos["c"][3]),
     ]
+
+
+def _all_paths(engine):
+    root = ET.fromstring(generate_bpmn_from_json(engine))
+    flows = {
+        el.attrib["id"]: (el.attrib["sourceRef"], el.attrib["targetRef"])
+        for el in root.iter()
+        if el.tag.endswith("sequenceFlow")
+    }
+    paths = {}
+    for edge in root.iter():
+        if edge.tag.endswith("BPMNEdge") and edge.attrib.get("bpmnElement") in flows:
+            points = [(float(wp.attrib["x"]), float(wp.attrib["y"])) for wp in edge if wp.tag.endswith("waypoint")]
+            paths[flows[edge.attrib["bpmnElement"]]] = points
+    return paths
+
+
+def _segment_hits(a, b, box):
+    x, y, w, h = box
+    if a[0] == b[0]:
+        lo, hi = sorted((a[1], b[1]))
+        return x < a[0] < x + w and lo < y + h and hi > y
+    lo, hi = sorted((a[0], b[0]))
+    return y < a[1] < y + h and lo < x + w and hi > x
+
+
+def test_rejected_request_loops_back_without_crossing_steps():
+    # Employee submits; the manager approves (-> HR records it) or suggests other
+    # dates, which goes back to the employee.
+    engine = _engine(
+        [("s", "startEvent", "L1"), ("sub", "task", "L1"), ("gw", "exclusiveGateway", "L2"), ("app", "task", "L2"),
+         ("sug", "task", "L2"), ("rec", "task", "L3"), ("e", "endEvent", "L3")],
+        [("s", "sub"), ("sub", "gw"), ("gw", "app"), ("gw", "sug"), ("sug", "sub"), ("app", "rec"), ("rec", "e")],
+    )
+    engine["flows"][2]["name"] = "Yes"
+    engine["flows"][3]["name"] = "No"
+    pos = _build_layout(engine)["node_pos"]
+    for (src, tgt), points in _all_paths(engine).items():
+        for a, b in zip(points, points[1:]):
+            for nid, box in pos.items():
+                if nid in (src, tgt):
+                    continue
+                assert not _segment_hits(a, b, box), f"{src}->{tgt} crosses {nid}"
+    # the loop comes back into the employee's step from above
+    loop = _points(engine, "sug", "sub")
+    assert loop[-1] == (_cx(pos, "sub"), pos["sub"][1])
+    # the hand-off to HR still comes into the step from above
+    hand_off = _points(engine, "app", "rec")
+    assert hand_off[-1] == (_cx(pos, "rec"), pos["rec"][1])

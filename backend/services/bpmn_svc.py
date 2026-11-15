@@ -2132,10 +2132,24 @@ def _add_di(
             tgt_x, tgt_y, tgt_w, tgt_h = pos[tgt_id]
             span_left = tgt_x - WAYPOINT_SPACING
             span_right = src_x + src_w
+            # only the roles the loop passes through matter; steps in other roles
+            # must not push the loop under (or over) them
+            src_lane_y = lane_y_map.get(lane_for_node.get(src_id))
+            tgt_lane_y = lane_y_map.get(lane_for_node.get(tgt_id))
+            if src_lane_y is not None and tgt_lane_y is not None:
+                lane_lo, lane_hi = sorted((float(src_lane_y), float(tgt_lane_y)))
+                spanned_lanes = {
+                    lid for lid, ly_ in lane_y_map.items() if lane_lo <= float(ly_) <= lane_hi
+                }
+            else:
+                spanned_lanes = None
             between = [
                 bounds
                 for nid, bounds in node_bounds.items()
-                if nid not in ignore and bounds[2] >= span_left and bounds[0] <= span_right
+                if nid not in ignore
+                and bounds[2] >= span_left
+                and bounds[0] <= span_right
+                and (spanned_lanes is None or lane_for_node.get(nid) in spanned_lanes)
             ]
             margin = float(WAYPOINT_SPACING / 2 + COLLISION_PADDING)
             below_y = max([src_y + src_h, tgt_y + tgt_h] + [b[3] for b in between]) + margin
@@ -2145,8 +2159,18 @@ def _add_di(
             tbx, tby = bottom_mid(tgt_id)
             ttx, tty = top_mid(tgt_id)
             lx, ly = left_mid(tgt_id)
+            srx, sry = right_mid(src_id)
             entry_x = lx - WAYPOINT_SPACING
-            candidates = [
+            side_x = srx + WAYPOINT_SPACING
+            # back up to a role above: leave on the right and come over the steps
+            # into the target's top; back down to a role below: the mirror image
+            role_first: List[List[Point]] = []
+            if src_lane_y is not None and tgt_lane_y is not None and tgt_lane_y != src_lane_y:
+                if float(tgt_lane_y) < float(src_lane_y):
+                    role_first.append([(srx, sry), (side_x, sry), (side_x, above_y), (ttx, above_y), (ttx, tty)])
+                else:
+                    role_first.append([(srx, sry), (side_x, sry), (side_x, below_y), (tbx, below_y), (tbx, tby)])
+            candidates = role_first + [
                 # under the steps, into the target from below
                 [(sbx, sby), (sbx, below_y), (tbx, below_y), (tbx, tby)],
                 # under the steps, into the target from the left
@@ -2174,6 +2198,23 @@ def _add_di(
                 start_point = bottom_mid(src_id) if going_down else top_mid(src_id)
                 end_point = top_mid(tgt_id) if going_down else bottom_mid(tgt_id)
                 path = [start_point, (start_point[0], end_point[1])]
+                if not _path_collides(path, {src_id, tgt_id}):
+                    return _dedup(path)
+                # another step of the role sits in the way (e.g. the lower branch
+                # of a decision): leave on the right, pass it and come into the
+                # target's top (bottom) from the side
+                srx, sry = right_mid(src_id)
+                side_x = max(
+                    [srx, pos[tgt_id][0] + pos[tgt_id][2]]
+                    + [
+                        b[2]
+                        for nid, b in node_bounds.items()
+                        if nid not in (src_id, tgt_id) and b[0] <= src_cx <= b[2]
+                    ]
+                ) + WAYPOINT_SPACING / 2
+                approach = WAYPOINT_SPACING / 2 + COLLISION_PADDING
+                approach_y = end_point[1] - approach if going_down else end_point[1] + approach
+                path = [(srx, sry), (side_x, sry), (side_x, approach_y), (tgt_cx, approach_y), end_point]
                 if not _path_collides(path, {src_id, tgt_id}):
                     return _dedup(path)
 
