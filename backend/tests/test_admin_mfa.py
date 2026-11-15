@@ -36,7 +36,9 @@ def test_enrollment_elevation_and_recovery(admin_clients):
     admin, client, other_session, member = admin_clients
     path = "/api/admin/mfa"
     assert member.get(f"{path}/status").status_code == 404
+    assert member.patch("/api/admin/feedback/example", json={"resolved": True}).status_code == 404
     assert client.get("/api/admin/users").status_code == 403
+    assert client.patch("/api/admin/feedback/example", json={"resolved": True}).status_code == 403
     assert client.post(f"{path}/setup", json={"password": "test-password"}).status_code == 403
     with get_connection() as conn:
         conn.execute("UPDATE users SET email_verified_at = created_at WHERE id = ?", (admin.id,))

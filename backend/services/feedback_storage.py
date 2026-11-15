@@ -5,11 +5,13 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from services.storage_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
+_feedback_lock = Lock()
 
 
 def _feedback_path() -> Path:
@@ -41,7 +43,6 @@ def create_feedback(user_id: str, user_email: str, message: str, page: str = "")
     if len(message) > 4000:
         raise ValueError("Feedback message is too long (max 4000 characters).")
 
-    items = _load()
     entry = {
         "id": str(uuid4()),
         "user_id": user_id,
@@ -49,11 +50,28 @@ def create_feedback(user_id: str, user_email: str, message: str, page: str = "")
         "message": message,
         "page": str(page or "").strip(),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "resolved": False,
     }
-    items.append(entry)
-    _save(items)
+    with _feedback_lock:
+        items = _load()
+        items.append(entry)
+        _save(items)
     return entry
 
 
 def list_feedback() -> list[dict]:
-    return list(reversed(_load()))
+    with _feedback_lock:
+        return [{**item, "resolved": item.get("resolved") is True} for item in reversed(_load())]
+
+
+def set_feedback_resolved(feedback_id: str, resolved: bool) -> dict | None:
+    with _feedback_lock:
+        items = _load()
+        for item in items:
+            if item.get("id") != feedback_id:
+                continue
+            if item.get("resolved", False) != resolved:
+                item["resolved"] = resolved
+                _save(items)
+            return {"id": feedback_id, "resolved": resolved}
+    return None

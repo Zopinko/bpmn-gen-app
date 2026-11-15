@@ -1,3 +1,4 @@
+import json
 import os
 
 from fastapi import FastAPI
@@ -8,6 +9,8 @@ from auth.db import get_connection, run_auth_migrations
 from auth.deps import require_super_admin
 from auth.service import AuthUser, create_org_with_owner, create_session_for_user, find_user_id_by_email, register_user
 from routers.admin_router import router as admin_router
+from services import model_storage
+from services.feedback_storage import create_feedback
 from services.model_storage import save_model
 
 
@@ -36,6 +39,55 @@ def _make_admin_client(current_user: AuthUser) -> TestClient:
     app.dependency_overrides[require_super_admin] = lambda: current_user
     app.include_router(admin_router)
     return TestClient(app)
+
+
+def test_admin_can_resolve_and_reopen_existing_feedback(tmp_path, monkeypatch):
+    monkeypatch.setenv("BPMN_MODELS_DIR", str(tmp_path))
+    legacy = {"id": "legacy", "message": "Previous feedback"}
+    (tmp_path / "feedback.json").write_text(json.dumps([legacy]), encoding="utf-8")
+    new = create_feedback("user", "user@example.com", "New feedback")
+    client = _make_admin_client(AuthUser(id="admin", email="admin@example.com", role="user",
+                                        email_verified_at=None, created_at="2026-01-01"))
+    route = "/api/admin/feedback"
+    assert all(item["resolved"] is False for item in client.get(route).json()["items"])
+    assert client.patch(f"{route}/legacy", json={"resolved": "false"}).status_code == 422
+    assert client.patch(f"{route}/missing", json={"resolved": True}).status_code == 404
+    for _ in range(2):
+        assert client.patch(f"{route}/legacy", json={"resolved": True}).json()["resolved"] is True
+    result = client.get(route).json()
+    assert result["count"] == 2
+    assert result["items"] == [new, {**legacy, "resolved": True}]
+    assert client.patch(f"{route}/legacy", json={"resolved": False}).json()["resolved"] is False
+    assert all(item["resolved"] is False for item in client.get(route).json()["items"])
+
+
+def test_admin_counts_only_saved_sandbox_models_for_existing_accounts(tmp_path, monkeypatch):
+    previous = _set_env(tmp_path)
+    models_dir = tmp_path / "models"
+    monkeypatch.setattr(model_storage, "_base_dir", models_dir)
+    try:
+        run_auth_migrations()
+        admin = register_user("super@example.com", "password123")
+        first = register_user("first@example.com", "password123")
+        second = register_user("second@example.com", "password123")
+        payload = {"name": "Process", "engine_json": {}, "diagram_xml": "<definitions />"}
+        save_model(**payload, model_id="shared", user_id=first.id)
+        save_model(**payload, model_id="shared", user_id=second.id)
+        save_model(**payload, model_id="another", user_id=first.id)
+        save_model(**payload, model_id="orphan", user_id="deleted-account")
+        save_model(**payload, model_id="global")
+        org_dir = models_dir / "orgs" / "example-org" / "models"
+        org_dir.mkdir(parents=True)
+        (org_dir / "model.json").write_text('{"id":"org-model"}', encoding="utf-8")
+        (models_dir / "users" / first.id / "models" / "broken.json").write_text("{", encoding="utf-8")
+
+        response = _make_admin_client(admin).get("/api/admin/users")
+        assert response.status_code == 200
+        counts = {row["id"]: row["sandbox_model_count"] for row in response.json()["items"]}
+        assert counts == {admin.id: 0, first.id: 2, second.id: 1}
+        assert not (models_dir / "users" / admin.id).exists()
+    finally:
+        _restore_env(previous)
 
 
 def test_super_admin_can_delete_regular_user_and_cleanup_storage(tmp_path):
