@@ -210,7 +210,7 @@ export async function mentorReview(payload) {
   const response = await fetch(`${API_BASE}/mentor/review`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withLocalePayload(payload)),
     credentials: "include",
   });
 

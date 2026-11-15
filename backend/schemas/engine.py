@@ -55,6 +55,21 @@ SCHEMA = {
                         "additionalProperties": True,
                     },
                     {
+                        # BPMN gateways may stay unnamed (a parallel split/merge has no question)
+                        "type": "object",
+                        "required": ["id", "type", "laneId"],
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "type": {
+                                "type": "string",
+                                "enum": ["gateway", "exclusiveGateway", "parallelGateway", "inclusiveGateway"],
+                            },
+                            "laneId": {"type": "string", "minLength": 1},
+                            "name": {"type": "string"},
+                        },
+                        "additionalProperties": True,
+                    },
+                    {
                         "type": "object",
                         "required": ["id", "type", "laneId", "name"],
                         "properties": {

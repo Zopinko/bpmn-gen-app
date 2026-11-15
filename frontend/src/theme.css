@@ -1331,7 +1331,8 @@ tbody tr:hover {
   border-radius: 50%;
 }
 
-.ws-glyph--gateway {
+.ws-glyph--gateway,
+.ws-glyph--parallel {
   width: 8px;
   height: 8px;
   margin: 0 1px;
@@ -2391,4 +2392,416 @@ tbody tr:hover {
   align-items: stretch !important;
   text-align: left !important;
   overflow-y: auto;
+}
+
+/* ==========================================================================
+   Guide on the canvas: its own colour, bubble at the element, progress strip
+   ========================================================================== */
+
+:root {
+  --guide: #14b8a6;
+  --guide-strong: #0d9488;
+  --guide-soft: rgba(20, 184, 166, 0.14);
+  --guide-text: #5eead4;
+}
+
+/* highlight of the element the guide talks about */
+@keyframes guide-soft-pulse {
+  0% {
+    filter: drop-shadow(0 0 0 rgba(20, 184, 166, 0.55));
+  }
+  60% {
+    filter: drop-shadow(0 0 10px rgba(20, 184, 166, 0.55));
+  }
+  100% {
+    filter: drop-shadow(0 0 4px rgba(20, 184, 166, 0.35));
+  }
+}
+
+.map-viewer__canvas .djs-element.guide-highlight-target .djs-visual > :where(path, rect, circle, ellipse, polygon) {
+  stroke: var(--guide-strong) !important;
+  stroke-width: 2.6px !important;
+  filter: drop-shadow(0 0 5px rgba(20, 184, 166, 0.45));
+}
+
+.map-viewer__canvas .djs-element.guide-repair-target .djs-visual > :where(rect, path) {
+  stroke: #fb923c !important;
+  stroke-width: 2.5px !important;
+}
+
+.map-viewer__canvas .djs-element.djs-lane.guide-highlight-target .djs-visual > rect,
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target:not(.dragging):not(.moving) .djs-visual > rect,
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target.hover:not(.dragging):not(.moving) .djs-visual > rect,
+.map-viewer__canvas .djs-shape.djs-lane.guide-highlight-target.selected:not(.dragging):not(.moving) .djs-visual > rect {
+  stroke: var(--guide-strong) !important;
+  stroke-width: 2px !important;
+  fill: rgba(20, 184, 166, 0.07) !important;
+  filter: none !important;
+}
+
+.map-viewer__canvas--guide-connect::after,
+.map-viewer__canvas--guide-upper-branch::before {
+  border-color: rgba(13, 148, 136, 0.5);
+  background: rgba(20, 184, 166, 0.03);
+  animation: none;
+}
+
+/* bubble */
+.guide-bubble-host {
+  position: relative;
+  z-index: 5;
+}
+
+.guide-bubble-host--shifted .guide-bubble__tip {
+  display: none;
+}
+
+.guide-bubble {
+  position: relative;
+  box-sizing: border-box;
+  width: 300px;
+  max-width: var(--guide-bubble-max-width, 100vw);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border: 1.5px solid var(--guide);
+  border-radius: 12px;
+  background: #111317;
+  color: var(--text-primary);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.32);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  animation: ws-pop-in 0.16s ease-out;
+}
+
+.guide-bubble__tip {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #111317;
+  border-left: 1.5px solid var(--guide);
+  border-top: 1.5px solid var(--guide);
+}
+
+.guide-bubble-host--node .guide-bubble__tip {
+  left: 46px;
+  top: -8px;
+  transform: rotate(45deg);
+}
+
+.guide-bubble-host--lane .guide-bubble__tip {
+  left: -8px;
+  top: 26px;
+  transform: rotate(-45deg);
+}
+
+.guide-bubble__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.guide-bubble__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--guide-text);
+}
+
+.guide-bubble__close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.guide-bubble__close:hover {
+  border-color: transparent;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.guide-bubble__title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.guide-bubble__message {
+  color: var(--text-secondary);
+}
+
+.guide-bubble--complete {
+  --guide: #4ade80;
+}
+
+.guide-bubble__checklist {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 18px;
+}
+
+.guide-bubble__checklist li::marker {
+  color: var(--guide);
+}
+
+.guide-bubble__composer,
+.guide-bubble__label,
+.guide-bubble__advice {
+  display: grid;
+  gap: 8px;
+}
+
+.guide-bubble__composer > button {
+  justify-self: start;
+}
+
+.guide-bubble__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.guide-bubble__input:focus-visible {
+  outline: 2px solid var(--guide);
+  outline-offset: 1px;
+}
+
+.guide-bubble__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.guide-step-preview {
+  box-sizing: border-box;
+  width: 100px;
+  height: 80px;
+  display: grid;
+  place-content: center;
+  border-radius: 7px;
+  border: 2px dashed var(--guide);
+  background-color: rgba(0, 0, 0, 0.45);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px;
+  overflow-wrap: anywhere;
+  text-align: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.guide-bubble__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.guide-handoff-options {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.guide-handoff-options legend {
+  padding: 0 0 6px;
+}
+
+.guide-repair-indicator {
+  margin-inline-end: 6px;
+  color: #fb923c;
+}
+
+.guide-handoff-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.guide-handoff-options input {
+  margin: 0;
+  accent-color: var(--guide);
+}
+
+.guide-bubble__btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.guide-bubble__btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--surface-hover);
+}
+
+.guide-bubble__btn--go {
+  border-color: transparent;
+  background: var(--guide);
+  color: #04201c;
+  font-weight: 600;
+}
+
+.guide-bubble__btn--go:hover {
+  border-color: transparent;
+  background: #2dd4bf;
+}
+
+.guide-bubble-dot {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--guide);
+  color: #04201c;
+  box-shadow: 0 0 0 5px rgba(20, 184, 166, 0.22), 0 8px 18px rgba(15, 23, 42, 0.3);
+  cursor: pointer;
+}
+
+.guide-bubble-dot:hover {
+  border-color: transparent;
+  background: #2dd4bf;
+}
+
+/* no element to point at: bubble floats at the top of the map */
+.guide-bubble-float {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 7;
+  transform: translateX(-50%);
+}
+
+.guide-bubble--floating {
+  width: min(460px, calc(100vw - 48px));
+}
+
+/* progress strip above the map */
+.guide-progress {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 38px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+.guide-progress__label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--guide-text);
+}
+
+.guide-progress__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.guide-progress__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+button.guide-progress__step {
+  cursor: pointer;
+}
+
+button.guide-progress__step:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text-primary);
+}
+
+.guide-progress__num {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.guide-progress__state {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.guide-progress__step.is-now {
+  border-color: var(--guide);
+  background: var(--guide-soft);
+  color: var(--guide-text);
+}
+
+.guide-progress__step.is-now .guide-progress__num {
+  background: var(--guide);
+  color: #04201c;
+}
+
+.guide-progress__step.is-done {
+  border-color: rgba(62, 207, 142, 0.4);
+  color: #7ee2b4;
+}
+
+.guide-progress__step.is-done .guide-progress__num {
+  background: var(--success-soft);
+}
+
+.ws-shell--focus .guide-progress {
+  display: none !important;
+}
+
+@media (min-width: 1101px) {
+  .ws-layout--inspector .wizard-viewer > .guide-progress {
+    margin-right: 310px;
+  }
 }

@@ -103,6 +103,7 @@ class Telemetry(BaseModel):
 
 class MentorReviewRequest(BaseModel):
     text: Optional[str] = None
+    locale: Optional[str] = None
     engine_json: Optional[Dict[str, Any]] = None
     kb_version: Optional[str] = None
     telemetry: Optional[Telemetry] = None

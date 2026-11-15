@@ -3,7 +3,9 @@ const NO_BRANCH_LABELS = new Set(["nie", "no", "false"]);
 const normalizeBranchLabel = (value) => String(value || "").trim().toLowerCase();
 
 const isNoBranchLabel = (value) => NO_BRANCH_LABELS.has(normalizeBranchLabel(value));
-const BASELINE_RATIO_IN_LANE = 0.38;
+import { spreadToFreeSides } from "./arrowSides.js";
+
+const BASELINE_RATIO_IN_LANE = 0.5; // same as the server layout: an empty role starts in its middle
 
 export function applyIncrementalAppend({
   prevEngine,
@@ -375,6 +377,14 @@ export function applyIncrementalAppend({
   const laneCursorById = new Map();
   const getBaselineMidY = (laneEl) => {
     if (!laneEl) return 0;
+    // keep new steps on the row the lane already uses (the server layout centres
+    // it, so a fixed ratio would put the next step off the line)
+    // (only steps that were already there: a step placed in this append is not a reference)
+    const placedNow = new Set(createdByEngineId.values());
+    const mainRow = getLaneFlowShapes(laneEl)
+      .filter((el) => !placedNow.has(el) && !hasBranchContext(el?.businessObject?.$attrs || {}))
+      .sort((a, b) => Number(a.x || 0) - Number(b.x || 0))[0];
+    if (mainRow) return Math.round(Number(mainRow.y || 0) + Number(mainRow.height || 0) / 2);
     const y = Number(laneEl.y || 0);
     const h = Number(laneEl.height || 0);
     return Math.round(y + h * BASELINE_RATIO_IN_LANE);
@@ -430,6 +440,33 @@ export function applyIncrementalAppend({
     if (sameLane && !srcIsGateway && !tgtIsGateway && Math.abs(srcMidY - tgtMidY) < 2) {
       return [{ x: srcRight, y: srcMidY }, { x: tgtLeft, y: srcMidY }];
     }
+    const srcCenterX = sx + sw / 2;
+    const tgtCenterX = tx + tw / 2;
+    if (srcLane && tgtLane && !sameLane) {
+      const goingDown = tgtMidY > srcMidY;
+      const srcEdgeY = goingDown ? sy + sh : sy;
+      const tgtEdgeY = goingDown ? ty : ty + th;
+      // hand-off right under/above the step: one straight vertical arrow
+      if (Math.abs(srcCenterX - tgtCenterX) < 2) {
+        return [{ x: srcCenterX, y: srcEdgeY }, { x: srcCenterX, y: tgtEdgeY }];
+      }
+      // the spot was taken: down (or up) first, then right
+      if (tgtLeft > srcCenterX && !srcIsGateway) {
+        return [{ x: srcCenterX, y: srcEdgeY }, { x: srcCenterX, y: tgtMidY }, { x: tgtLeft, y: tgtMidY }];
+      }
+    }
+    // a side branch leaves a split through its bottom (top) corner and enters the
+    // merge the same way; the main branch stays a straight line
+    const fromCorner = () => {
+      const below = tgtMidY > srcMidY;
+      const cornerY = below ? sy + sh : sy;
+      return [{ x: srcCenterX, y: cornerY }, { x: srcCenterX, y: tgtMidY }, { x: tgtLeft, y: tgtMidY }];
+    };
+    const intoCorner = () => {
+      const below = srcMidY > tgtMidY;
+      const cornerY = below ? ty + th : ty;
+      return [{ x: srcRight, y: srcMidY }, { x: tgtCenterX, y: srcMidY }, { x: tgtCenterX, y: cornerY }];
+    };
 
     const isExclusiveGateway = srcType.includes("ExclusiveGateway");
     const isParallelGateway = srcType.includes("ParallelGateway");
@@ -438,27 +475,17 @@ export function applyIncrementalAppend({
       const tgtAttrs = target?.businessObject?.$attrs || {};
       const parallelSplitId = String(srcAttrs["data-parallel-split-id"] || source?.id || "");
       const targetSplitId = String(tgtAttrs["data-parallel-split-id"] || "");
-      const targetJoinSplitId = String(tgtAttrs["data-parallel-join-id"] || "");
       const isSplitToBranch = Boolean(targetSplitId && parallelSplitId && targetSplitId === parallelSplitId);
-      const isBranchToJoin = Boolean(targetJoinSplitId && parallelSplitId && targetJoinSplitId === parallelSplitId);
-      const splitExitX = srcRight + PARALLEL_BRANCH_BUS_GAP;
       if (isSplitToBranch) {
-        return [
-          { x: srcRight, y: srcMidY },
-          { x: splitExitX, y: srcMidY },
-          { x: splitExitX, y: tgtMidY },
-          { x: tgtLeft, y: tgtMidY },
-        ];
+        if (Math.abs(srcMidY - tgtMidY) < 2) return [{ x: srcRight, y: srcMidY }, { x: tgtLeft, y: srcMidY }];
+        return fromCorner();
       }
-      if (isBranchToJoin) {
-        const joinBusX = tgtLeft - PARALLEL_BRANCH_BUS_GAP;
-        return [
-          { x: srcRight, y: srcMidY },
-          { x: joinBusX, y: srcMidY },
-          { x: joinBusX, y: tgtMidY },
-          { x: tgtLeft, y: tgtMidY },
-        ];
-      }
+    }
+    const tgtIsParallelJoin = tgtType.includes("ParallelGateway") && Boolean(tgtAttrs["data-parallel-join-id"]);
+    const tgtIsXorJoin = tgtType.includes("ExclusiveGateway") && Boolean(tgtAttrs["data-xor-join-id"]);
+    if (sameLane && (tgtIsParallelJoin || tgtIsXorJoin)) {
+      if (Math.abs(srcMidY - tgtMidY) < 2) return [{ x: srcRight, y: srcMidY }, { x: tgtLeft, y: srcMidY }];
+      if (tgtCenterX > srcRight) return intoCorner();
     }
 
     if (isExclusiveGateway) {
@@ -489,13 +516,8 @@ export function applyIncrementalAppend({
         ];
       }
       if (isXorBranchToJoin) {
-        const joinBusX = tgtLeft - 30;
-        return [
-          { x: srcRight, y: srcMidY },
-          { x: joinBusX, y: srcMidY },
-          { x: joinBusX, y: tgtMidY },
-          { x: tgtLeft, y: tgtMidY },
-        ];
+        if (Math.abs(srcMidY - tgtMidY) < 2) return [{ x: srcRight, y: srcMidY }, { x: tgtLeft, y: srcMidY }];
+        return intoCorner();
       }
       const laneForRoute = srcLane || tgtLane;
       const baselineY = laneForRoute ? getBaselineMidY(laneForRoute) : srcMidY;
@@ -872,6 +894,17 @@ export function applyIncrementalAppend({
       if (laneForPlacement) {
         const laneKey = laneId || String(laneForPlacement.id);
         const cursorX = getLaneCursor(laneKey, laneForPlacement, shape.width || 100);
+        const sourceLaneEl = sourceEl ? getElementLane(sourceEl) : null;
+        if (!forceBranchColumn && sourceLaneEl && sourceLaneEl.id !== laneForPlacement.id) {
+          // hand-off: right under (or above) the step the work comes from; the role
+          // keeps an empty stretch, and if that spot is taken the step moves right
+          const sourceCenterX = Number(sourceEl.x || 0) + Number(sourceEl.width || 0) / 2;
+          const firstFreeX = findLastFlowShapeInLane(laneForPlacement)
+            ? computeLaneRightmost(laneForPlacement) + H_GAP + (shape.width || 100) / 2
+            : -Infinity;
+          x = Math.max(sourceCenterX, firstFreeX);
+          forceBranchColumn = true;
+        }
         if (!forceBranchColumn) {
           const desiredX = x ?? cursorX;
           x = desiredX < cursorX ? cursorX : desiredX;
@@ -1417,7 +1450,11 @@ export function applyIncrementalAppend({
       const targetType = String(target?.businessObject?.$type || target?.type || "");
       const isExclusiveGatewayConn =
         sourceType.includes("ExclusiveGateway") || targetType.includes("ExclusiveGateway");
-      const shouldReroute = sourceWasMoved || targetWasMoved || isExclusiveGatewayConn;
+      const isParallelGatewayConn =
+        sourceType.includes("ParallelGateway") || targetType.includes("ParallelGateway");
+      const crossesRoles = getElementLane(source)?.id !== getElementLane(target)?.id;
+      const shouldReroute =
+        sourceWasMoved || targetWasMoved || isExclusiveGatewayConn || isParallelGatewayConn || crossesRoles;
       if (!shouldReroute) return;
       const waypoints = computeWaypointsForConnection(conn);
       if (!waypoints) return;
@@ -1456,6 +1493,36 @@ export function applyIncrementalAppend({
           // ignore
         }
       });
+    });
+  }
+
+  // Two arrows should not share a side of a step while another side is free.
+  if (typeof modeling.updateWaypoints === "function") {
+    const touched = new Set([...createdByEngineId.values()]);
+    const neighbours = new Set();
+    elementRegistry.getAll().forEach((el) => {
+      if (!String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow")) return;
+      if (touched.has(el.source) || touched.has(el.target)) {
+        neighbours.add(el.source);
+        neighbours.add(el.target);
+      }
+    });
+    const connections = elementRegistry
+      .getAll()
+      .filter((el) =>
+        String(el?.businessObject?.$type || el?.type || "").includes("SequenceFlow") &&
+        (neighbours.has(el.source) || neighbours.has(el.target)),
+      )
+      .map((el) => ({ id: el.id, source: el.source, target: el.target, waypoints: el.waypoints }));
+    const shapes = elementRegistry.getAll().filter((el) => isFlowNode(el) && el.type !== "label");
+    spreadToFreeSides(connections, shapes).forEach((waypoints, id) => {
+      const conn = elementRegistry.get(id);
+      if (!conn) return;
+      try {
+        modeling.updateWaypoints(conn, waypoints.map((point) => ({ x: point.x, y: point.y })));
+      } catch {
+        // keep the original route
+      }
     });
   }
 
