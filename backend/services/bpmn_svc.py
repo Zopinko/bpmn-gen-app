@@ -974,7 +974,6 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
     POOL_PAD_X = 60
     POOL_PAD_Y = 0  # žiadny extra vertikálny padding – výška = súčet lanes
     MIN_LANE_HEIGHT = 200
-    GATEWAY_EXTRA_PADDING = 8
     WAYPOINT_SPACING = 44
     LANE_MARGIN = 0
     SYSTEM_LANE_ID = "Lane_System"
@@ -1468,8 +1467,10 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
             task_ref_w = NODE_SIZES.get("task", (100, 80))[0]
             if task_ref_w > width:
                 x += float(task_ref_w - width)
-        if ntype == "exclusiveGateway":
-            x += GATEWAY_EXTRA_PADDING
+        # a gateway sits in the middle of its column, so a hand-off from the step
+        # above (or below) is one straight vertical arrow
+        if ntype in GATEWAY_TYPES:
+            x += float(NODE_SIZES.get("task", (100, 80))[0] - width) / 2
         row_spacing = lane_row_spacing.get(
             lane_id, max(GRID_Y, lane_max_node_height.get(lane_id, 52) + ROW_MARGIN)
         )
@@ -1842,6 +1843,7 @@ def _add_di(
 
     # shapes pre uzly
     pos = layout["node_pos"]
+    gateway_label_els: Dict[str, ET.Element] = {}
     for n in data["nodes"]:
         nid = n["id"]
         x, y, w, h = pos[nid]
@@ -1862,7 +1864,7 @@ def _add_di(
             )
         elif _normalize_node_type(n).endswith("Gateway") and str(n.get("name") or "").strip():
             label = ET.SubElement(shp, T("bpmndi", "BPMNLabel"))
-            ET.SubElement(
+            gateway_label_els[nid] = ET.SubElement(
                 label,
                 T("dc", "Bounds"),
                 _gateway_label_bounds(float(x), float(y), float(w), str(n.get("name") or "")),
@@ -2324,6 +2326,28 @@ def _add_di(
 
     paths: Dict[str, List[Point]] = {f["id"]: _orthogonal_waypoints(f) for f in flows}
     _spread_to_free_sides(flows, paths, pos, _path_collides)
+
+    # A gateway label sits above the gateway; when an arrow uses the top corner
+    # (e.g. a hand-off from the role above), move the label to the free left side.
+    used_sides: Dict[str, set[str]] = {}
+    for f in flows:
+        points = paths.get(f["id"]) or []
+        if len(points) < 2:
+            continue
+        for nid, point in ((f.get("source"), points[0]), (f.get("target"), points[-1])):
+            if nid in gateway_label_els and nid in pos:
+                side = _side_of(pos[nid], point)
+                if side:
+                    used_sides.setdefault(nid, set()).add(side)
+    for nid, bounds_el in gateway_label_els.items():
+        sides = used_sides.get(nid, set())
+        if "T" not in sides or "L" in sides:
+            continue
+        gx, gy, _gw, gh = pos[nid]
+        label_w = float(bounds_el.get("width"))
+        label_h = float(bounds_el.get("height"))
+        bounds_el.set("x", _coord(round(gx - label_w - 6.0)))
+        bounds_el.set("y", _coord(round(gy + gh / 2.0 - label_h)))
 
     for f in flows:
         fid = f["id"]

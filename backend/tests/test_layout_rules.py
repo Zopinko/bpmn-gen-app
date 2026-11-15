@@ -75,6 +75,33 @@ def test_hand_off_across_two_roles_keeps_the_column():
     assert _cx(pos, "a") == _cx(pos, "b") == _cx(pos, "c")
 
 
+def test_hand_off_to_a_decision_goes_straight_down():
+    engine = _engine(
+        [("s", "startEvent", "L1"), ("a", "task", "L1"), ("b", "task", "L2"), ("g", "exclusiveGateway", "L3"),
+         ("y", "task", "L3"), ("n", "task", "L3"), ("e", "endEvent", "L3")],
+        [("s", "a"), ("a", "b"), ("b", "g"), ("g", "y"), ("g", "n"), ("y", "e"), ("n", "e")],
+    )
+    pos = _build_layout(engine)["node_pos"]
+    assert _cx(pos, "g") == _cx(pos, "b")
+    path = _points(engine, "b", "g")
+    assert path == [(_cx(pos, "b"), pos["b"][1] + pos["b"][3]), (_cx(pos, "g"), pos["g"][1])]
+
+
+def test_decision_label_moves_left_when_the_arrow_comes_from_above():
+    engine = _engine(
+        [("s", "startEvent", "L1"), ("a", "task", "L1"), ("b", "task", "L2"), ("g", "exclusiveGateway", "L3"),
+         ("y", "task", "L3"), ("n", "task", "L3"), ("e", "endEvent", "L3")],
+        [("s", "a"), ("a", "b"), ("b", "g"), ("g", "y"), ("g", "n"), ("y", "e"), ("n", "e")],
+    )
+    engine["nodes"][3]["name"] = "Laptop in stock?"
+    pos = _build_layout(engine)["node_pos"]
+    root = ET.fromstring(generate_bpmn_from_json(engine))
+    shape = next(el for el in root.iter() if el.tag.endswith("BPMNShape") and el.attrib.get("bpmnElement") == "g")
+    label = next(el for el in shape.iter() if el.tag.endswith("Bounds") and el is not shape.find("{*}Bounds"))
+    label_right = float(label.attrib["x"]) + float(label.attrib["width"])
+    assert label_right <= pos["g"][0]  # the label stays clear of the vertical arrow
+
+
 def test_taken_spot_goes_down_then_right():
     # a hands work to two warehouse steps: only one fits under it
     engine = _engine(
