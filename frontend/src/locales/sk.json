@@ -291,7 +291,24 @@
     "save_name": "Uložiť názov",
     "role_above_label": "Rola nad",
     "role_below_label": "Rola pod",
-    "drag_to_move": "Potiahni pre presun"
+    "drag_to_move": "Potiahni pre presun",
+    "next_step": "Ďalší krok",
+    "add_branch": "Pridať vetvu",
+    "connect_click": "Prepojiť (klikni na cieľ alebo ťahaj)",
+    "rename": "Premenovať",
+    "double_click": "dvojklik",
+    "change_type": "Zmeniť na",
+    "more": "Viac",
+    "move_to_role": "Presunúť do roly",
+    "detail": "Detail",
+    "name_branches": "Pomenovať vetvy Áno / Nie",
+    "parallel_label": "Súbežné vetvenie",
+    "note_drag": "Poznámka (potiahni na miesto)",
+    "pad_step_placeholder": "Čo nasleduje?",
+    "pad_branch_placeholder": "Čo sa stane v tejto vetve?",
+    "pad_step_hint": "Enter pridá · Shift+Enter ďalší krok · „Ak …“ vytvorí rozhodnutie",
+    "connect_hint": "Klikni na objekt, kam má šípka viesť",
+    "deleted": "Zmazané"
   },
   "overlay_legend": {
     "title": "Legenda",
@@ -1338,6 +1355,8 @@
     "guide_state_now": "teraz",
     "guide_state_wait": "čaká",
     "guide_step_question": "Čo robí {{lane}} ďalej?",
+    "guide_step_placeholder": "Jeden krok alebo celá práca role…",
+    "guide_step_hint": "Shift+Enter = ďalší krok. Napr. „Ak je tovar na sklade, …“ alebo „Súčasne …“.",
     "guide_step_add": "Pridať krok",
     "guide_write_more": "Písať viac naraz",
     "guide_lane_done": "Hotovo s rolou",
@@ -1357,7 +1376,8 @@
     "guide_repair_step": "Pridať nový krok",
     "guide_repair_target": "Existujúci krok",
     "guide_repair_step_name": "Názov kroku",
-    "guide_repair_lane": "Ktorá rola krok vykoná?"
+    "guide_repair_lane": "Ktorá rola krok vykoná?",
+    "map_action_error": "Krok sa nepodarilo pridať. Skús to inak napísať."
   },
   "home": {
     "greeting_morning": "Dobré ráno",

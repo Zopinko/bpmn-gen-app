@@ -592,7 +592,6 @@ a.btn {
 
 /* ---------- popovers, context pad, modals ---------- */
 
-.custom-context-pad,
 .org-tree-menu,
 .map-note,
 .wizard-toast {
@@ -600,10 +599,6 @@ a.btn {
   border-radius: var(--radius-card);
   background: var(--surface-raised);
   box-shadow: var(--shadow-pop);
-}
-
-.custom-context-pad__btn {
-  border-radius: 6px;
 }
 
 [class*="modal"][class*="__backdrop"],
@@ -2804,4 +2799,262 @@ button.guide-progress__step:hover {
   .ws-layout--inspector .wizard-viewer > .guide-progress {
     margin-right: 310px;
   }
+}
+
+/* the guide composer takes one step or a whole description of the role */
+textarea.guide-bubble__input {
+  display: block;
+  resize: none;
+  line-height: 1.4;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.guide-bubble__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Toolbar above a clicked object
+   ========================================================================== */
+
+.custom-context-pad {
+  display: flex;
+  flex-direction: column-reverse; /* above the object: the menu opens upwards */
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+}
+
+.custom-context-pad--below {
+  flex-direction: column;
+  transform: translate(-50%, 0);
+}
+
+.custom-context-pad--lane {
+  align-items: flex-start;
+  flex-direction: column;
+  transform: none;
+}
+
+.custom-context-pad--flow {
+  transform: translate(-50%, -100%);
+}
+
+.custom-context-pad--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.custom-context-pad__bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.custom-context-pad__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.custom-context-pad__btn:hover,
+.custom-context-pad__btn.is-open {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.custom-context-pad__btn:focus-visible {
+  outline: 2px solid var(--guide);
+  outline-offset: 1px;
+}
+
+.custom-context-pad__btn--accent {
+  color: var(--guide);
+}
+
+.custom-context-pad__btn--accent:hover,
+.custom-context-pad__btn--accent.is-open {
+  background: var(--guide-soft);
+  color: var(--guide);
+}
+
+.custom-context-pad__btn--danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.custom-context-pad__btn--drag {
+  cursor: grab;
+}
+
+.custom-context-pad__svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.custom-context-pad__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--border-strong);
+}
+
+.custom-context-pad__panel {
+  min-width: 190px;
+  max-width: 280px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.custom-context-pad__panel[hidden] {
+  display: none;
+}
+
+.custom-context-pad__item {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  justify-content: flex-start;
+  color: var(--text-primary);
+}
+
+.custom-context-pad__item .custom-context-pad__svg {
+  color: var(--text-muted);
+}
+
+.custom-context-pad__item--danger,
+.custom-context-pad__item--danger .custom-context-pad__svg {
+  color: var(--danger);
+}
+
+.custom-context-pad__item--danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.custom-context-pad__label {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-context-pad__heading {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.custom-context-pad__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  width: 280px;
+}
+
+.custom-context-pad__input {
+  flex: 1 1 auto;
+  min-height: 32px;
+  max-height: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: none;
+}
+
+.custom-context-pad__input:focus {
+  outline: 2px solid var(--guide);
+  outline-offset: 0;
+}
+
+.custom-context-pad__submit {
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--guide-strong);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.custom-context-pad__submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.custom-context-pad__hint {
+  display: block;
+  padding: 5px 2px 1px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* while the toolbar is open the guide steps back */
+[data-pad-open] .guide-bubble {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* click-to-connect: the possible targets light up */
+[data-connecting] .djs-element.connect-target .djs-visual > :first-child {
+  stroke: var(--guide) !important;
+  stroke-width: 2.5px !important;
+}
+
+[data-connecting] .djs-element.connect-target {
+  cursor: pointer;
+}
+
+.map-viewer__status-btn {
+  margin-left: 10px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--guide);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-viewer__status-btn:hover {
+  background: var(--guide-soft);
 }

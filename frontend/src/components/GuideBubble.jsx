@@ -100,16 +100,26 @@ export default function GuideBubble({ title, message, actions = [], collapsed = 
         >
           <label className="guide-bubble__label">
             <span className="guide-bubble__title">{t("workspace.guide_step_question", { lane: composer.laneName })}</span>
-            <input
+            {/* one step, or the whole work of the role: every line becomes a step,
+                lines with "Ak ..." / "Súčasne ..." become decisions and parallel branches */}
+            <textarea
               ref={composerFocus.inputRef}
               onFocus={composerFocus.onFocus}
               onBlur={composerFocus.onBlur}
-              type="text"
               className="guide-bubble__input"
+              rows={Math.min(6, Math.max(1, composer.value.split(/\n/).length))}
+              placeholder={t("workspace.guide_step_placeholder")}
               value={composer.value}
               onChange={(event) => composer.onChange(event.target.value)}
+              onKeyDown={(event) => {
+                // Enter adds, Shift+Enter starts a new line (another step)
+                if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                if (canSubmit) void composer.onSubmit();
+              }}
               readOnly={composer.busy}
             />
+            <span className="guide-bubble__hint">{t("workspace.guide_step_hint")}</span>
           </label>
           <button type="submit" className="guide-bubble__btn guide-bubble__btn--go" disabled={!canSubmit}>
             {t("workspace.guide_step_add")}
