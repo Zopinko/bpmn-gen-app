@@ -5,10 +5,13 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, StrictBool
 
 from auth.db import get_connection
 from auth.deps import is_super_admin_id, require_super_admin
 from auth.service import delete_user_by_admin, get_user_by_id
+from services.feedback_storage import list_feedback, set_feedback_resolved
+from services.model_storage import count_user_models
 
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"], dependencies=[Depends(require_super_admin)])
@@ -95,6 +98,7 @@ def list_admin_users():
             "created_org_count": int(row["created_org_count"] or 0),
             "org_names": [name.strip() for name in str(row["org_names"] or "").split(",") if name.strip()],
             "session_count": int(row["session_count"] or 0),
+            "sandbox_model_count": count_user_models(row["id"]),
         }
         for row in rows
     ]
@@ -158,10 +162,20 @@ def list_admin_orgs():
 
 @router.get("/feedback")
 def list_admin_feedback():
-    from services.feedback_storage import list_feedback
-
     items = list_feedback()
     return {"count": len(items), "items": items}
+
+
+class FeedbackStatusUpdate(BaseModel):
+    resolved: StrictBool
+
+
+@router.patch("/feedback/{feedback_id}")
+def update_admin_feedback_status(feedback_id: str, payload: FeedbackStatusUpdate):
+    updated = set_feedback_resolved(feedback_id, payload.resolved)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Feedback not found.")
+    return updated
 
 
 @router.get("/models")

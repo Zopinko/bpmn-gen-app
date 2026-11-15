@@ -159,25 +159,30 @@ def delete_model(model_id: str, user_id: Optional[str] = None) -> None:
         path.unlink()
 
 
-def list_models(search: str | None = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    items: List[Dict[str, Any]] = []
-    directory = _user_models_dir(user_id) if user_id else _models_dir()
+def _iter_saved_models(directory: Path):
     for file in directory.glob("*.json"):
         try:
             with file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            items.append(
-                {
-                    "id": data.get("id"),
-                    "name": data.get("name"),
-                    "created_at": data.get("created_at"),
-                    "updated_at": data.get("updated_at"),
-                    "process_meta": data.get("process_meta"),
-                }
-            )
+            if isinstance(data, dict):
+                yield data
+            else:
+                logger.warning("Invalid model file while listing: path=%s", file)
         except Exception:
             logger.warning("Failed to read model file while listing: path=%s", file)
-            continue
+
+
+def count_user_models(user_id: str) -> int:
+    directory = _base_dir / "users" / user_id / "models"
+    return sum(1 for _ in _iter_saved_models(directory))
+
+
+def list_models(search: str | None = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    directory = _user_models_dir(user_id) if user_id else _models_dir()
+    items = [
+        {key: data.get(key) for key in ("id", "name", "created_at", "updated_at", "process_meta")}
+        for data in _iter_saved_models(directory)
+    ]
     if search:
         s = search.lower()
         items = [m for m in items if s in (m.get("name") or "").lower()]

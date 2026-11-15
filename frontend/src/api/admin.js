@@ -36,6 +36,14 @@ export function getAdminFeedback() {
   return request("/api/admin/feedback");
 }
 
+export function updateAdminFeedbackStatus(id, resolved) {
+  return request(`/api/admin/feedback/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolved }),
+  });
+}
+
 export function submitFeedback(message, page = "") {
   return request("/api/feedback", {
     method: "POST",
