@@ -65,6 +65,8 @@ export default function MapViewer({
   orgId = "",
   processNodeId = "",
   readOnly = false,
+  onNodeAction = null,
+  onShowDetail = null,
 }) {
   const { t } = useTranslation("map_viewer");
   const ENABLE_LANE_HANDLES = false;
@@ -73,6 +75,14 @@ export default function MapViewer({
   const guideInsetRef = useRef(guideBubbleInsetRight);
   const guideInsetScheduleRef = useRef(null);
   const modelerRef = useRef(null);
+  // the toolbar above an object is built once per modeler: read the latest callbacks through refs
+  const onNodeActionRef = useRef(onNodeAction);
+  const onShowDetailRef = useRef(onShowDetail);
+  const endConnectModeRef = useRef(null);
+  onNodeActionRef.current = onNodeAction;
+  onShowDetailRef.current = onShowDetail;
+  const [connectHint, setConnectHint] = useState(false);
+  const [toastUndo, setToastUndo] = useState(false);
   const [importError, setImportError] = useState("");
   const [confirmModal, setConfirmModal] = useState(null);
   const [inputModal, setInputModal] = useState(null);
@@ -133,16 +143,18 @@ export default function MapViewer({
     onEngineJsonPatch(patch);
   };
 
-  const showToast = (message) => {
+  const showToast = (message, { undo = false } = {}) => {
     if (!message) return;
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
     }
     setToastMessage(message);
+    setToastUndo(undo);
     toastTimerRef.current = setTimeout(() => {
       setToastMessage("");
+      setToastUndo(false);
       toastTimerRef.current = null;
-    }, 1800);
+    }, undo ? 5000 : 1800);
     try {
       window.dispatchEvent(new CustomEvent("toast", { detail: { message } }));
     } catch {
@@ -185,14 +197,6 @@ export default function MapViewer({
       setStepCompetencies({});
     }
   }, [workforceMode, orgId, processNodeId]);
-
-  const openConfirmModal = ({ title, message, onConfirm }) => {
-    setConfirmModal({
-      title,
-      message,
-      onConfirm: typeof onConfirm === "function" ? onConfirm : null,
-    });
-  };
 
   const closeConfirmModal = () => {
     setConfirmModal(null);
@@ -237,7 +241,7 @@ export default function MapViewer({
           modeling.removeElements([el]);
         }
       });
-      showToast(t("deleted_undo"));
+      showToast(t("deleted"), { undo: true });
     } catch {
       // ignore delete errors
     }
@@ -707,7 +711,6 @@ export default function MapViewer({
     const connect = modeler.get("connect");
     const create = modeler.get("create");
     const elementFactory = modeler.get("elementFactory");
-    const autoPlace = modeler.get("autoPlace", false);
     const commandStack = modeler.get("commandStack", false);
     const selection = modeler.get("selection", false);
     const refreshLocalUndo = () => {
@@ -910,7 +913,6 @@ export default function MapViewer({
     let contextPadElement = null;
     let contextPadContainer = null;
     let contextPadSuppressed = false;
-    let contextPadHovered = false;
     let contextPadCloseTimer = null;
 
     const cancelContextPadClose = () => {
@@ -922,11 +924,8 @@ export default function MapViewer({
 
     const scheduleContextPadClose = () => {
       cancelContextPadClose();
-      contextPadCloseTimer = setTimeout(() => {
-        if (!contextPadHovered) {
-          clearContextPad();
-        }
-      }, 140);
+      // the toolbar stays open until the person clicks elsewhere or presses Esc
+      contextPadCloseTimer = null;
     };
 
     const clearLaneHandles = () => {
@@ -1021,7 +1020,7 @@ export default function MapViewer({
       contextPadElement = null;
       contextPadContainer = null;
       contextPadSuppressed = false;
-      contextPadHovered = false;
+      if (containerRef.current) delete containerRef.current.dataset.padOpen;
     };
 
     const shouldShowContextPad = (element) => {
@@ -1039,77 +1038,358 @@ export default function MapViewer({
       return true;
     };
 
+    // --- toolbar above a clicked object -------------------------------------------
+    const PAD_ICONS = {
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      branch: '<path d="M6 4v8a4 4 0 0 0 4 4h8"/><path d="M15 13l3 3-3 3"/>',
+      connect: '<path d="M5 12h12"/><path d="M13 7l5 5-5 5"/>',
+      rename: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+      type: '<path d="M12 3l9 9-9 9-9-9z"/>',
+      parallel: '<path d="M12 3l9 9-9 9-9-9z"/><path d="M12 8v8M8 12h8"/>',
+      task: '<rect x="3" y="6" width="18" height="12" rx="3"/>',
+      end: '<circle cx="12" cy="12" r="7.5" stroke-width="3.2"/>',
+      more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
+      trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+      above: '<path d="M4 14h16v6H4z"/><path d="M12 3v7M9 6l3-3 3 3"/>',
+      below: '<path d="M4 4h16v6H4z"/><path d="M12 21v-7M9 18l3 3 3-3"/>',
+      move: '<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+      note: '<path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4"/>',
+      detail: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+      lane: '<path d="M3 6h18M3 12h18M3 18h18"/>',
+      tag: '<path d="M4 4h8l8 8-8 8-8-8z"/><circle cx="9" cy="9" r="1.3"/>',
+    };
+    const padIcon = (name) =>
+      `<svg class="custom-context-pad__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PAD_ICONS[name] || ""}</svg>`;
+
+    // click "Connect", then click the target (dragging from the button still works too)
+    let connectSource = null;
+    let connectTargets = [];
+    const endConnectMode = () => {
+      const canvasSvc = modeler.get("canvas");
+      connectTargets.forEach((el) => {
+        try {
+          canvasSvc.removeMarker(el, "connect-target");
+        } catch {
+          // element may be gone
+        }
+      });
+      connectTargets = [];
+      connectSource = null;
+      if (containerRef.current) delete containerRef.current.dataset.connecting;
+      setConnectHint(false);
+    };
+    const startConnectMode = (source) => {
+      const canvasSvc = modeler.get("canvas");
+      const rules = modeler.get("rules", false);
+      clearContextPad();
+      endConnectMode();
+      connectSource = source;
+      connectTargets = elementRegistry.filter((el) => {
+        if (el === source || el.waypoints || el.type === "label") return false;
+        const type = el.businessObject?.$type || "";
+        if (!type || /Lane|Participant|Process|Collaboration|TextAnnotation/.test(type)) return false;
+        try {
+          return Boolean(rules?.allowed("connection.create", { source, target: el }));
+        } catch {
+          return false;
+        }
+      });
+      connectTargets.forEach((el) => canvasSvc.addMarker(el, "connect-target"));
+      if (containerRef.current) containerRef.current.dataset.connecting = "1";
+      setConnectHint(true);
+    };
+    const finishConnectMode = (target) => {
+      const source = connectSource;
+      const allowed = connectTargets.includes(target);
+      endConnectMode();
+      if (!source || !allowed) return;
+      try {
+        modeling.connect(source, target);
+      } catch {
+        // rules blocked it
+      }
+    };
+    endConnectModeRef.current = endConnectMode;
+
+    const laneOfElement = (element) => {
+      const cx = (element.x || 0) + (element.width || 0) / 2;
+      const cy = (element.y || 0) + (element.height || 0) / 2;
+      return elementRegistry.find((el) =>
+        el.businessObject?.$type === "bpmn:Lane" &&
+        cx >= el.x && cx <= el.x + el.width && cy >= el.y && cy <= el.y + el.height,
+      );
+    };
+
     const createContextPad = (element) => {
       if (!overlays || !element) return;
       if (contextPadElement === element) return;
 
       clearContextPad();
 
-      const container = document.createElement("div");
-      container.className = "custom-context-pad";
       const boType = element.businessObject?.$type || "";
       const isLane = boType === "bpmn:Lane" || boType === "bpmn:Participant";
       const isSequenceFlow = boType === "bpmn:SequenceFlow";
+      const isGateway = /Gateway$/.test(boType);
+      const isEnd = boType === "bpmn:EndEvent";
+      const isStart = boType === "bpmn:StartEvent";
+      const isAnnotation = boType === "bpmn:TextAnnotation";
+      const isTask = !isGateway && !isEnd && !isStart && !isAnnotation && !isLane && !isSequenceFlow;
+      const nodeAction = onNodeActionRef.current;
+      const canModel = !readOnly && typeof nodeAction === "function";
+      const nodeId = getEngineId(element) || element.id;
+      const directEditing = modeler.get("directEditing", false);
+
+      const container = document.createElement("div");
+      const bar = document.createElement("div");
+      bar.className = "custom-context-pad__bar";
+      const panel = document.createElement("div");
+      panel.className = "custom-context-pad__panel";
+      panel.hidden = true;
+      container.appendChild(bar);
+      container.appendChild(panel);
+
+      // above the object; below it when there is no room at the top of the map
+      // or when the bar would cover a step right above (and the space below is free)
+      let below = false;
+      if (!isLane && !isSequenceFlow) {
+        try {
+          const viewbox = modeler.get("canvas").viewbox();
+          const band = 52 / viewbox.scale;
+          const half = 110 / viewbox.scale;
+          const cx = (element.x || 0) + (element.width || 0) / 2;
+          const blocked = (top, bottom) => Boolean(elementRegistry.find((el) => {
+            if (el === element || el.waypoints || el.type === "label") return false;
+            if (/Lane|Participant|Process|Collaboration/.test(el.businessObject?.$type || "")) return false;
+            return el.x < cx + half && el.x + el.width > cx - half && el.y < bottom && el.y + el.height > top;
+          }));
+          const elTop = element.y || 0;
+          const elBottom = elTop + (element.height || 0);
+          below = (elTop - viewbox.y) * viewbox.scale < 64 ||
+            (blocked(elTop - band, elTop) && !blocked(elBottom, elBottom + band));
+        } catch {
+          below = false;
+        }
+      }
+      container.className = [
+        "custom-context-pad",
+        below ? "custom-context-pad--below" : "",
+        isLane ? "custom-context-pad--lane" : "",
+        isSequenceFlow ? "custom-context-pad--flow" : "",
+      ].filter(Boolean).join(" ");
 
       contextPadContainer = container;
       contextPadSuppressed = false;
-      contextPadHovered = false;
-      container.addEventListener("mouseenter", () => {
-        contextPadHovered = true;
-        cancelContextPadClose();
-      });
-      container.addEventListener("mouseleave", () => {
-        contextPadHovered = false;
-        scheduleContextPadClose();
-      });
+      container.addEventListener("mouseenter", cancelContextPadClose);
+      ["pointerdown", "click", "dblclick", "wheel"].forEach((evt) =>
+        container.addEventListener(evt, (event) => event.stopPropagation()),
+      );
 
-      const makeButton = (
-        title,
-        iconClass,
-        { onClick, onStart, className, hideOnAction, closeOnClick = false, label },
-      ) => {
+      let activeButton = null;
+      const closePanel = () => {
+        panel.hidden = true;
+        panel.replaceChildren();
+        activeButton?.classList.remove("is-open");
+        activeButton = null;
+      };
+      const openPanel = (button, fill) => {
+        if (activeButton === button) {
+          closePanel();
+          return;
+        }
+        closePanel();
+        activeButton = button;
+        button.classList.add("is-open");
+        fill(panel);
+        panel.hidden = false;
+      };
+
+      const makeButton = (title, iconName, { onClick, onStart, className, label } = {}) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = `custom-context-pad__btn${className ? ` ${className}` : ""}`;
         btn.title = title;
         btn.setAttribute("aria-label", title);
-        const icon = document.createElement("span");
-        icon.className = `custom-context-pad__icon ${iconClass}`;
-        btn.appendChild(icon);
+        btn.innerHTML = padIcon(iconName);
         if (label) {
           const text = document.createElement("span");
           text.className = "custom-context-pad__label";
           text.textContent = label;
           btn.appendChild(text);
         }
-        const handlePointerDown = (event) => {
+        btn.addEventListener("mousedown", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          if (hideOnAction && onStart) {
-            suppressContextPad();
-          }
-          if (onStart) {
-            onStart(event);
-          }
-        };
-        btn.addEventListener("mousedown", handlePointerDown);
-        btn.addEventListener("touchstart", handlePointerDown);
+          if (onStart) onStart(event);
+        });
         if (onClick) {
           btn.addEventListener("click", (event) => {
             event.preventDefault();
-            event.stopPropagation();
-            onClick(event);
-            if (closeOnClick) {
-              clearContextPad();
-            }
+            onClick(event, btn);
           });
         }
         return btn;
       };
+      const makeMenuItem = (label, iconName, onClick, className = "") =>
+        makeButton(label, iconName, { onClick, className: `custom-context-pad__item ${className}`.trim(), label });
+      const separator = () => {
+        const sep = document.createElement("span");
+        sep.className = "custom-context-pad__sep";
+        sep.setAttribute("aria-hidden", "true");
+        return sep;
+      };
+
+      const deleteNow = () => {
+        clearContextPad();
+        executeDeleteElements([element]);
+      };
+      const rename = () => {
+        clearContextPad();
+        directEditing?.activate?.(element);
+      };
+      // the model may know the step by its engine id, its diagram id or only by its name
+      const nodeRef = {
+        nodeId,
+        nodeIds: [nodeId, element.businessObject?.id, element.id].filter(Boolean),
+        nodeName: element.businessObject?.name || "",
+      };
+      const runAction = async (action, payload = {}) => {
+        clearContextPad();
+        await nodeAction(action, { ...nodeRef, ...payload });
+      };
+
+      // small composer for the next step (or a new branch); the same parser as the guide
+      const fillComposer = (action, placeholder) => (target) => {
+        const form = document.createElement("form");
+        form.className = "custom-context-pad__composer";
+        const input = document.createElement("textarea");
+        input.className = "custom-context-pad__input";
+        input.rows = 1;
+        input.placeholder = placeholder;
+        const submit = document.createElement("button");
+        submit.type = "submit";
+        submit.className = "custom-context-pad__submit";
+        submit.textContent = t("add_short");
+        submit.disabled = true;
+        const hint = document.createElement("span");
+        hint.className = "custom-context-pad__hint";
+        hint.textContent = t("pad_step_hint");
+        input.addEventListener("input", () => {
+          input.rows = Math.min(5, Math.max(1, input.value.split(/\n/).length));
+          submit.disabled = !input.value.trim();
+        });
+        const send = async () => {
+          const text = input.value.trim();
+          if (!text || input.readOnly) return;
+          input.readOnly = true;
+          submit.disabled = true;
+          const ok = await nodeAction(action, { ...nodeRef, text });
+          if (ok) {
+            clearContextPad();
+          } else if (input.isConnected) {
+            input.readOnly = false;
+            submit.disabled = false;
+            input.focus();
+          }
+        };
+        input.addEventListener("keydown", (event) => {
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closePanel();
+            return;
+          }
+          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            void send();
+          }
+        });
+        input.addEventListener("mousedown", (event) => event.stopPropagation());
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          void send();
+        });
+        form.appendChild(input);
+        form.appendChild(submit);
+        target.appendChild(form);
+        target.appendChild(hint);
+        window.setTimeout(() => input.focus(), 0);
+      };
+
+      const fillTypes = (target) => {
+        const options = [
+          ["task", t("task_label"), "task"],
+          ["exclusiveGateway", t("decision"), "type"],
+          ["parallelGateway", t("parallel_label"), "parallel"],
+        ];
+        if (!(element.outgoing || []).length) options.push(["endEvent", t("end_event"), "end"]);
+        const current = isGateway
+          ? (boType === "bpmn:ParallelGateway" ? "parallelGateway" : "exclusiveGateway")
+          : isEnd ? "endEvent" : "task";
+        options
+          .filter(([type]) => type !== current)
+          .forEach(([type, label, icon]) =>
+            target.appendChild(makeMenuItem(label, icon, () => runAction("changeType", { type }))));
+      };
+
+      const fillLanes = (target) => {
+        const currentLane = laneOfElement(element);
+        elementRegistry
+          .filter((el) => el.businessObject?.$type === "bpmn:Lane" && el !== currentLane)
+          .sort((a, b) => a.y - b.y)
+          .forEach((laneEl) => {
+            const laneId = getEngineId(laneEl) || laneEl.id;
+            target.appendChild(makeMenuItem(laneEl.businessObject?.name || laneId, "lane",
+              () => runAction("moveToLane", { laneId, laneName: laneEl.businessObject?.name || "" })));
+          });
+      };
+
+      const fillMore = (target) => {
+        if (canModel && (isTask || isGateway || isEnd)) {
+          if (isGateway && (element.outgoing || []).length >= 2) {
+            target.appendChild(makeMenuItem(t("name_branches"), "tag", () => runAction("nameBranches")));
+          }
+          target.appendChild(makeMenuItem(t("move_to_role"), "lane", () => {
+            target.replaceChildren();
+            const heading = document.createElement("div");
+            heading.className = "custom-context-pad__heading";
+            heading.textContent = t("move_to_role");
+            target.appendChild(heading);
+            fillLanes(target);
+          }));
+        }
+        if (!isEnd && !readOnly) {
+          target.appendChild(makeButton(t("note_drag"), "note", {
+            className: "custom-context-pad__item",
+            label: t("note"),
+            onStart: (event) => {
+              suppressContextPad();
+              const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
+              create.start(event, shape, { source: element });
+            },
+          }));
+        }
+        if (typeof onShowDetailRef.current === "function") {
+          target.appendChild(makeMenuItem(t("detail"), "detail", () => {
+            clearContextPad();
+            selection?.select(element);
+            onShowDetailRef.current();
+          }));
+        }
+        if (!readOnly && !isEnd) {
+          target.appendChild(makeMenuItem(`${t("delete")} (Del)`, "trash", deleteNow, "custom-context-pad__item--danger"));
+        }
+      };
+
+      const renameButton = () => makeButton(`${t("rename")} (${t("double_click")})`, "rename", { onClick: rename });
+      const deleteButton = () => makeButton(`${t("delete")} (Del)`, "trash", {
+        onClick: deleteNow,
+        className: "custom-context-pad__btn--danger",
+      });
 
       if (isLane) {
         const startLaneDrag = laneDragStartMapRef.current.get(element.id);
         const addLaneWithPrompt = (position) => {
+          clearContextPad();
           const created = modeling.addLane(element, position);
           if (!created) return;
           const currentName = created.businessObject?.name || "";
@@ -1124,199 +1404,90 @@ export default function MapViewer({
             },
           });
         };
-
-        container.appendChild(
-          makeButton(t("add_role_above"), "bpmn-icon-lane-insert-above", {
-            onClick: () => addLaneWithPrompt("top"),
-            hideOnAction: false,
-            closeOnClick: true,
-            label: t("role_above_label"),
-          }),
-        );
-        container.appendChild(
-          makeButton(t("add_role_below"), "bpmn-icon-lane-insert-below", {
-            onClick: () => addLaneWithPrompt("bottom"),
-            hideOnAction: false,
-            closeOnClick: true,
-            label: t("role_below_label"),
-          }),
-        );
-        container.appendChild(
-          makeButton(t("drag_to_move"), "bpmn-icon-hand-tool", {
-            onStart: (event) => startLaneDrag?.(event),
-            className: "custom-context-pad__btn--drag",
-            hideOnAction: true,
-            label: t("move"),
-          }),
-        );
-      } else if (isSequenceFlow) {
         if (!readOnly) {
-          container.appendChild(
-            makeButton(t("delete"), "bpmn-icon-trash", {
-              onClick: () => {
-                clearContextPad();
-                openConfirmModal({
-                  title: t("delete_connection"),
-                  message: t("delete_connection_confirm"),
-                  onConfirm: () => {
-                    executeDeleteElements([element]);
-                  },
-                });
-              },
-              className: "custom-context-pad__btn--danger",
-              hideOnAction: false,
-              label: t("delete"),
-            }),
-          );
+          bar.appendChild(renameButton());
+          bar.appendChild(makeButton(t("add_role_above"), "above", { onClick: () => addLaneWithPrompt("top") }));
+          bar.appendChild(makeButton(t("add_role_below"), "below", { onClick: () => addLaneWithPrompt("bottom") }));
+          bar.appendChild(makeButton(t("drag_to_move"), "move", {
+            onStart: (event) => {
+              suppressContextPad();
+              startLaneDrag?.(event);
+            },
+            className: "custom-context-pad__btn--drag",
+          }));
+        }
+      } else if (isSequenceFlow || isAnnotation) {
+        if (!readOnly) {
+          bar.appendChild(renameButton());
+          bar.appendChild(separator());
+          bar.appendChild(deleteButton());
         }
       } else {
-        const appendShape = (type, width, height) => {
-          const defaults = {
-            "bpmn:Task": t("process_step"),
-            "bpmn:UserTask": t("process_step"),
-            "bpmn:ServiceTask": t("process_step"),
-            "bpmn:ExclusiveGateway": t("new_decision"),
-            "bpmn:ParallelGateway": t("new_decision"),
-            "bpmn:InclusiveGateway": t("new_decision"),
-            "bpmn:Gateway": t("new_decision"),
-            "bpmn:StartEvent": t("start_event"),
-            "bpmn:EndEvent": t("end_event"),
-          };
-          const shape = elementFactory.createShape({ type });
-          if (shape?.businessObject && defaults[type]) {
-            shape.businessObject.name = defaults[type];
-          }
-          if (typeof width === "number" && typeof height === "number") {
-            shape.width = width;
-            shape.height = height;
-          }
-          const shapeHeight = shape.height || height || 0;
-          if (autoPlace && typeof autoPlace.append === "function") {
-            const created = autoPlace.append(element, shape);
-            if (created?.businessObject && defaults[type]) {
-              modeling.updateProperties(created, { name: defaults[type] });
-            }
-            return;
-          }
-          const parent = element.parent || element;
-          const x = (element.x || 0) + (element.width || 0) + 80;
-          const y = (element.y || 0) + ((element.height || 0) / 2) - (shapeHeight / 2);
-          const created = modeling.createShape(shape, { x, y }, parent);
-          if (created?.businessObject && defaults[type]) {
-            modeling.updateProperties(created, { name: defaults[type] });
-          }
-        };
-
-        container.appendChild(
-          makeButton(t("connect"), "bpmn-icon-connection-multi", {
-            onStart: (event) => connect.start(event, element),
+        if (canModel && (isTask || isStart)) {
+          bar.appendChild(makeButton(t("next_step"), "plus", {
             className: "custom-context-pad__btn--accent",
-            hideOnAction: true,
-            label: t("connect"),
-          }),
-        );
-
-        const addMenu = document.createElement("div");
-        addMenu.className = "custom-context-pad__add-menu";
-
-        const addButton = document.createElement("button");
-        addButton.type = "button";
-        addButton.className = "custom-context-pad__btn custom-context-pad__btn--add";
-        addButton.setAttribute("aria-label", t("add_element"));
-        addButton.title = t("add_element");
-        const addIcon = document.createElement("span");
-        addIcon.className = "custom-context-pad__icon";
-        addIcon.textContent = "+";
-        addButton.appendChild(addIcon);
-        const addLabel = document.createElement("span");
-        addLabel.className = "custom-context-pad__label";
-        addLabel.textContent = t("add_short");
-        addButton.appendChild(addLabel);
-        addMenu.appendChild(addButton);
-
-        const menu = document.createElement("div");
-        menu.className = "custom-context-pad__menu";
-
-        menu.appendChild(
-          makeButton(t("task_title"), "bpmn-icon-task", {
-            onClick: () => appendShape("bpmn:Task", 100, 80),
-            hideOnAction: false,
-            closeOnClick: true,
-            className: "custom-context-pad__btn--menu",
-            label: t("task_label"),
-          }),
-        );
-
-        menu.appendChild(
-          makeButton(t("decision"), "bpmn-icon-gateway-xor", {
-            onClick: () => appendShape("bpmn:ExclusiveGateway"),
-            hideOnAction: false,
-            closeOnClick: true,
-            className: "custom-context-pad__btn--menu",
-            label: t("decision"),
-          }),
-        );
-
-        menu.appendChild(
-          makeButton(t("start_event"), "bpmn-icon-start-event-none", {
-            onClick: () => appendShape("bpmn:StartEvent"),
-            hideOnAction: false,
-            closeOnClick: true,
-            className: "custom-context-pad__btn--menu",
-            label: t("start_event"),
-          }),
-        );
-
-        menu.appendChild(
-          makeButton(t("end_event"), "bpmn-icon-end-event-none", {
-            onClick: () => appendShape("bpmn:EndEvent"),
-            hideOnAction: false,
-            closeOnClick: true,
-            className: "custom-context-pad__btn--menu",
-            label: t("end_event"),
-          }),
-        );
-
-        addMenu.appendChild(menu);
-        container.appendChild(addMenu);
-
-        container.appendChild(
-          makeButton(t("note"), "bpmn-icon-text-annotation", {
-            onStart: (event) => {
-              const shape = elementFactory.createShape({ type: "bpmn:TextAnnotation" });
-              create.start(event, shape, { source: element });
-            },
-            hideOnAction: true,
-            label: t("note"),
-          }),
-        );
-
-        if (!readOnly) {
-          container.appendChild(
-            makeButton(t("delete"), "bpmn-icon-trash", {
-              onClick: () => {
-                clearContextPad();
-                openConfirmModal({
-                  title: t("delete_element"),
-                  message: t("delete_element_confirm"),
-                  onConfirm: () => {
-                    executeDeleteElements([element]);
-                  },
-                });
-              },
-              className: "custom-context-pad__btn--danger",
-              hideOnAction: false,
-              label: t("delete"),
-            }),
-          );
+            onClick: (event, btn) => openPanel(btn, fillComposer("insertAfter", t("pad_step_placeholder"))),
+          }));
         }
+        if (canModel && isGateway) {
+          bar.appendChild(makeButton(t("add_branch"), "branch", {
+            className: "custom-context-pad__btn--accent",
+            onClick: (event, btn) => openPanel(btn, fillComposer("addBranch", t("pad_branch_placeholder"))),
+          }));
+        }
+        if (!readOnly && !isEnd) {
+          bar.appendChild(makeButton(t("connect_click"), "connect", {
+            onStart: (event) => {
+              // a drag from the button still draws the arrow; a plain click starts click mode
+              const startX = event.clientX;
+              const startY = event.clientY;
+              const onMove = (moveEvent) => {
+                if (Math.abs(moveEvent.clientX - startX) + Math.abs(moveEvent.clientY - startY) < 6) return;
+                cleanup();
+                suppressContextPad();
+                connect.start(moveEvent, element);
+              };
+              const cleanup = () => {
+                document.removeEventListener("mousemove", onMove, true);
+                document.removeEventListener("mouseup", cleanup, true);
+              };
+              document.addEventListener("mousemove", onMove, true);
+              document.addEventListener("mouseup", cleanup, true);
+            },
+            onClick: () => startConnectMode(element),
+          }));
+        }
+        if (!readOnly) bar.appendChild(renameButton());
+        if (canModel && (isTask || isGateway)) {
+          bar.appendChild(makeButton(t("change_type"), "type", {
+            onClick: (event, btn) => openPanel(btn, fillTypes),
+          }));
+        }
+        if (isEnd && !readOnly) {
+          bar.appendChild(separator());
+          bar.appendChild(deleteButton());
+        }
+        bar.appendChild(makeButton(t("more"), "more", {
+          onClick: (event, btn) => openPanel(btn, fillMore),
+        }));
       }
 
-      contextPadOverlayId = overlays.add(element, "custom-context-pad", {
-        position: { top: isLane ? 6 : -8, right: isLane ? 6 : -8 },
-        html: container,
-      });
+      if (!bar.children.length) return;
+
+      const width = element.width || 0;
+      const height = element.height || 0;
+      let position = below ? { top: height + 10, left: width / 2 } : { top: -10, left: width / 2 };
+      if (isLane) position = { top: 8, left: 44 };
+      if (isSequenceFlow) {
+        const points = element.waypoints || [];
+        const i = Math.max(1, Math.floor(points.length / 2));
+        const a = points[i - 1] || { x: 0, y: 0 };
+        const b = points[i] || a;
+        position = { left: (a.x + b.x) / 2 - (element.x || 0), top: (a.y + b.y) / 2 - (element.y || 0) - 12 };
+      }
+      contextPadOverlayId = overlays.add(element, "custom-context-pad", { position, html: container });
       contextPadElement = element;
+      if (containerRef.current) containerRef.current.dataset.padOpen = "1";
     };
 
     const hideLaneHandles = () => {
@@ -1337,6 +1508,10 @@ export default function MapViewer({
 
     const handleElementClick = (event) => {
       const { element } = event;
+      if (connectSource) {
+        finishConnectMode(element);
+        return;
+      }
       lastClickedElementRef.current = element || null;
 
       // always remove previous handles
@@ -1427,7 +1602,17 @@ export default function MapViewer({
       hideLaneHandles();
     };
 
+    const handlePadEscape = (event) => {
+      if (event.key !== "Escape") return;
+      if (connectSource) {
+        endConnectMode();
+        return;
+      }
+      if (contextPadElement) clearContextPad();
+    };
+
     const handleCanvasClick = () => {
+      if (connectSource) endConnectMode();
       lastClickedElementRef.current = null;
       clearWorkforceStepSelection();
       if (ENABLE_LANE_HANDLES) {
@@ -1738,6 +1923,7 @@ export default function MapViewer({
         eventBus.on("shape.resize.cancel", stopGhostStyling);
       }
       eventBus.on("element.click", handleElementClick);
+      document.addEventListener("keydown", handlePadEscape, true);
       eventBus.on("selection.changed", handleSelectionChanged);
       eventBus.on("element.hover", handleElementHover);
       eventBus.on("element.out", handleElementOut);
@@ -1781,6 +1967,8 @@ export default function MapViewer({
           eventBus.off("shape.resize.cancel", stopGhostStyling);
         }
         eventBus.off("element.click", handleElementClick);
+        document.removeEventListener("keydown", handlePadEscape, true);
+        endConnectMode();
         eventBus.off("selection.changed", handleSelectionChanged);
         eventBus.off("element.hover", handleElementHover);
         eventBus.off("element.out", handleElementOut);
@@ -1851,13 +2039,7 @@ export default function MapViewer({
         const rawCandidates = selected.length ? selected : fallbackClicked ? [fallbackClicked] : [];
         const deletable = rawCandidates.filter((el) => el && el.type !== "label");
         if (!deletable.length) return;
-        openConfirmModal({
-          title: t("delete_element"),
-          message: t("delete_element_confirm"),
-          onConfirm: () => {
-            executeDeleteElements(deletable);
-          },
-        });
+        executeDeleteElements(deletable);
         return;
       }
 
@@ -2393,7 +2575,32 @@ export default function MapViewer({
         {overlayMessage ? (
           <div className="map-viewer__status">{overlayMessage}</div>
         ) : null}
-        {toastMessage ? <div className="map-viewer__status">{toastMessage}</div> : null}
+        {connectHint ? (
+          <div className="map-viewer__status map-viewer__status--connect">
+            {t("connect_hint")}
+            <button type="button" className="map-viewer__status-btn" onClick={() => endConnectModeRef.current?.()}>
+              {t("cancel")}
+            </button>
+          </div>
+        ) : null}
+        {toastMessage ? (
+          <div className="map-viewer__status">
+            {toastMessage}
+            {toastUndo ? (
+              <button
+                type="button"
+                className="map-viewer__status-btn"
+                onClick={() => {
+                  setToastMessage("");
+                  setToastUndo(false);
+                  handleUndoClick();
+                }}
+              >
+                {t("undo")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {displayError ? <div className="map-viewer__status map-viewer__status--error">{displayError}</div> : null}
         {annotations?.length ? (
           <div className="map-viewer__annotations">

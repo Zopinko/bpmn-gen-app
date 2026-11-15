@@ -289,7 +289,24 @@
     "save_name": "Save name",
     "role_above_label": "Role above",
     "role_below_label": "Role below",
-    "drag_to_move": "Drag to move"
+    "drag_to_move": "Drag to move",
+    "next_step": "Next step",
+    "add_branch": "Add branch",
+    "connect_click": "Connect (click the target or drag)",
+    "rename": "Rename",
+    "double_click": "double-click",
+    "change_type": "Change to",
+    "more": "More",
+    "move_to_role": "Move to role",
+    "detail": "Details",
+    "name_branches": "Name branches Yes / No",
+    "parallel_label": "Parallel split",
+    "note_drag": "Note (drag into place)",
+    "pad_step_placeholder": "What comes next?",
+    "pad_branch_placeholder": "What happens in this branch?",
+    "pad_step_hint": "Enter adds · Shift+Enter another step · “If …” makes a decision",
+    "connect_hint": "Click the object the arrow should lead to",
+    "deleted": "Deleted"
   },
   "overlay_legend": {
     "title": "Legend",
@@ -1346,6 +1363,8 @@
     "guide_state_now": "now",
     "guide_state_wait": "waiting",
     "guide_step_question": "What does {{lane}} do next?",
+    "guide_step_placeholder": "One step or the whole work of the role…",
+    "guide_step_hint": "Shift+Enter = another step. E.g. “If the item is in stock, …” or “In parallel …”.",
     "guide_step_add": "Add step",
     "guide_write_more": "Write several steps",
     "guide_lane_done": "Done with this role",
@@ -1365,7 +1384,8 @@
     "guide_repair_step": "Add a new step",
     "guide_repair_target": "Existing step",
     "guide_repair_step_name": "Step name",
-    "guide_repair_lane": "Which role performs this step?"
+    "guide_repair_lane": "Which role performs this step?",
+    "map_action_error": "Could not add the step. Try writing it differently."
   },
   "home": {
     "greeting_morning": "Good morning",

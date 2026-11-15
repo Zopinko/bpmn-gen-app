@@ -1507,15 +1507,19 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const [guideFindings, setGuideFindings] = useState([]);
   const [guideReviewedVersion, setGuideReviewedVersion] = useState(null);
   const [mapSelection, setMapSelection] = useState(null);
+  // the detail panel opens on request (toolbar "Detail" or the structure tree), not on every click
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [structureOpen, setStructureOpen] = useState(() => {
     try {
-      return window.localStorage.getItem("bpmngen.ws.structureOpen") !== "0";
+      return window.localStorage.getItem("bpmngen.ws.structureOpen") === "1";
     } catch {
-      return true;
+      return false;
     }
   });
   const [focusMode, setFocusMode] = useState(false);
-  const [guideBubbleCollapsedKey, setGuideBubbleCollapsedKey] = useState("");
+  // the guide stays as a small dot until the person opens it; only a brand new
+  // (empty) process opens it on its own
+  const [guideCollapsed, setGuideCollapsed] = useState(false);
   const [guideComposer, setGuideComposer] = useState(null);
   const [guideHandoff, setGuideHandoff] = useState(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -3780,7 +3784,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const resetWizardState = () => {
     setGuideComposer(null);
     setGuideHandoff(null);
-    setGuideBubbleCollapsedKey("");
+    setGuideCollapsed(false);
     setProcessCard(createEmptyProcessCardState());
     setEngineJson(null);
     setXmlFull("", "resetWizardState");
@@ -5976,6 +5980,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const handleStructureNodeSelect = useCallback(
     (node) => {
       if (!node?.id) return;
+      setInspectorOpen(true);
       const element = revealInMap(node.id);
       if (!element) {
         setMapSelection({ id: String(node.id), name: node.name || "", type: node.type || "" });
@@ -6162,7 +6167,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     setGuideComposer(null);
     setGuideHandoff(null);
-    setGuideBubbleCollapsedKey("");
+    setGuideCollapsed(true);
     historyRef.current = [];
     setHistoryCount(0);
     setEngineJson(loadedEngine);
@@ -8079,7 +8084,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       const importedEngine = response?.engine_json || response;
       const newXml = response?.diagram_xml || (await renderEngineXml(importedEngine));
       setGuideComposer(null);
-      setGuideBubbleCollapsedKey("");
+      setGuideCollapsed(true);
       setGuideHandoff(null);
       setEngineJson(importedEngine);
       setXmlFull(newXml, "importBpmn");
@@ -8265,7 +8270,6 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideBubbleKey = showHandoff ? `handoff:${handoff.sourceId}`
     : repairSource ? `repair:${repairSource.id}`
     : guideLane ? `write:${guideLane.id}` : guideKey;
-  const guideBubbleCollapsed = guideBubbleCollapsedKey === guideBubbleKey;
   const guideWritingLaneId = guideLane?.id;
   const guideWritingHighlight = useMemo(
     () => guideWritingLaneId ? { type: "lane", laneId: guideWritingLaneId } : null,
@@ -8311,6 +8315,99 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     } finally {
       setIsLoading(false);
     }
+  };
+  // actions from the toolbar above a step on the map; they change the model and
+  // redraw it with the same drawing rules as the guide
+  const handleMapNodeAction = async (action, payload = {}) => {
+    if (guideBusy || isReadOnlyMode) return false;
+    const currentEngine = engineJsonRef.current || engineJson;
+    const ids = payload.nodeIds || [payload.nodeId];
+    const engineNodes = currentEngine?.nodes || [];
+    const sameName = engineNodes.filter((item) => payload.nodeName && item.name === payload.nodeName);
+    const node = engineNodes.find((item) => ids.includes(item.id)) || (sameName.length === 1 ? sameName[0] : null);
+    if (!node) {
+      setError(t("workspace.map_action_error"));
+      return false;
+    }
+    const flows = currentEngine.flows || [];
+    let nextEngine = null;
+    if (action === "insertAfter" || action === "addBranch") {
+      const text = String(payload.text || "").trim();
+      if (!text) return false;
+      const guardMessage = getLaneSubmitGuardMessage(text);
+      if (guardMessage) {
+        setError(guardMessage);
+        return false;
+      }
+      const lane = currentEngine.lanes.find((item) => item.id === node.laneId);
+      if (!lane) return false;
+      setIsLoading(true);
+      let appended;
+      try {
+        // the parser appends after the last step of a role: give it a role with only this step
+        const response = await appendLaneFromDescription({
+          lane_id: lane.id,
+          lane_name: lane.name,
+          description: text,
+          engine_json: normalizeEngineForBackend({ ...currentEngine, nodes: [node], flows: [] }),
+        });
+        appended = response?.engine_json;
+      } catch {
+        appended = null;
+      } finally {
+        setIsLoading(false);
+      }
+      const newNodes = (appended?.nodes || []).filter((item) => item.id !== node.id);
+      if (!newNodes.length) {
+        setError(t("workspace.map_action_error"));
+        return false;
+      }
+      const newFlows = appended.flows || [];
+      const tails = newNodes.filter((item) =>
+        !/end/i.test(item.type || "") && !newFlows.some((flow) => flow.source === item.id));
+      const outgoing = action === "insertAfter" ? flows.filter((flow) => flow.source === node.id) : [];
+      const movedFlows = outgoing.flatMap((flow) => tails.map((tail, index) => ({
+        ...flow,
+        id: `flow_${tail.id}_to_${flow.target}`,
+        source: tail.id,
+        name: index ? "" : flow.name,
+      })));
+      nextEngine = {
+        ...currentEngine,
+        nodes: [...currentEngine.nodes, ...newNodes],
+        flows: [...flows.filter((flow) => !outgoing.includes(flow)), ...newFlows, ...movedFlows],
+      };
+    } else if (action === "changeType") {
+      const type = payload.type;
+      if (!["task", "exclusiveGateway", "parallelGateway", "endEvent"].includes(type) || type === node.type) return false;
+      const keepFlows = type === "endEvent" ? flows.filter((flow) => flow.source !== node.id) : flows;
+      nextEngine = {
+        ...currentEngine,
+        nodes: currentEngine.nodes.map((item) => item.id === node.id ? { ...item, type } : item),
+        flows: keepFlows,
+      };
+    } else if (action === "moveToLane") {
+      const lane = currentEngine.lanes.find((item) => item.id === payload.laneId) ||
+        currentEngine.lanes.find((item) => payload.laneName && item.name === payload.laneName);
+      if (!lane || lane.id === node.laneId) return false;
+      nextEngine = {
+        ...currentEngine,
+        nodes: currentEngine.nodes.map((item) => item.id === node.id ? { ...item, laneId: lane.id } : item),
+      };
+    } else if (action === "nameBranches") {
+      const outgoing = flows.filter((flow) => flow.source === node.id);
+      if (outgoing.length < 2) return false;
+      const labels = [t("workspace.guide_branch_yes"), t("workspace.guide_branch_no")];
+      nextEngine = {
+        ...currentEngine,
+        flows: flows.map((flow) => {
+          const index = outgoing.indexOf(flow);
+          return index >= 0 && index < labels.length ? { ...flow, name: labels[index] } : flow;
+        }),
+      };
+    }
+    if (!nextEngine) return false;
+    return Boolean(await commitGuideGraph(currentEngine, nextEngine, nextEngine.nodes.find((item) => item.id === node.id)?.laneId));
   };
   const makeGuideEnd = (laneId) => ({
     id: `end_${crypto.randomUUID()}`,
@@ -8404,8 +8501,8 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
       title={guideState?.title || ""}
       message={guideState?.message}
       complete={showCompletion}
-      collapsed={guideBubbleCollapsed}
-      onToggle={() => setGuideBubbleCollapsedKey((prev) => (prev === guideBubbleKey ? "" : guideBubbleKey))}
+      collapsed={guideCollapsed}
+      onToggle={() => setGuideCollapsed((prev) => !prev)}
       composer={guideLane ? {
         laneName: guideLane.name || guideLane.id,
         value: guideDraft,
@@ -8504,7 +8601,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     });
   }
   const inspectorVisible = Boolean(
-    xml && mapSelection && !(drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen),
+    xml && mapSelection && inspectorOpen && !(drawerOpen || helpOpen || mentorOpen || storyOpen || orgOpen || laneOpen),
   );
 
   return (
@@ -9744,13 +9841,15 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 key={`${modelSource?.kind || "sandbox"}-${modelSource?.kind === "org" && orgReadOnly ? "ro" : "rw"}`}
                 {...viewerProps}
                 guideBubble={guideBubbleNode}
+                onNodeAction={handleMapNodeAction}
+                onShowDetail={() => setInspectorOpen(true)}
                 guideBubbleInsetRight={inspectorVisible ? 300 : 0}
                 guideHighlight={handoffHighlight || repairHighlight || guideWritingHighlight || viewerProps.guideHighlight}
-                guideHandoffSourceId={guideBubbleCollapsed ? null : handoffSourceId}
+                guideHandoffSourceId={guideCollapsed ? null : handoffSourceId}
                 guideHandoffTargetId={handoffTarget?.id || handoffLane?.id}
                 guideHandoffEnds={handoffEnds}
                 guideWriting={Boolean(guideLane)}
-                guideDraftLabel={guideBubbleCollapsed ? "" : guideDraft.trim()}
+                guideDraftLabel={guideCollapsed ? "" : guideDraft.trim()}
               />
             ) : (
               <div
@@ -11210,6 +11309,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
           engineJson={engineJson}
           readOnly={isReadOnlyMode}
           onClose={() => {
+            setInspectorOpen(false);
             setMapSelection(null);
             try {
               modelerRef.current?.get("selection").select(null);
