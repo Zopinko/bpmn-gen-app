@@ -158,7 +158,8 @@ def test_password_reset_email_sends_via_smtp(monkeypatch):
             sent["subject"] = message["Subject"]
             sent["from"] = message["From"]
             sent["to"] = message["To"]
-            sent["body"] = message.get_content()
+            sent["body"] = message.get_body(preferencelist=("plain",)).get_content()
+            sent["html"] = message.get_body(preferencelist=("html",)).get_content()
 
     monkeypatch.setenv("AUTH_EMAIL_PROVIDER", "smtp")
     monkeypatch.delenv("AUTH_EMAIL_ALLOWLIST", raising=False)
@@ -180,10 +181,11 @@ def test_password_reset_email_sends_via_smtp(monkeypatch):
     assert sent["starttls"] is True
     assert sent["username"] == "smtp-user"
     assert sent["password"] == "smtp-pass"
-    assert sent["subject"] == "Reset hesla"
+    assert sent["subject"] == "Obnova hesla k BPMN.GEN"
     assert sent["from"] == "noreply@example.com"
     assert sent["to"] == "user@example.com"
     assert "https://app.example.com/reset-password?token=known-token" in sent["body"]
+    assert 'href="https://app.example.com/reset-password?token=known-token"' in sent["html"]
 
 
 def test_mount_playground_skips_missing_directory(caplog, tmp_path):
