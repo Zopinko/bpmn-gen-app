@@ -3,14 +3,14 @@ import { buildAnalyticsApiUrl } from "./config";
 const ANALYTICS_TRACK_URL = buildAnalyticsApiUrl("/api/analytics/track");
 
 export async function trackSignupCompleted(sessionId) {
+  // A sid is only present when the visitor allowed analytics on bpmngen.com.
+  if (!sessionId) return;
   const payload = {
     event_name: "signup_completed",
     path: "/signup?source=app",
   };
 
-  if (sessionId) {
-    payload.session_id = sessionId;
-  }
+  payload.session_id = sessionId;
 
   try {
     await fetch(ANALYTICS_TRACK_URL, {
