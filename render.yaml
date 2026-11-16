@@ -51,6 +51,17 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     publishPath: dist
+    headers:
+      # Only bpmngen.com may embed the app (the homepage shows the live /demo in an iframe).
+      - path: /*
+        name: Content-Security-Policy
+        value: "frame-ancestors 'self' https://bpmngen.com https://www.bpmngen.com"
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
     envVars:
       - key: VITE_API_BASE
         sync: false
