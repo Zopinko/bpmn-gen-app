@@ -55,6 +55,7 @@ import { createRelayoutScheduler } from "./linearWizard/relayoutScheduler";
 import { applyIncrementalAppend } from "./linearWizard/incrementalAppend";
 import { suggestHandoffLaneId } from "./linearWizard/guideHandoff";
 import { findDanglingBranchTask, findIncompleteDecision, findRepairTargets } from "./linearWizard/guideRepairs";
+import { DEMO_EVENTS, initDemoAnalytics, openDemoSignup, trackDemoEvent } from "../api/demoAnalytics";
 
 const buildHelpRules = (t) => [
   {
@@ -1505,6 +1506,21 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
   const guideEnabled = true;
   const [guideState, setGuideState] = useState(null);
   const [guideFindings, setGuideFindings] = useState([]);
+
+  // Demo analytics (consent is owned by bpmngen.com; see api/demoAnalytics.js).
+  useEffect(() => {
+    if (!isDemoMode) return undefined;
+    return initDemoAnalytics();
+  }, [isDemoMode]);
+  useEffect(() => {
+    if (isDemoMode && guideState?.key === "demo_process_complete") {
+      trackDemoEvent(DEMO_EVENTS.completed, { once: true });
+    }
+  }, [isDemoMode, guideState?.key]);
+  const handleDemoSignupClick = (event) => {
+    event.preventDefault();
+    openDemoSignup(navigate);
+  };
   const [guideReviewedVersion, setGuideReviewedVersion] = useState(null);
   const [mapSelection, setMapSelection] = useState(null);
   // the detail panel opens on request (toolbar "Detail" or the structure tree), not on every click
@@ -2568,7 +2584,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
     }
     if (!guideState || !actionId) return;
     if (actionId === "OPEN_DEMO_SIGNUP") {
-      navigate("/register");
+      openDemoSignup(navigate);
       return;
     }
     if (isDemoMode && (actionId === "SAVE_PROCESS" || actionId === "MOVE_TO_ORG" || actionId === "STAY_IN_SANDBOX")) {
@@ -3874,6 +3890,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
         title: t("wizard.demo_skeleton_ready_title"),
         message: t("wizard.demo_skeleton_ready_message"),
       });
+      trackDemoEvent(DEMO_EVENTS.started);
       setDemoSetupOpen(false);
       setHasUnsavedChanges(true);
       setDrawerOpen(false);
@@ -8703,7 +8720,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
               <button type="button" className="ws-btn" onClick={resetDemoState}>
                 {t("app.nav.demo_reset")}
               </button>
-              <a className="ws-btn ws-btn--primary" href="/register">
+              <a className="ws-btn ws-btn--primary" href="/register" onClick={handleDemoSignupClick}>
                 {t("app.nav.create_account")}
               </a>
             </>
@@ -8766,7 +8783,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
             <button type="button" className="ws-rail__btn" title={t("app.nav.demo_reset")} aria-label={t("app.nav.demo_reset")} onClick={resetDemoState}>
               <WorkspaceIcon name="reset" />
             </button>
-            <a className="ws-rail__btn" href="/register" title={t("app.nav.create_account")} aria-label={t("app.nav.create_account")}>
+            <a className="ws-rail__btn" href="/register" onClick={handleDemoSignupClick} title={t("app.nav.create_account")} aria-label={t("app.nav.create_account")}>
               <WorkspaceIcon name="register" />
             </a>
           </>
@@ -9677,7 +9694,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                 <button className="btn btn--small" type="button" onClick={resetDemoState}>
                   {t("app.nav.demo_reset")}
                 </button>
-                <a className="btn btn--small btn-primary" href="/register">
+                <a className="btn btn--small btn-primary" href="/register" onClick={handleDemoSignupClick}>
                   {t("wizard.banner_demo_continue")}
                 </a>
               </div>
@@ -9896,7 +9913,7 @@ export default function LinearWizardPage({ currentUser = null, isDemo = false })
                             <button className="btn btn-primary" type="button" onClick={() => setDemoSetupOpen(true)}>
                               {t("wizard.welcome_open_demo")}
                             </button>
-                            <a className="btn" href="/register">
+                            <a className="btn" href="/register" onClick={isDemoMode ? handleDemoSignupClick : undefined}>
                               {t("app.nav.create_account")}
                             </a>
                           </>
