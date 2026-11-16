@@ -204,6 +204,8 @@ function AppLayout() {
               path="/login"
               element={renderPublicOnly(<LoginPage onLoginSuccess={refreshAuthState} />)}
             />
+            {/* The marketing site used to link to /signup; keep it working and keep ?sid=. */}
+            <Route path="/signup" element={<Navigate to={{ pathname: "/register", search: location.search }} replace />} />
             <Route path="/register" element={renderPublicOnly(<RegisterPage />)} />
             <Route path="/verify-email" element={<VerifyEmailPage currentUser={authState.user} onVerified={refreshAuthState} />} />
             <Route path="/forgot-password" element={renderPublicOnly(<ForgotPasswordPage />)} />

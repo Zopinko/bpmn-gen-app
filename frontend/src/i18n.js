@@ -5,6 +5,9 @@ import en from "./locales/en.json";
 
 const savedLang = typeof window !== "undefined"
   ? (() => {
+      // An explicit ?lang= (used e.g. by the marketing site's embedded demo) wins.
+      const requested = new URLSearchParams(window.location.search).get("lang");
+      if (requested === "sk" || requested === "en") return requested;
       const stored = window.localStorage.getItem("APP_LANG");
       if (stored === "sk" || stored === "en") return stored;
       const browserCandidates = [
