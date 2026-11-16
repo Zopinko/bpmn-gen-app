@@ -6,7 +6,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(bash *)",
+      "Bash(awk 'length > 100 {print NR\": \" $0}' /c/projekty/bpmn-gen-app/backend/services/org_employees_storage.py)"
     ]
   }
 }

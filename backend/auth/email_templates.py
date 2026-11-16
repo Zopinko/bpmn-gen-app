@@ -51,8 +51,8 @@ def _lang(language: str) -> str:
 
 FOOTER = {
     "sk": (
-        "Tento e-mail ti poslal BPMN.GEN v súvislosti s tvojím účtom alebo pozvánkou. Neodpovedaj naň, "
-        "ak potrebuješ pomoc, napíš nám cez bpmngen.com/sk/contact."
+        "Tento e-mail vám poslal BPMN.GEN v súvislosti s vaším účtom alebo pozvánkou. Neodpovedajte naň, "
+        "ak potrebujete pomoc, napíšte nám cez bpmngen.com/sk/contact."
     ),
     "en": (
         "BPMN.GEN sent you this email about your account or an invitation. Please don't reply to it; "
@@ -61,7 +61,7 @@ FOOTER = {
 }
 CONTACT_URL = {"sk": "https://bpmngen.com/sk/contact", "en": "https://bpmngen.com/contact"}
 BUTTON_FALLBACK = {
-    "sk": "Ak tlačidlo nefunguje, skopíruj tento odkaz do prehliadača:",
+    "sk": "Ak tlačidlo nefunguje, skopírujte tento odkaz do prehliadača:",
     "en": "If the button doesn't work, copy this link into your browser:",
 }
 
@@ -222,15 +222,15 @@ def _strong(value: str) -> str:
 def email_verification(email: str, link: str, language: str) -> Email:
     if _lang(language) == "sk":
         return _build(
-            subject="Over svoj e-mail pre BPMN.GEN",
+            subject="Overte svoj e-mail pre BPMN.GEN",
             language="sk",
-            preheader="Jedno kliknutie a môžeš začať mapovať procesy.",
-            heading="Over svoju e-mailovú adresu",
+            preheader="Jedno kliknutie a môžete začať mapovať procesy.",
+            heading="Overte svoju e-mailovú adresu",
             paragraphs=[
-                "Vitaj v BPMN.GEN! Ešte potvrď, že adresa " + _strong(email) + " patrí tebe, a môžeš začať.",
+                "Vitajte v BPMN.GEN! Ešte potvrďte, že adresa " + _strong(email) + " patrí vám, a môžete začať.",
             ],
             button=("Overiť e-mail", link),
-            note="Odkaz platí 24 hodín. Ak účet v BPMN.GEN nezakladáš ty, tento e-mail pokojne ignoruj.",
+            note="Odkaz platí 24 hodín. Ak ste účet v BPMN.GEN nezakladali vy, tento e-mail pokojne ignorujte.",
         )
     return _build(
         subject="Verify your email for BPMN.GEN",
@@ -250,13 +250,13 @@ def password_reset(email: str, link: str, language: str, ttl_minutes: int) -> Em
         return _build(
             subject="Obnova hesla k BPMN.GEN",
             language="sk",
-            preheader="Nastav si nové heslo k svojmu účtu.",
-            heading="Nastav si nové heslo",
+            preheader="Nastavte si nové heslo k svojmu účtu.",
+            heading="Nastavte si nové heslo",
             paragraphs=["Dostali sme žiadosť o obnovu hesla k účtu " + _strong(email) + "."],
             button=("Nastaviť nové heslo", link),
             note=(
-                f"Odkaz platí {ttl_minutes} minút. Ak si vyžiadaš nový, tento prestane platiť. "
-                "Ak o obnovu nežiadaš ty, e-mail ignoruj, heslo zostane bez zmeny."
+                f"Odkaz platí {ttl_minutes} minút. Ak si vyžiadate nový, tento prestane platiť. "
+                "Ak ste o obnovu nežiadali vy, e-mail ignorujte, heslo zostane bez zmeny."
             ),
         )
     return _build(
@@ -277,16 +277,16 @@ def password_changed(email: str, language: str) -> Email:
     forgot = app_link("forgot-password")
     if _lang(language) == "sk":
         return _build(
-            subject="Heslo k tvojmu účtu BPMN.GEN sa zmenilo",
+            subject="Heslo k vášmu účtu BPMN.GEN sa zmenilo",
             language="sk",
-            preheader="Ak išlo o tvoju zmenu, nemusíš nič robiť.",
+            preheader="Ak išlo o vašu zmenu, nemusíte nič robiť.",
             heading="Heslo bolo zmenené",
             paragraphs=[
                 "Heslo k účtu " + _strong(email) + " bolo práve úspešne zmenené.",
-                "Ak išlo o tvoju zmenu, nemusíš nič robiť.",
+                "Ak išlo o vašu zmenu, nemusíte nič robiť.",
             ],
             button=("Obnoviť heslo", forgot),
-            note="<strong>Nejde o tvoju zmenu?</strong> Hneď si ho obnov tlačidlom nižšie a napíš nám cez kontaktný formulár.",
+            note="<strong>Nejde o vašu zmenu?</strong> Hneď si heslo obnovte tlačidlom nižšie a napíšte nám cez kontaktný formulár.",
             note_tone="warn",
             note_first=True,
         )
@@ -311,16 +311,16 @@ def organization_invite(email: str, link: str, org_name: str, inviter: str, lang
         return _build(
             subject="Pozvánka do organizácie v BPMN.GEN",
             language="sk",
-            preheader=f"{inviter} ťa pozýva do organizácie {org_name}.",
+            preheader=f"{inviter} vás pozýva do organizácie {org_name}.",
             heading="Pozvánka do organizácie " + escape(org_name),
             paragraphs=[
-                _strong(inviter) + " ťa pozýva do organizácie " + _strong(org_name)
+                _strong(inviter) + " vás pozýva do organizácie " + _strong(org_name)
                 + " v BPMN.GEN, kde tím spoločne mapuje a spravuje svoje procesy.",
             ],
             button=("Prijať pozvánku", link),
             note=(
-                "Prihlás sa účtom s overenou adresou " + _strong(email)
-                + ". Ak účet ešte nemáš, vytvor si ho na tejto adrese. "
+                "Prihláste sa účtom s overenou adresou " + _strong(email)
+                + ". Ak účet ešte nemáte, vytvorte si ho na tejto adrese. "
                 + f"Pozvánka platí {ttl_days} dní."
             ),
         )
@@ -349,34 +349,34 @@ def org_access_notice(org_name: str, notice_type: str, language: str) -> Email:
     texts = {
         "sk": {
             "added": dict(
-                subject="Pridali ťa do organizácie v BPMN.GEN",
-                preheader=f"Máš prístup do organizácie {org_name}.",
-                heading="Si v tíme " + escape(org_name),
+                subject="Pridali vás do organizácie v BPMN.GEN",
+                preheader=f"Máte prístup do organizácie {org_name}.",
+                heading="Ste v tíme " + escape(org_name),
                 paragraphs=[
-                    "Odteraz máš prístup do organizácie " + org + " v BPMN.GEN.",
-                    "Jej procesy, poznámky a tím nájdeš po prihlásení, keď si ju zvolíš ako aktívnu organizáciu.",
+                    "Odteraz máte prístup do organizácie " + org + " v BPMN.GEN.",
+                    "Jej procesy, poznámky a tím nájdete po prihlásení, keď si ju zvolíte ako aktívnu organizáciu.",
                 ],
                 button=open_app,
             ),
             "promoted": dict(
-                subject="Pridelili ti rolu vlastníka v BPMN.GEN",
-                preheader=f"Teraz môžeš spravovať organizáciu {org_name}.",
-                heading="Si vlastníkom organizácie " + escape(org_name),
+                subject="Pridelili vám rolu vlastníka v BPMN.GEN",
+                preheader=f"Teraz môžete spravovať organizáciu {org_name}.",
+                heading="Ste vlastníkom organizácie " + escape(org_name),
                 paragraphs=[
-                    "V organizácii " + org + " ti pridelili rolu vlastníka.",
-                    "Môžeš spravovať členov, ich role a pozvánky.",
+                    "V organizácii " + org + " vám pridelili rolu vlastníka.",
+                    "Môžete spravovať členov, ich role a pozvánky.",
                 ],
                 button=open_app,
             ),
             "removed": dict(
-                subject="Tvoj prístup do organizácie v BPMN.GEN bol odobratý",
-                preheader=f"Už nemáš prístup do organizácie {org_name}.",
+                subject="Váš prístup do organizácie v BPMN.GEN bol odobratý",
+                preheader=f"Už nemáte prístup do organizácie {org_name}.",
                 heading="Prístup do organizácie bol odobratý",
                 paragraphs=[
-                    "Prístup do organizácie " + org + " v BPMN.GEN ti bol odobratý.",
-                    "Jej procesy, poznámky a aktivitu tímu už neuvidíš. Tvoj účet a vlastné procesy zostávajú.",
+                    "Prístup do organizácie " + org + " v BPMN.GEN vám bol odobratý.",
+                    "Jej procesy, poznámky a aktivitu tímu už neuvidíte. Váš účet a vlastné procesy zostávajú.",
                 ],
-                note="Ak je to omyl, ozvi sa vlastníkovi organizácie.",
+                note="Ak je to omyl, ozvite sa vlastníkovi organizácie.",
             ),
         },
         "en": {
