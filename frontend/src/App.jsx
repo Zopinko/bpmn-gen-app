@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n.js";
@@ -58,9 +58,15 @@ function AppLayout() {
     }
   }, []);
 
+  // The public demo needs no session, so skip the login check there (it only produced a
+  // 401 in the console, e.g. in the demo embedded on bpmngen.com). Auth stays "loading"
+  // and is checked as soon as the visitor navigates anywhere else.
+  const authCheckedRef = useRef(false);
   useEffect(() => {
+    if (isDemoRoute || authCheckedRef.current) return;
+    authCheckedRef.current = true;
     void refreshAuthState();
-  }, [refreshAuthState]);
+  }, [isDemoRoute, refreshAuthState]);
 
   const handleLogout = async () => {
     if (typeof window !== "undefined" && window.__FLOWMATE_REQUEST_SAVE__) {
