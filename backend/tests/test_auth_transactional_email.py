@@ -19,7 +19,8 @@ def mail_setup(tmp_path, monkeypatch):
     monkeypatch.delenv("AUTH_EMAIL_ALLOWLIST", raising=False)
     run_auth_migrations()
     messages = []
-    monkeypatch.setattr(email_service, "_send_via_smtp", lambda *message: messages.append(message))
+    # Keep (recipient, subject, plain text); the HTML part is covered in test_email_templates.py.
+    monkeypatch.setattr(email_service, "_send_via_smtp", lambda *message: messages.append(message[:3]))
     return messages
 
 
