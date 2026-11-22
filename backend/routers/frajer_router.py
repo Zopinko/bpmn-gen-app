@@ -4,10 +4,11 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from schemas.frajer_schemas import FrajerRequest, FrajerResponse
+from core.auth_config import _is_production
 from services.architect.normalize import (
     normalize_engine_payload,
     postprocess_engine_json,
@@ -17,6 +18,12 @@ from services.frajer_kb_engine import FrajerKB
 from services.frajer_services import draft_engine_json_from_text
 
 router = APIRouter(prefix="/frajer", tags=["Frajer"])
+
+
+def _debug_endpoints_enabled() -> None:
+    """Debug endpoints expose internals (KB contents, stack traces); never serve them in production."""
+    if _is_production():
+        raise HTTPException(status_code=404, detail="Not Found")
 
 
 class PreviewEngineRequest(BaseModel):
@@ -295,7 +302,7 @@ def frajer_preview_engine(payload: PreviewEngineRequest) -> Dict[str, Any]:
     return artifacts
 
 
-@router.get("/debug-kb")
+@router.get("/debug-kb", dependencies=[Depends(_debug_endpoints_enabled)])
 def frajer_debug_kb(locale: str = "sk"):
     eng = FrajerKB(locale=locale)
     kb = eng.kb
@@ -308,7 +315,7 @@ def frajer_debug_kb(locale: str = "sk"):
     }
 
 
-@router.get("/debug-kb-templates")
+@router.get("/debug-kb-templates", dependencies=[Depends(_debug_endpoints_enabled)])
 def frajer_debug_kb_templates(locale: str = "sk"):
     eng = FrajerKB(locale=locale)
     tpl = eng.kb.get("tpl", {})
@@ -320,7 +327,7 @@ def frajer_ping():
     return {"ok": True}
 
 
-@router.api_route("/debug-parse", methods=["GET", "POST"])
+@router.api_route("/debug-parse", methods=["GET", "POST"], dependencies=[Depends(_debug_endpoints_enabled)])
 async def frajer_debug_parse(request: Request):
     """
     Ultra-safe debug (GET aj POST).

@@ -285,7 +285,12 @@ def change_password_logged_in(payload: ChangePasswordRequest, request: Request):
     _enforce_rate_limit(request, endpoint_key="change_password", limit=10)
     user = _require_authenticated_user(request)
     try:
-        change_password(user.id, payload.current_password, payload.new_password)
+        change_password(
+            user.id,
+            payload.current_password,
+            payload.new_password,
+            keep_session_token=request.cookies.get(get_auth_config().cookie_name),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"message": "Password changed successfully."}

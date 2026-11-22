@@ -18,6 +18,7 @@ from auth.email_service import smtp_email_enabled
 from auth.security import ensure_org_invite_secret_configured
 from core.auth_config import get_auth_config
 from core.config import apply_cors
+from core.csrf import OriginCheckMiddleware
 from routers.auth_router import router as auth_router
 from routers.admin_router import router as admin_router
 from routers.admin_mfa_router import router as admin_mfa_router
@@ -84,6 +85,8 @@ def create_app() -> FastAPI:
         )
 
     ensure_org_invite_secret_configured()
+    # Origin check runs inside CORS so rejected responses still go through the CORS layer.
+    app.add_middleware(OriginCheckMiddleware)
     apply_cors(app)
 
     @app.get("/healthz")

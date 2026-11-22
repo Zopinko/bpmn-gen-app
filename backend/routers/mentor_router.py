@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 
 from mentor.models import (
@@ -14,6 +16,7 @@ from mentor.rule_service import MentorRuleService
 from mentor.validator import validate_kb_version
 
 router = APIRouter(tags=["Mentor"])
+logger = logging.getLogger(__name__)
 
 _service = MentorRuleService()
 
@@ -38,8 +41,9 @@ def apply(payload: MentorEngineApplyRequest) -> MentorEngineApplyResponse:  # ty
             fix_payload_overrides=payload.fix_payload_overrides or {},
             findings=payload.findings or None,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("Mentor apply failed")
+        raise HTTPException(status_code=500, detail="Mentor apply failed.")
 
     return MentorEngineApplyResponse(engine_json=engine_json, audit_log=audit_log)
 

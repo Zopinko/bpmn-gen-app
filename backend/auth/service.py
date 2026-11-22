@@ -124,7 +124,12 @@ def authenticate_user(email: str, password: str) -> AuthUser | None:
     )
 
 
-def change_password(user_id: str, current_password: str, new_password: str) -> None:
+def change_password(
+    user_id: str,
+    current_password: str,
+    new_password: str,
+    keep_session_token: str | None = None,
+) -> None:
     if not current_password:
         raise ValueError("Aktualne heslo je povinne.")
     if not _validate_password(new_password):
@@ -143,10 +148,23 @@ def change_password(user_id: str, current_password: str, new_password: str) -> N
         conn.execute(
             """
             UPDATE users
-            SET password_hash = ?, updated_at = ?
+            SET password_hash = ?,
+                password_reset_token_hash = NULL,
+                password_reset_expires_at = NULL,
+                updated_at = ?
             WHERE id = ?
             """,
             (hash_password(new_password), now_iso, user_id),
+        )
+        keep_session_hash = digest_token(keep_session_token) if keep_session_token else None
+        conn.execute(
+            """
+            UPDATE auth_sessions
+            SET revoked_at = ?
+            WHERE user_id = ? AND revoked_at IS NULL
+                AND (? IS NULL OR session_id_hash != ?)
+            """,
+            (now_iso, user_id, keep_session_hash, keep_session_hash),
         )
         queue_auth_email(conn, user_id, "password_changed")
         conn.commit()
