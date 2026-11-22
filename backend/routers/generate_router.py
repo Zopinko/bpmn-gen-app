@@ -350,11 +350,15 @@ def put_project_notes(
     payload: dict = Body(...),
     current_user: AuthUser = Depends(require_user),
 ):
+    from auth.service import get_user_org_role
+
     notes = payload.get("notes") if isinstance(payload, dict) else None
     if not isinstance(notes, list):
         raise HTTPException(status_code=400, detail="notes je povinne a musi byt list.")
     org_id = payload.get("org_id") if isinstance(payload, dict) else None
     resolved_org_id = _resolve_notes_org_id(current_user, org_id)
+    if get_user_org_role(current_user.id, resolved_org_id) not in {"owner", "member", "admin"}:
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
     saved = save_project_notes(resolved_org_id, notes)
     return {"notes": saved, "org_id": resolved_org_id}
 

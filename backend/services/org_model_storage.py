@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from xml.sax.saxutils import quoteattr
 
 from services.org_models_storage import load_org_model, save_org_model_copy
 from services.storage_io import atomic_write_json, atomic_write_text
@@ -144,7 +145,7 @@ def _create_empty_process_model(name: str) -> dict[str, Any]:
   xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
   xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
   id="Definitions_{process_id}" targetNamespace="http://bpmn.io/schema/bpmn">
-  <process id="{process_id}" name="{name}" isExecutable="false">
+  <process id="{process_id}" name={quoteattr(name)} isExecutable="false">
     <startEvent id="{start_id}" name="Start" />
     <endEvent id="{end_id}" name="End" />
     <sequenceFlow id="{flow_id}" sourceRef="{start_id}" targetRef="{end_id}" />

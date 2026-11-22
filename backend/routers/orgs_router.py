@@ -89,6 +89,10 @@ class UpdateOrgMemberRoleRequest(BaseModel):
     role: str
 
 
+class OrgInviteLinkRequest(BaseModel):
+    regenerate: bool = False
+
+
 @router.post("", status_code=201)
 def create_org(payload: CreateOrgRequest, current_user: AuthUser = Depends(require_user)):
     try:
@@ -245,15 +249,26 @@ def update_org_member_role_endpoint(payload: UpdateOrgMemberRoleRequest, current
 @router.get("/{org_id}/invite-link")
 def get_org_invite_link(
     org_id: str,
-    regenerate: bool = False,
-    create_if_missing: bool = True,
     current_user: AuthUser = Depends(require_user),
 ):
     resolved_org_id = _resolve_org_id(current_user, org_id)
     role = get_user_org_role(current_user.id, resolved_org_id)
     if role != "owner":
         raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
-    if regenerate:
+    return _org_invite_link_response(resolved_org_id, get_latest_org_invite(resolved_org_id))
+
+
+@router.post("/{org_id}/invite-link")
+def create_org_invite_link(
+    org_id: str,
+    payload: OrgInviteLinkRequest,
+    current_user: AuthUser = Depends(require_user),
+):
+    resolved_org_id = _resolve_org_id(current_user, org_id)
+    role = get_user_org_role(current_user.id, resolved_org_id)
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo generovat invite link.")
+    if payload.regenerate:
         invite = regenerate_org_invite(resolved_org_id, current_user.id)
         record_org_event(
             resolved_org_id,
@@ -265,7 +280,7 @@ def get_org_invite_link(
             entity_name="organization invite",
             metadata={"expires_at": invite.get("expires_at")},
         )
-    elif create_if_missing:
+    else:
         invite = get_or_create_org_invite(resolved_org_id, current_user.id)
         if invite["created"]:
             record_org_event(
@@ -278,8 +293,10 @@ def get_org_invite_link(
                 entity_name="organization invite",
                 metadata={"expires_at": invite.get("expires_at")},
             )
-    else:
-        invite = get_latest_org_invite(resolved_org_id)
+    return _org_invite_link_response(resolved_org_id, invite)
+
+
+def _org_invite_link_response(resolved_org_id: str, invite: dict | None) -> dict:
     return {
         "org_id": resolved_org_id,
         "token": invite["token"] if invite else None,
@@ -346,6 +363,7 @@ def _resolve_org_id(user: AuthUser, org_id: str | None) -> str:
 @router.post("/push-model")
 def push_model(payload: PushOrgModelRequest, current_user: AuthUser = Depends(require_user)):
     org_id = _resolve_org_id(current_user, payload.org_id)
+    _require_org_write_access(current_user, org_id)
     try:
         model = load_model(payload.model_id, user_id=current_user.id)
     except FileNotFoundError:
@@ -403,15 +421,15 @@ def get_org_activity(
 @router.post("/activity/delete-request")
 def request_org_process_delete(payload: DeleteRequestPayload, current_user: AuthUser = Depends(require_user)):
     resolved_org_id = _resolve_org_id(current_user, payload.org_id)
-    role = get_user_org_role(current_user.id, resolved_org_id)
+    _require_org_write_access(current_user, resolved_org_id)
+    if get_user_org_role(current_user.id, resolved_org_id) == "owner":
+        raise HTTPException(status_code=400, detail="Owner môže proces odstrániť priamo.")
     node = get_node(resolved_org_id, payload.node_id)
     reason = payload.reason.strip() if isinstance(payload.reason, str) else ""
     if not node:
         raise HTTPException(status_code=404, detail="Proces neexistuje.")
     if node.get("type") != "process":
         raise HTTPException(status_code=400, detail="Ziadost sa da vytvorit iba pre proces.")
-    if role == "owner":
-        raise HTTPException(status_code=400, detail="Owner môže proces odstrániť priamo.")
     record_org_event(
         resolved_org_id,
         actor_user_id=current_user.id,
@@ -423,6 +441,11 @@ def request_org_process_delete(payload: DeleteRequestPayload, current_user: Auth
         metadata={"reason": reason[:500]} if reason else {},
     )
     return {"ok": True, "requested": True}
+
+
+def _require_org_write_access(user: AuthUser, org_id: str) -> None:
+    if get_user_org_role(user.id, org_id) not in {"owner", "member", "admin"}:
+        raise HTTPException(status_code=403, detail="Pouzivatel nema pravo upravovat organizaciu.")
 
 
 def _require_owner_role(user: AuthUser, org_id: str) -> None:
@@ -513,6 +536,7 @@ def create_org_model_version(
     current_user: AuthUser = Depends(require_user),
 ):
     org_id = _resolve_org_id(current_user, org_id)
+    _require_org_write_access(current_user, org_id)
     if payload.tree_node_id:
         if not payload.base_model_id:
             raise HTTPException(status_code=400, detail="base_model_id je povinny pre proces v strome.")
@@ -564,6 +588,7 @@ def update_org_model(
     current_user: AuthUser = Depends(require_user),
 ):
     org_id = _resolve_org_id(current_user, org_id)
+    _require_org_write_access(current_user, org_id)
     name = payload.get("name")
     engine_json = payload.get("engine_json")
     diagram_xml = payload.get("diagram_xml")

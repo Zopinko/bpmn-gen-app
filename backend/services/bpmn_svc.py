@@ -4,6 +4,7 @@
 
 import xml.etree.ElementTree as ET
 import heapq
+import logging
 import re
 from collections import defaultdict
 from copy import deepcopy
@@ -1518,6 +1519,22 @@ def _build_layout(data: Dict[str, Any]) -> Dict[str, Any]:
         new_x = max(center_based, float(lane_offset), base_x, min_from_preds)
         pos[nid] = (new_x, y, width, height)
 
+    # The merge alignment above can shift a shape into a later column. Keep
+    # ports outside every foreign shape before trying to route around them.
+    placed: List[tuple[float, float, float, float]] = []
+    for nid in sorted(pos, key=lambda item: (levels.get(item, 0), node_order.get(item, 0))):
+        x, y, width, height = pos[nid]
+        while True:
+            overlapping = [
+                px + pw for px, py, pw, ph in placed
+                if x < px + pw and px < x + width and y < py + ph and py < y + height
+            ]
+            if not overlapping:
+                break
+            x = max(overlapping) + ROW_MARGIN
+        pos[nid] = (x, y, width, height)
+        placed.append(pos[nid])
+
     if pos:
         max_x = max((x + w) for x, y, w, h in pos.values())
 
@@ -1970,19 +1987,18 @@ def _add_di(
         ry1 -= COLLISION_PADDING
         rx2 += COLLISION_PADDING
         ry2 += COLLISION_PADDING
-        if x1 == x2:
-            x = x1
-            if x <= rx1 or x >= rx2:
-                return False
-            y_low, y_high = sorted((y1, y2))
-            return not (y_high <= ry1 or y_low >= ry2)
-        if y1 == y2:
-            y = y1
-            if y <= ry1 or y >= ry2:
-                return False
-            x_low, x_high = sorted((x1, x2))
-            return not (x_high <= rx1 or x_low >= rx2)
-        return False
+        # Clip the segment against both open slabs, including diagonal segments.
+        low, high = 0.0, 1.0
+        for origin, delta, lower, upper in (
+            (x1, x2 - x1, rx1, rx2), (y1, y2 - y1, ry1, ry2)
+        ):
+            if delta == 0:
+                if not lower < origin < upper:
+                    return False
+            else:
+                entry, exit_ = sorted(((lower - origin) / delta, (upper - origin) / delta))
+                low, high = max(low, entry), min(high, exit_)
+        return low < high
 
     def _path_collides(points: List[Point], ignore: set[str]) -> bool:
         for idx in range(len(points) - 1):
@@ -1995,6 +2011,82 @@ def _add_di(
                 if _segment_hits_rect(p1, p2, bounds):
                     return True
         return False
+
+    def _obstacle_detour(flow: Dict[str, Any], preferred: List[Point]) -> List[Point]:
+        """Search the rectilinear obstacle grid, minimizing distinct nodes hit.
+
+        Obstacle boundaries plus clearance and both ports form a finite visibility
+        grid. Zero-collision states are exhausted before considering any collision;
+        the mask also makes the exceptional fallback count each obstacle only once.
+        """
+        ignore = {flow["source"], flow["target"]}
+        obstacles = [bounds for nid, bounds in node_bounds.items() if nid not in ignore]
+        start, end = preferred[0], preferred[-1]
+        margin = COLLISION_PADDING + 1.0
+        xs = sorted({start[0], end[0]} | {x for l, _, r, _ in obstacles for x in (l - margin, r + margin)})
+        ys = sorted({start[1], end[1]} | {y for _, t, _, b in obstacles for y in (t - margin, b + margin)})
+        source = (xs.index(start[0]), ys.index(start[1]))
+        target = (xs.index(end[0]), ys.index(end[1]))
+        # A self-loop needs a nontrivial path, even though its ports coincide.
+        if source == target:
+            end = top_mid(flow["target"])
+            if end == start:
+                end = bottom_mid(flow["target"])
+            xs = sorted(set(xs) | {end[0]})
+            ys = sorted(set(ys) | {end[1]})
+            source = (xs.index(start[0]), ys.index(start[1]))
+            target = (xs.index(end[0]), ys.index(end[1]))
+        initial = (source, 0)
+        distances = {initial: 0.0}
+        previous = {}
+        queue = [(0, 0.0, source, 0)]
+        edge_masks = {}
+        while queue:
+            count, length, cell, mask = heapq.heappop(queue)
+            state = (cell, mask)
+            if length != distances.get(state):
+                continue
+            if cell == target:
+                points = []
+                while True:
+                    (ix, iy), _ = state
+                    points.append((xs[ix], ys[iy]))
+                    if state == initial:
+                        break
+                    state = previous[state]
+                points.reverse()
+                # Collapse collinear grid vertices to keep the exported DI small.
+                compact = []
+                for point in points:
+                    while len(compact) >= 2 and (
+                        compact[-2][0] == compact[-1][0] == point[0]
+                        or compact[-2][1] == compact[-1][1] == point[1]
+                    ):
+                        compact.pop()
+                    compact.append(point)
+                if count:
+                    logging.getLogger(__name__).warning(
+                        "No collision-free route for flow %s; using minimum-collision route (%d nodes)",
+                        flow["id"], count,
+                    )
+                return compact
+            ix, iy = cell
+            for neighbor in ((ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)):
+                nx, ny = neighbor
+                if not (0 <= nx < len(xs) and 0 <= ny < len(ys)):
+                    continue
+                key = tuple(sorted((cell, neighbor)))
+                if key not in edge_masks:
+                    a, b = (xs[ix], ys[iy]), (xs[nx], ys[ny])
+                    edge_masks[key] = sum(1 << i for i, rect in enumerate(obstacles) if _segment_hits_rect(a, b, rect))
+                next_mask = mask | edge_masks[key]
+                next_length = length + abs(xs[nx] - xs[ix]) + abs(ys[ny] - ys[iy])
+                next_state = (neighbor, next_mask)
+                if next_length < distances.get(next_state, float("inf")):
+                    distances[next_state] = next_length
+                    previous[next_state] = (cell, mask)
+                    heapq.heappush(queue, (next_mask.bit_count(), next_length, neighbor, next_mask))
+        raise RuntimeError("Obstacle routing grid is disconnected")
 
     def _choose_ports(
         src_id: str, tgt_id: str, branch_kind: str = "main"
@@ -2182,7 +2274,7 @@ def _add_di(
                 path = _dedup(candidate)
                 if not _path_collides(path, ignore):
                     return path
-            return _dedup(candidates[0])
+            return _obstacle_detour(flow, _dedup(candidates[0]))
 
         src_lane = lane_for_node.get(src_id)
         tgt_lane = lane_for_node.get(tgt_id)
@@ -2363,10 +2455,16 @@ def _add_di(
             if not _path_collides(path, ignore):
                 return path
 
-        return _dedup([start_point, end_point])
+        return _obstacle_detour(flow, _dedup([start_point, end_point]))
 
     paths: Dict[str, List[Point]] = {f["id"]: _orthogonal_waypoints(f) for f in flows}
     _spread_to_free_sides(flows, paths, pos, _path_collides)
+
+    # Validate after every routing/port adjustment, including self-loops.
+    for flow in flows:
+        path = paths[flow["id"]]
+        if _path_collides(path, {flow["source"], flow["target"]}):
+            paths[flow["id"]] = _obstacle_detour(flow, path)
 
     # A gateway label sits above the gateway; when an arrow uses the top corner
     # (e.g. a hand-off from the role above), move the label to the free left side.

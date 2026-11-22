@@ -339,3 +339,16 @@ def test_viewer_cannot_mutate_org_tree(tmp_path):
         assert "upravovať model organizácie" in (rename_process.json().get("detail") or "").lower()
     finally:
         _restore_env(previous)
+
+
+def test_empty_process_model_escapes_name_in_xml():
+    import xml.etree.ElementTree as ET
+
+    from services.org_model_storage import _create_empty_process_model
+
+    for name in ['A & B', 'Proces "X" <test>', "Objednávka 'č. 1'"]:
+        model = _create_empty_process_model(name)
+        root = ET.fromstring(model["diagram_xml"].encode("utf-8"))
+        process = root.find("{http://www.omg.org/spec/BPMN/20100524/MODEL}process")
+        assert process is not None
+        assert process.get("name") == name

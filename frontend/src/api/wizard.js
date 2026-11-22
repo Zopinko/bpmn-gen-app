@@ -468,15 +468,16 @@ export async function deleteOrg(orgId) {
 }
 
 export async function getOrgInviteLink(orgId, options = {}) {
-  const query = new URLSearchParams();
-  if (options?.regenerate) query.set("regenerate", "true");
-  if (typeof options?.createIfMissing === "boolean") {
-    query.set("create_if_missing", options.createIfMissing ? "true" : "false");
-  }
+  const shouldCreate = options?.regenerate || options?.createIfMissing !== false;
   const response = await fetch(
-    `${API_BASE}/api/orgs/${encodeURIComponent(orgId)}/invite-link${query.toString() ? `?${query.toString()}` : ""}`,
+    `${API_BASE}/api/orgs/${encodeURIComponent(orgId)}/invite-link`,
     {
       credentials: "include",
+      method: shouldCreate ? "POST" : "GET",
+      ...(shouldCreate ? {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ regenerate: !!options?.regenerate }),
+      } : {}),
     },
   );
   if (!response.ok) {

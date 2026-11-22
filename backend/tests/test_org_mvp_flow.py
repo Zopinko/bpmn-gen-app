@@ -91,8 +91,8 @@ def test_owner_can_join_other_orgs_and_have_multiple_memberships(tmp_path):
         org_b = client_b.post("/api/orgs", json={"name": "Org B"}).json()
         org_c = client_c.post("/api/orgs", json={"name": "Org C"}).json()
 
-        token_b = client_b.get(f"/api/orgs/{org_b['id']}/invite-link").json()["token"]
-        token_c = client_c.get(f"/api/orgs/{org_c['id']}/invite-link").json()["token"]
+        token_b = client_b.post(f"/api/orgs/{org_b['id']}/invite-link", json={}).json()["token"]
+        token_c = client_c.post(f"/api/orgs/{org_c['id']}/invite-link", json={}).json()["token"]
 
         join_b = client_a.post(f"/api/orgs/invite/{token_b}/accept")
         join_c = client_a.post(f"/api/orgs/invite/{token_c}/accept")
@@ -177,7 +177,7 @@ def test_owner_member_permissions_and_member_can_work_with_models(tmp_path):
         assert member_list_visible.status_code == 200
         assert any((row.get("email") or "").lower() == "owner@example.com" for row in member_list_visible.json())
 
-        member_invite_forbidden = member_client.get(f"/api/orgs/{org_id}/invite-link")
+        member_invite_forbidden = member_client.post(f"/api/orgs/{org_id}/invite-link", json={})
         assert member_invite_forbidden.status_code == 403
     finally:
         _restore_env(previous)
@@ -314,7 +314,7 @@ def test_org_scoped_endpoints_validate_membership_and_selected_org(tmp_path):
         first_org = multi_client.post("/api/orgs", json={"name": "First"}).json()
         second_org = owner2_client.post("/api/orgs", json={"name": "Second"}).json()
 
-        token = owner2_client.get(f"/api/orgs/{second_org['id']}/invite-link").json()["token"]
+        token = owner2_client.post(f"/api/orgs/{second_org['id']}/invite-link", json={}).json()["token"]
         accepted = multi_client.post(f"/api/orgs/invite/{token}/accept")
         assert accepted.status_code == 200
 

@@ -173,7 +173,7 @@ def test_generated_invite_is_active_with_expiry(tmp_path):
         owner_client = _authed_client("owner@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        invite = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
+        invite = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()
 
         assert invite["status"] == "active"
         assert invite["token"]
@@ -224,8 +224,8 @@ def test_existing_active_invite_returns_same_public_token(tmp_path):
         owner_client = _authed_client("owner@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        created = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
-        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
+        created = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()
+        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
 
         assert created["token"]
         assert latest["token"] == created["token"]
@@ -244,11 +244,11 @@ def test_invite_expires_and_cannot_be_accepted(tmp_path):
         invitee_client = _authed_client("invitee@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        created = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
+        created = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()
         token = created["token"]
         _expire_invite(token)
 
-        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
+        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
         assert latest["status"] == "expired"
 
         accepted = invitee_client.post(f"/api/orgs/invite/{token}/accept")
@@ -268,8 +268,8 @@ def test_regenerated_invite_revokes_previous_token(tmp_path):
         invitee_client = _authed_client("invitee@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        first = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
-        second = owner_client.get(f"/api/orgs/{org_id}/invite-link?regenerate=true").json()
+        first = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()
+        second = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={"regenerate": True}).json()
 
         assert first["token"] != second["token"]
         assert second["status"] == "active"
@@ -291,7 +291,7 @@ def test_valid_invite_is_used_and_cannot_be_reused(tmp_path):
         invitee_client = _authed_client("invitee@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        token = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()["token"]
+        token = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()["token"]
 
         accepted = invitee_client.post(f"/api/orgs/invite/{token}/accept")
         assert accepted.status_code == 200
@@ -317,7 +317,7 @@ def test_already_member_acceptance_is_graceful_and_marks_invite_used(tmp_path):
         register_user("owner@example.com", "password123")
         owner_client = _authed_client("owner@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
-        token = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()["token"]
+        token = owner_client.post(f"/api/orgs/{org_id}/invite-link", json={}).json()["token"]
 
         response = owner_client.post(f"/api/orgs/invite/{token}/accept")
         assert response.status_code == 200
@@ -325,7 +325,7 @@ def test_already_member_acceptance_is_graceful_and_marks_invite_used(tmp_path):
         assert payload.get("membership", {}).get("already_member") is True
         assert payload.get("invite", {}).get("status") == "used"
 
-        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
+        latest = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
         assert latest["status"] == "used"
         assert latest["used_at"]
     finally:
@@ -340,7 +340,7 @@ def test_invite_status_is_missing_when_no_invite_exists(tmp_path):
         owner_client = _authed_client("owner@example.com")
         org_id = owner_client.post("/api/orgs", json={"name": "Org A"}).json()["id"]
 
-        invite = owner_client.get(f"/api/orgs/{org_id}/invite-link?create_if_missing=false").json()
+        invite = owner_client.get(f"/api/orgs/{org_id}/invite-link").json()
         assert invite["status"] == "missing"
         assert invite["token"] is None
     finally:
