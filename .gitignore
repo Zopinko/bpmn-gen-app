@@ -33,3 +33,11 @@ backend/.env
 # Logs
 npm-debug.log*
 /backend/data/project_notes.json
+
+# Orchestration logs (Claude + Codex)
+.local/
+
+# Security audit reports stay local (public repo)
+docs/audit/
+docs/tasks/T-001.md
+docs/CODEX-STATUS.md
